@@ -32,7 +32,7 @@ jobs:
 
       - name: Get changed files
         id: changed-files
-        uses: tj-actions/changed-files@v47
+        uses: ./.github/actions/changed-files
         with:
           safe_output: false # Output passed to environment variable to avoid command injection.
           separator: '" "' # To account for paths with spaces, ensure our items are split by quotes internally.

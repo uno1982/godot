@@ -6,6 +6,53 @@
   </a>
 </p>
 
+---
+
+## ⚡ NVIDIA Path Tracing + DLSS Branch
+
+This branch (`nvidia-pt-dlss`) is based on [NVIDIA-RTX/godot](https://github.com/NVIDIA-RTX/godot/tree/nvidia-pt-dlss) and adds **hardware-accelerated path tracing** and **DLSS** support for NVIDIA RTX GPUs.
+
+### Requirements
+
+- **NVIDIA RTX GPU** (RTX 20 series or newer)
+- **Latest NVIDIA drivers** (recommend 550+)
+- **Vulkan SDK** installed
+- **Streamline SDK** (required for DLSS features)
+
+### Setup Instructions
+
+1. **Build Godot** from this branch:
+   ```bash
+   scons platform=windows target=editor -j12
+   ```
+
+2. **Download the Streamline SDK** from:  
+   https://github.com/NVIDIAGameWorks/Streamline/releases
+
+3. **Copy these DLLs** from Streamline SDK `bin/x64/` to your Godot `bin/` folder:
+   ```
+   sl.interposer.dll
+   sl.common.dll
+   sl.dlss.dll
+   sl.dlss_d.dll
+   sl.dlss_g.dll
+   nvngx_dlss.dll
+   nvngx_dlssd.dll
+   nvngx_dlssg.dll
+   ```
+
+4. **Enable Path Tracing** in your project:
+   - Use **Forward+** rendering method (default)
+   - Add a **WorldEnvironment** node with an **Environment** resource
+   - In the Environment, scroll to **Path Tracing** section and enable it
+
+### Upstream
+
+- Original NVIDIA branch: https://github.com/NVIDIA-RTX/godot/tree/nvidia-pt-dlss
+- Official Godot: https://github.com/godotengine/godot
+
+---
+
 ## 2D and 3D cross-platform game engine
 
 **[Godot Engine](https://godotengine.org) is a feature-packed, cross-platform

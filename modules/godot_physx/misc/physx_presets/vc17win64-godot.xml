@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<preset name="vc17win64-godot" comment="Win64 CPU-only static libs with the static CRT, for linking into the Godot godot_physx module.">
+  <platform targetPlatform="win64" compiler="vc17" />
+  <CMakeSwitches>
+    <cmakeSwitch name="PX_BUILDSNIPPETS" value="False" comment="No sample snippets." />
+    <cmakeSwitch name="PX_BUILDPVDRUNTIME" value="False" comment="No OmniPVD runtime project." />
+    <cmakeSwitch name="PX_GENERATE_STATIC_LIBRARIES" value="True" comment="Static libraries, linked into the module." />
+    <cmakeSwitch name="PX_CMAKE_SUPPRESS_REGENERATION" value="True" comment="No ZERO_CHECK projects." />
+    <cmakeSwitch name="PX_GENERATE_GPU_PROJECTS" value="False" comment="CPU only; the GPU preset builds these." />
+    <cmakeSwitch name="NV_USE_STATIC_WINCRT" value="True" comment="/MT static CRT, to match Godot's use_static_cpp." />
+    <cmakeSwitch name="NV_USE_DEBUG_WINCRT" value="False" comment="/MT (not /MTd) in all configs, to match the Godot editor build." />
+    <cmakeSwitch name="PX_FLOAT_POINT_PRECISE_MATH" value="False" comment="Fast math." />
+  </CMakeSwitches>
+  <CMakeParams>
+    <cmakeParam name="CMAKE_INSTALL_PREFIX" value="install/vc17win64-godot/PhysX" comment="Install path, relative to the PhysX SDK root." />
+  </CMakeParams>
+</preset>

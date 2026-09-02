@@ -139,6 +139,7 @@
 ## Physics
 /modules/godot_physics_2d/                    @godotengine/physics
 /modules/godot_physics_3d/                    @godotengine/physics
+/modules/godot_physx/                         @uno1982
 /modules/jolt_physics/                        @godotengine/physics @godotengine/jolt-physics
 
 ## Rendering

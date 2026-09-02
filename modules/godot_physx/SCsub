@@ -1,0 +1,79 @@
+#!/usr/bin/env python
+from misc.utility.scons_hints import *
+
+import os
+
+Import("env")
+Import("env_modules")
+
+env_physx = env_modules.Clone()
+
+# --- PhysX 5 SDK location -------------------------------------------------------
+# The module links against a PhysX 5 SDK built out of tree with the static CRT
+# and installed to a directory containing include/ and bin/. Point the build at
+# it with `physx_sdk=<path>` on the scons command line or the PHYSX_SDK
+# environment variable. See modules/godot_physx/README.md and
+# modules/godot_physx/misc/build_physx.py for building the SDK.
+#
+# `physx_gpu=yes` links the GPU-enabled SDK build (adds PhysXGpu_64.lib); the
+# matching PhysXGpu_64.dll must sit next to the Godot binary at runtime.
+physx_gpu = ARGUMENTS.get("physx_gpu", "no") not in ("no", "0", "false", "False")
+
+# config.py::can_build() has already checked this is set (otherwise the module is
+# skipped), so it is always non-empty here.
+physx_sdk = ARGUMENTS.get("physx_sdk", os.environ.get("PHYSX_SDK", ""))
+physx_inc = os.path.join(physx_sdk, "include")
+
+if env["platform"] == "windows":
+    # TODO: parameterize for target/arch/config and other platforms.
+    physx_lib = os.path.join(physx_sdk, "bin", "win.x86_64.vc143.mt", "release")
+    physx_libs = [
+        "PhysX_static_64",
+        "PhysXExtensions_static_64",
+        "PhysXPvdSDK_static_64",
+        "PhysXCooking_static_64",
+        "PhysXCommon_static_64",
+        "PhysXFoundation_static_64",
+    ]
+    if physx_gpu:
+        physx_libs.append("PhysXGpu_64")  # import lib for PhysXGpu_64.dll
+else:
+    physx_lib = ""
+    physx_libs = []
+
+if not os.path.isdir(physx_inc):
+    raise SystemExit(
+        "godot_physx: no PhysX SDK include/ directory at '%s'. Check physx_sdk= "
+        "/ PHYSX_SDK points at an installed PhysX 5 SDK." % physx_inc
+    )
+
+env_physx.Prepend(CPPPATH=[physx_inc])
+
+# PX_PHYSX_STATIC_LIB: link the static PhysX libs, not DLL import stubs. (The
+# SDK also emits this in include/PxConfig.h, but that header is not auto-included
+# by every entry point, so define it explicitly.)
+# NDEBUG: PxPreprocessor.h requires exactly one of NDEBUG / _DEBUG; we link the
+# PhysX `release` config, so force NDEBUG for these TUs to match.
+env_physx.Append(CPPDEFINES=["PX_PHYSX_STATIC_LIB", "NDEBUG"])
+if physx_gpu:
+    env_physx.Append(CPPDEFINES=["GODOT_PHYSX_GPU"])
+
+# PhysX headers are C++14-clean but trip some of Godot's stricter warnings.
+if env.msvc:
+    env_physx.Append(CXXFLAGS=["/wd4100", "/wd4201", "/wd4245", "/wd4324"])
+else:
+    env_physx.Append(CXXFLAGS=["-Wno-unused-parameter"])
+
+# Link settings applied to the final binary.
+env.Append(LIBPATH=[physx_lib])
+if env["platform"] == "windows":
+    env.Append(LINKFLAGS=[x + ".lib" for x in physx_libs])
+
+# Godot source files
+module_obj = []
+env_physx.add_source_files(module_obj, "*.cpp")
+env_physx.add_source_files(module_obj, "joints/*.cpp")
+env_physx.add_source_files(module_obj, "objects/*.cpp")
+env_physx.add_source_files(module_obj, "shapes/*.cpp")
+env_physx.add_source_files(module_obj, "spaces/*.cpp")
+env.modules_sources += module_obj

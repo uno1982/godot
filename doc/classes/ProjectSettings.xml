@@ -2824,6 +2824,21 @@
 			Number of solver velocity iterations. The greater the number of iterations, the more accurate the simulation will be, at the cost of CPU performance.
 			[b]Note:[/b] This needs to be at least [code]2[/code] in order for friction to work, as friction is applied using the non-penetration impulse from the previous iteration.
 		</member>
+		<member name="physics/physx_3d/simulation/allow_sleep" type="bool" setter="" getter="" default="true">
+			[b]Note:[/b] Only used when the physics engine is set to [code]PhysX[/code]. When disabled, no rigid body ever sleeps, as if [member RigidBody3D.can_sleep] were off on every body.
+		</member>
+		<member name="physics/physx_3d/simulation/cpu_worker_threads" type="int" setter="" getter="" default="0">
+			[b]Note:[/b] Only used when the physics engine is set to [code]PhysX[/code]. Size of the PhysX CPU task pool. [code]0[/code] picks a value automatically based on whether GPU dynamics is active and the CPU core count.
+		</member>
+		<member name="physics/physx_3d/simulation/enhanced_determinism" type="bool" setter="" getter="" default="false">
+			[b]Note:[/b] Only used when the physics engine is set to [code]PhysX[/code]. Makes the CPU simulation reproducible across runs on the same binary and platform, at a performance cost. It is not cross-platform deterministic, and forces the CPU solver even when a GPU is present.
+		</member>
+		<member name="physics/physx_3d/simulation/solver_type" type="int" setter="" getter="" default="0">
+			[b]Note:[/b] Only used when the physics engine is set to [code]PhysX[/code]. [code]0[/code] selects the PGS solver, [code]1[/code] selects TGS. TGS is steadier for joint chains under sustained external forces but can be looser on joints in large rigid-body scenes.
+		</member>
+		<member name="physics/physx_3d/simulation/stabilization" type="bool" setter="" getter="" default="true">
+			[b]Note:[/b] Only used when the physics engine is set to [code]PhysX[/code]. Enables PhysX's contact stabilization, which damps stacked low-mass bodies toward rest so piles settle and sleep instead of jittering.
+		</member>
 		<member name="rendering/2d/batching/item_buffer_size" type="int" setter="" getter="" default="16384">
 			Maximum number of canvas item commands that can be batched into a single draw call.
 		</member>

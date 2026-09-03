@@ -35,6 +35,7 @@
 #include "joints/godot_physx_joint_3d.h"
 #include "objects/godot_physx_area_3d.h"
 #include "objects/godot_physx_body_3d.h"
+#include "objects/godot_physx_particle_fluid_3d.h"
 #include "shapes/godot_physx_shape_3d.h"
 #include "spaces/godot_physx_direct_state_3d.h"
 #include "spaces/godot_physx_space_3d.h"
@@ -776,6 +777,105 @@ bool GodotPhysXServer3D::generic_6dof_joint_get_flag(RID p_joint, Vector3::Axis 
 	return joint->get_6dof_flag(p_axis, p_flag);
 }
 
+/* PARTICLE FLUID */
+
+RID GodotPhysXServer3D::particle_fluid_create() {
+	GodotPhysXParticleFluid3D *fluid = memnew(GodotPhysXParticleFluid3D);
+	RID rid = fluid_owner.make_rid(fluid);
+	fluid->set_self(rid);
+	return rid;
+}
+
+void GodotPhysXServer3D::particle_fluid_set_space(RID p_fluid, RID p_space) {
+	GodotPhysXParticleFluid3D *fluid = fluid_owner.get_or_null(p_fluid);
+	ERR_FAIL_NULL(fluid);
+	GodotPhysXSpace3D *space = space_owner.get_or_null(p_space);
+	fluid->set_space(space);
+}
+
+void GodotPhysXServer3D::particle_fluid_set_param(RID p_fluid, int p_param, real_t p_value) {
+	GodotPhysXParticleFluid3D *fluid = fluid_owner.get_or_null(p_fluid);
+	ERR_FAIL_NULL(fluid);
+	ERR_FAIL_INDEX(p_param, GodotPhysXParticleFluid3D::PARAM_MAX);
+	fluid->set_param((GodotPhysXParticleFluid3D::Param)p_param, p_value);
+}
+
+void GodotPhysXServer3D::particle_fluid_set_capacity(RID p_fluid, int p_max) {
+	GodotPhysXParticleFluid3D *fluid = fluid_owner.get_or_null(p_fluid);
+	ERR_FAIL_NULL(fluid);
+	fluid->set_capacity(p_max > 0 ? (uint32_t)p_max : 1);
+}
+
+void GodotPhysXServer3D::particle_fluid_set_particles(RID p_fluid, const Vector<Vector3> &p_positions, const Vector3 &p_initial_velocity) {
+	GodotPhysXParticleFluid3D *fluid = fluid_owner.get_or_null(p_fluid);
+	ERR_FAIL_NULL(fluid);
+	fluid->set_particles(p_positions, p_initial_velocity);
+}
+
+void GodotPhysXServer3D::particle_fluid_emit(RID p_fluid, const Vector<Vector3> &p_positions, const Vector3 &p_velocity) {
+	GodotPhysXParticleFluid3D *fluid = fluid_owner.get_or_null(p_fluid);
+	ERR_FAIL_NULL(fluid);
+	fluid->emit(p_positions, p_velocity);
+}
+
+void GodotPhysXServer3D::particle_fluid_clear(RID p_fluid) {
+	GodotPhysXParticleFluid3D *fluid = fluid_owner.get_or_null(p_fluid);
+	ERR_FAIL_NULL(fluid);
+	fluid->clear();
+}
+
+void GodotPhysXServer3D::particle_fluid_set_foam(RID p_fluid, bool p_enabled, int p_capacity, real_t p_lifetime, real_t p_threshold, real_t p_buoyancy) {
+	GodotPhysXParticleFluid3D *fluid = fluid_owner.get_or_null(p_fluid);
+	ERR_FAIL_NULL(fluid);
+	fluid->set_foam_capacity(p_capacity > 0 ? (uint32_t)p_capacity : 1);
+	fluid->set_foam_lifetime(p_lifetime);
+	fluid->set_foam_threshold(p_threshold);
+	fluid->set_foam_buoyancy(p_buoyancy);
+	fluid->set_foam_enabled(p_enabled);
+}
+
+Vector<Vector3> GodotPhysXServer3D::particle_fluid_get_foam_positions(RID p_fluid) const {
+	GodotPhysXParticleFluid3D *fluid = fluid_owner.get_or_null(p_fluid);
+	ERR_FAIL_NULL_V(fluid, Vector<Vector3>());
+	const LocalVector<Vector3> &src = fluid->get_foam_positions();
+	Vector<Vector3> out;
+	out.resize(src.size());
+	if (src.size() > 0) {
+		memcpy(out.ptrw(), src.ptr(), src.size() * sizeof(Vector3));
+	}
+	return out;
+}
+
+int GodotPhysXServer3D::particle_fluid_get_foam_count(RID p_fluid) const {
+	GodotPhysXParticleFluid3D *fluid = fluid_owner.get_or_null(p_fluid);
+	ERR_FAIL_NULL_V(fluid, 0);
+	return (int)fluid->get_foam_count();
+}
+
+Vector<Vector3> GodotPhysXServer3D::particle_fluid_get_positions(RID p_fluid) const {
+	GodotPhysXParticleFluid3D *fluid = fluid_owner.get_or_null(p_fluid);
+	ERR_FAIL_NULL_V(fluid, Vector<Vector3>());
+	const LocalVector<Vector3> &src = fluid->get_positions();
+	Vector<Vector3> out;
+	out.resize(src.size());
+	if (src.size() > 0) {
+		memcpy(out.ptrw(), src.ptr(), src.size() * sizeof(Vector3));
+	}
+	return out;
+}
+
+int GodotPhysXServer3D::particle_fluid_get_particle_count(RID p_fluid) const {
+	GodotPhysXParticleFluid3D *fluid = fluid_owner.get_or_null(p_fluid);
+	ERR_FAIL_NULL_V(fluid, 0);
+	return (int)fluid->get_particle_count();
+}
+
+real_t GodotPhysXServer3D::particle_fluid_get_submersion(RID p_fluid, const AABB &p_world_aabb) const {
+	GodotPhysXParticleFluid3D *fluid = fluid_owner.get_or_null(p_fluid);
+	ERR_FAIL_NULL_V(fluid, 0.0);
+	return fluid->get_submersion(p_world_aabb);
+}
+
 /* MISC */
 
 void GodotPhysXServer3D::free_rid(RID p_rid) {
@@ -790,6 +890,10 @@ void GodotPhysXServer3D::free_rid(RID p_rid) {
 		joint->clear();
 		joint_owner.free(p_rid);
 		memdelete(joint);
+	} else if (GodotPhysXParticleFluid3D *fluid = fluid_owner.get_or_null(p_rid)) {
+		fluid->set_space(nullptr);
+		fluid_owner.free(p_rid);
+		memdelete(fluid);
 	} else if (GodotPhysXArea3D *area = area_owner.get_or_null(p_rid)) {
 		area->set_space(nullptr);
 		area_owner.free(p_rid);

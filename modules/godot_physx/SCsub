@@ -77,4 +77,8 @@ env_physx.add_source_files(module_obj, "nodes/*.cpp")
 env_physx.add_source_files(module_obj, "objects/*.cpp")
 env_physx.add_source_files(module_obj, "shapes/*.cpp")
 env_physx.add_source_files(module_obj, "spaces/*.cpp")
+
+if env.editor_build:
+    env_physx.add_source_files(module_obj, "editor/*.cpp")
+
 env.modules_sources += module_obj

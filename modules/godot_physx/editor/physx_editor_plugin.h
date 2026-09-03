@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  register_types.cpp                                                    */
+/*  physx_editor_plugin.h                                                 */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,50 +28,39 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#include "register_types.h"
+#pragma once
 
-#include "godot_physx_project_settings.h"
-#include "godot_physx_server_3d.h"
-#include "nodes/physx_particle_fluid_3d.h"
-
-#include "core/config/project_settings.h"
-#include "core/object/callable_mp.h"
-#include "core/object/class_db.h"
-#include "servers/physics_3d/physics_server_3d_wrap_mt.h"
-
-#ifdef TOOLS_ENABLED
-#include "editor/physx_editor_plugin.h"
 #include "editor/plugins/editor_plugin.h"
-#endif
+#include "editor/scene/3d/gizmos/gizmo_3d_helper.h"
+#include "editor/scene/3d/node_3d_editor_gizmos.h"
 
-static PhysicsServer3D *create_physx_physics_server() {
-#ifdef THREADS_ENABLED
-	bool run_on_separate_thread = GLOBAL_GET("physics/3d/run_on_separate_thread");
-#else
-	bool run_on_separate_thread = false;
-#endif
+// Viewport gizmo for PhysXParticleFluid3D: a wireframe box for the spawn region
+// (with drag handles), a ring for the emission radius and an arrow for the
+// emission velocity.
+class PhysXParticleFluid3DGizmoPlugin : public EditorNode3DGizmoPlugin {
+	GDCLASS(PhysXParticleFluid3DGizmoPlugin, EditorNode3DGizmoPlugin);
 
-	GodotPhysXServer3D *physics_server = memnew(GodotPhysXServer3D);
+	Ref<Gizmo3DHelper> helper;
 
-	return memnew(PhysicsServer3DWrapMT(physics_server, run_on_separate_thread));
-}
+public:
+	bool has_gizmo(Node3D *p_spatial) override;
+	String get_gizmo_name() const override;
+	int get_priority() const override;
+	bool is_selectable_when_hidden() const override;
+	void redraw(EditorNode3DGizmo *p_gizmo) override;
 
-void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
-	if (p_level == MODULE_INITIALIZATION_LEVEL_SERVERS) {
-		GodotPhysXProjectSettings::register_settings();
-		PhysicsServer3DManager::get_singleton()->register_server("PhysX", callable_mp_static(&create_physx_physics_server));
-	}
+	String get_handle_name(const EditorNode3DGizmo *p_gizmo, int p_id, bool p_secondary) const override;
+	Variant get_handle_value(const EditorNode3DGizmo *p_gizmo, int p_id, bool p_secondary) const override;
+	void begin_handle_action(const EditorNode3DGizmo *p_gizmo, int p_id, bool p_secondary) override;
+	void set_handle(const EditorNode3DGizmo *p_gizmo, int p_id, bool p_secondary, Camera3D *p_camera, const Point2 &p_point) override;
+	void commit_handle(const EditorNode3DGizmo *p_gizmo, int p_id, bool p_secondary, const Variant &p_restore, bool p_cancel) override;
 
-	if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE) {
-		GDREGISTER_CLASS(PhysXParticleFluid3D);
-	}
+	PhysXParticleFluid3DGizmoPlugin();
+};
 
-#ifdef TOOLS_ENABLED
-	if (p_level == MODULE_INITIALIZATION_LEVEL_EDITOR) {
-		EditorPlugins::add_by_type<PhysXEditorPlugin>();
-	}
-#endif
-}
+class PhysXEditorPlugin : public EditorPlugin {
+	GDCLASS(PhysXEditorPlugin, EditorPlugin);
 
-void uninitialize_godot_physx_module(ModuleInitializationLevel p_level) {
-}
+public:
+	PhysXEditorPlugin();
+};

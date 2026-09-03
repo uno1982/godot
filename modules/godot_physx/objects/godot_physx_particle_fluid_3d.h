@@ -33,6 +33,7 @@
 #include "core/math/aabb.h"
 #include "core/math/vector3.h"
 #include "core/math/vector4.h"
+#include "core/os/mutex.h"
 #include "core/templates/local_vector.h"
 #include "core/templates/rid.h"
 #include "core/templates/vector.h"
@@ -44,11 +45,14 @@ class PxParticleAndDiffuseBuffer;
 } //namespace physx
 
 class GodotPhysXSpace3D;
+struct GodotPhysXFluidIsosurface;
 
 // A GPU PBD fluid (PhysX 5 PxPBDParticleSystem). GPU-only; on a CPU build or
 // without a CUDA device it stays inert. Owned in a space; positions are read
 // back from the GPU after each step for the node to render.
 class GodotPhysXParticleFluid3D {
+	friend struct GodotPhysXFluidIsosurface;
+
 public:
 	enum Param {
 		PARAM_VISCOSITY,
@@ -80,6 +84,7 @@ private:
 	real_t foam_lifetime = 1.5;
 	real_t foam_threshold = 300.0; // solver potential above which foam spawns
 	real_t foam_buoyancy = 0.9;
+	real_t foam_size = 0.1; // froth clump scale for the foam isosurface, independent of particle_size
 	bool dirty_foam = true;
 	uint32_t foam_count = 0;
 	LocalVector<Vector4> foam_scratch; // pos.xyz + remaining lifetime.w
@@ -97,6 +102,33 @@ private:
 
 	LocalVector<Vector4> read_scratch; // pos.xyz + inv-mass.w, one per active particle
 	LocalVector<Vector3> read_positions;
+
+	// GPU isosurface: PhysX marching-cubes a smooth triangle mesh from the
+	// particles (PxIsosurfaceExtractor + smoothing + anisotropy). The mesh is
+	// read back to these arrays each step for the node to draw as an ArrayMesh.
+	bool surface_mesh_enabled = false;
+	// Feed PhysX per-particle anisotropy to the extractor: sharper crests and
+	// thinner sheets, but it needles fast/isolated particles, so it is opt-in and
+	// meant for settled pools rather than actively-emitting fluid.
+	bool surface_anisotropy_enabled = false;
+	GodotPhysXFluidIsosurface *iso = nullptr;
+	mutable Mutex mesh_mutex;
+	LocalVector<Vector3> mesh_vertices;
+	LocalVector<Vector3> mesh_normals;
+	LocalVector<int32_t> mesh_indices;
+	uint32_t mesh_version = 0; // bumped each time the isosurface is re-extracted
+
+	// Second, coarser isosurface over the diffuse (foam) particles -- a frothy
+	// layer drawn on top of the fluid surface. Only produced when both
+	// surface_mesh_enabled and foam_enabled are set.
+	mutable Mutex foam_mesh_mutex;
+	LocalVector<Vector3> foam_mesh_vertices;
+	LocalVector<Vector3> foam_mesh_normals;
+	LocalVector<int32_t> foam_mesh_indices;
+	uint32_t foam_mesh_version = 0;
+
+	void _ensure_isosurface();
+	void _destroy_isosurface();
 
 	void _destroy();
 	void _ensure_system();
@@ -125,9 +157,11 @@ public:
 	void set_foam_lifetime(real_t p_v);
 	void set_foam_threshold(real_t p_v);
 	void set_foam_buoyancy(real_t p_v);
+	void set_foam_size(real_t p_v);
 	real_t get_foam_lifetime() const { return foam_lifetime; }
 	real_t get_foam_threshold() const { return foam_threshold; }
 	real_t get_foam_buoyancy() const { return foam_buoyancy; }
+	real_t get_foam_size() const { return foam_size; }
 	const LocalVector<Vector3> &get_foam_positions() const { return foam_positions; }
 	uint32_t get_foam_count() const { return foam_count; }
 
@@ -141,6 +175,18 @@ public:
 	void read_back();
 	const LocalVector<Vector3> &get_positions() const { return read_positions; }
 	uint32_t get_particle_count() const { return active_count; }
+
+	// GPU isosurface mesh (PxIsosurfaceExtractor). Enabling creates the extractor.
+	void set_surface_mesh_enabled(bool p_enabled);
+	bool is_surface_mesh_enabled() const { return surface_mesh_enabled; }
+	void set_surface_anisotropy_enabled(bool p_enabled) { surface_anisotropy_enabled = p_enabled; }
+	bool is_surface_anisotropy_enabled() const { return surface_anisotropy_enabled; }
+	// Thread-safe copy of the latest isosurface. Returns the triangle count.
+	// p_have_version is the caller's last-seen mesh_version; if it still matches,
+	// nothing is copied and r_* are left untouched (caller should skip its rebuild).
+	uint32_t copy_surface_mesh(LocalVector<Vector3> &r_vertices, LocalVector<Vector3> &r_normals, LocalVector<int32_t> &r_indices, uint32_t &p_have_version) const;
+	// Same, for the foam isosurface layer.
+	uint32_t copy_foam_mesh(LocalVector<Vector3> &r_vertices, LocalVector<Vector3> &r_normals, LocalVector<int32_t> &r_indices, uint32_t &p_have_version) const;
 
 	// Fraction (0..1) of the world-space box filled by fluid, from the fraction
 	// of particles inside it scaled by particle volume. A cheap buoyancy probe.

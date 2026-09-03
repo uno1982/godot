@@ -142,6 +142,26 @@ GPU-only: the node is inert unless the active physics engine is PhysX, the build
 has GPU support, and a CUDA device is present. See the class reference for
 details.
 
+### Editor
+
+`PhysXParticleFluid3D` has a viewport gizmo: a wireframe box for `spawn_region_size`
+(with drag handles), a ring for `emission_radius` and an arrow for
+`emission_velocity`. The node shows configuration warnings when the 3D physics
+engine is not PhysX, when `surface_anisotropy` is set without `surface_mesh` or
+while emitting, or at very high particle counts. The GPU sim does not run in the
+editor — press Play to see the fluid.
+
+### Surface rendering
+
+Set `surface_mesh` on the node to draw the fluid as a smooth liquid surface
+instead of spheres: PhysX smooths the particle positions and marching-cubes a
+triangle mesh on the GPU (`PxIsosurfaceExtractor`), which the node renders as an
+`ArrayMesh`. Give it a water look with `material_override` (transparency +
+refraction). It uses the normal Godot material pipeline and needs no compositor
+setup. `surface_anisotropy` optionally feeds PhysX per-particle anisotropy to the
+extractor for sharper crests — off by default; leave it off while emitting, where
+fast particles along the stream can mesh as spikes.
+
 ## Determinism and multiplayer
 
 - **GPU dynamics is never deterministic** — GPU solver scheduling varies run to

@@ -1,0 +1,163 @@
+/**************************************************************************/
+/*  physx_editor_plugin.cpp                                               */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
+
+#include "physx_editor_plugin.h"
+
+#include "../nodes/physx_particle_fluid_3d.h"
+
+#include "editor/editor_undo_redo_manager.h"
+#include "editor/scene/3d/node_3d_editor_plugin.h"
+#include "editor/settings/editor_settings.h"
+
+PhysXParticleFluid3DGizmoPlugin::PhysXParticleFluid3DGizmoPlugin() {
+	helper.instantiate();
+	create_material("spawn_region", Color(0.4, 0.7, 1.0));
+	create_material("emission", Color(0.3, 0.85, 1.0));
+	create_handle_material("handles");
+}
+
+bool PhysXParticleFluid3DGizmoPlugin::has_gizmo(Node3D *p_spatial) {
+	return Object::cast_to<PhysXParticleFluid3D>(p_spatial) != nullptr;
+}
+
+String PhysXParticleFluid3DGizmoPlugin::get_gizmo_name() const {
+	return "PhysXParticleFluid3D";
+}
+
+int PhysXParticleFluid3DGizmoPlugin::get_priority() const {
+	return -1;
+}
+
+bool PhysXParticleFluid3DGizmoPlugin::is_selectable_when_hidden() const {
+	return true;
+}
+
+void PhysXParticleFluid3DGizmoPlugin::redraw(EditorNode3DGizmo *p_gizmo) {
+	PhysXParticleFluid3D *fluid = Object::cast_to<PhysXParticleFluid3D>(p_gizmo->get_node_3d());
+	p_gizmo->clear();
+
+	const Ref<Material> region_material = get_material("spawn_region", p_gizmo);
+	const Ref<Material> emission_material = get_material("emission", p_gizmo);
+
+	// Spawn region: a wireframe box centered on the node.
+	const Vector3 size = fluid->get_spawn_region_size();
+	AABB aabb;
+	aabb.size = size;
+	aabb.position = size * -0.5;
+
+	Vector<Vector3> lines;
+	for (int i = 0; i < 12; i++) {
+		Vector3 a, b;
+		aabb.get_edge(i, a, b);
+		lines.push_back(a);
+		lines.push_back(b);
+	}
+	p_gizmo->add_lines(lines, region_material);
+	p_gizmo->add_collision_segments(lines);
+	p_gizmo->add_handles(helper->box_get_handles(size), get_material("handles"));
+
+	// Emission: a ring for the radius and an arrow for the velocity. The moving
+	// particle preview (a CPU animation on the node itself) shows the actual jet.
+	const float radius = fluid->get_emission_radius();
+	const Vector3 vel = fluid->get_emission_velocity();
+	Vector3 dir = vel.normalized();
+	if (dir.is_zero_approx()) {
+		dir = Vector3(0, -1, 0);
+	}
+	Vector3 ortho_a = dir.cross(Vector3(0, 1, 0));
+	if (ortho_a.is_zero_approx()) {
+		ortho_a = dir.cross(Vector3(1, 0, 0));
+	}
+	ortho_a.normalize();
+	const Vector3 ortho_b = dir.cross(ortho_a).normalized();
+
+	Vector<Vector3> em;
+	const int segs = 28;
+	for (int i = 0; i < segs; i++) {
+		const float a0 = Math::TAU * i / segs;
+		const float a1 = Math::TAU * (i + 1) / segs;
+		em.push_back((ortho_a * Math::cos(a0) + ortho_b * Math::sin(a0)) * radius);
+		em.push_back((ortho_a * Math::cos(a1) + ortho_b * Math::sin(a1)) * radius);
+	}
+	if (!vel.is_zero_approx()) {
+		const float len = CLAMP(vel.length() * 0.3f, 0.4f, MAX(size.length(), 1.0f));
+		em.push_back(Vector3());
+		em.push_back(dir * len);
+		const float h = len * 0.12f;
+		em.push_back(dir * len);
+		em.push_back(dir * (len - h) + ortho_a * h);
+		em.push_back(dir * len);
+		em.push_back(dir * (len - h) - ortho_a * h);
+	}
+	p_gizmo->add_lines(em, emission_material);
+}
+
+String PhysXParticleFluid3DGizmoPlugin::get_handle_name(const EditorNode3DGizmo *p_gizmo, int p_id, bool p_secondary) const {
+	return helper->box_get_handle_name(p_id);
+}
+
+Variant PhysXParticleFluid3DGizmoPlugin::get_handle_value(const EditorNode3DGizmo *p_gizmo, int p_id, bool p_secondary) const {
+	return Object::cast_to<PhysXParticleFluid3D>(p_gizmo->get_node_3d())->get_spawn_region_size();
+}
+
+void PhysXParticleFluid3DGizmoPlugin::begin_handle_action(const EditorNode3DGizmo *p_gizmo, int p_id, bool p_secondary) {
+	helper->initialize_handle_action(get_handle_value(p_gizmo, p_id, p_secondary), p_gizmo->get_node_3d()->get_global_transform());
+}
+
+void PhysXParticleFluid3DGizmoPlugin::set_handle(const EditorNode3DGizmo *p_gizmo, int p_id, bool p_secondary, Camera3D *p_camera, const Point2 &p_point) {
+	PhysXParticleFluid3D *fluid = Object::cast_to<PhysXParticleFluid3D>(p_gizmo->get_node_3d());
+	Vector3 size = fluid->get_spawn_region_size();
+
+	Vector3 sg[2];
+	helper->get_segment(p_camera, p_point, sg);
+
+	Vector3 position; // ignored: the region stays centered on the node
+	helper->box_set_handle(sg, p_id, size, position);
+	fluid->set_spawn_region_size(size);
+}
+
+void PhysXParticleFluid3DGizmoPlugin::commit_handle(const EditorNode3DGizmo *p_gizmo, int p_id, bool p_secondary, const Variant &p_restore, bool p_cancel) {
+	PhysXParticleFluid3D *fluid = Object::cast_to<PhysXParticleFluid3D>(p_gizmo->get_node_3d());
+	if (p_cancel) {
+		fluid->set_spawn_region_size(p_restore);
+		return;
+	}
+	EditorUndoRedoManager *ur = EditorUndoRedoManager::get_singleton();
+	ur->create_action(TTR("Change Fluid Spawn Region"));
+	ur->add_do_method(fluid, "set_spawn_region_size", fluid->get_spawn_region_size());
+	ur->add_undo_method(fluid, "set_spawn_region_size", p_restore);
+	ur->commit_action();
+}
+
+PhysXEditorPlugin::PhysXEditorPlugin() {
+	Ref<PhysXParticleFluid3DGizmoPlugin> gizmo_plugin;
+	gizmo_plugin.instantiate();
+	Node3DEditor::get_singleton()->add_gizmo_plugin(gizmo_plugin);
+}

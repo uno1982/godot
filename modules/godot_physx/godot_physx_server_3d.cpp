@@ -824,13 +824,14 @@ void GodotPhysXServer3D::particle_fluid_clear(RID p_fluid) {
 	fluid->clear();
 }
 
-void GodotPhysXServer3D::particle_fluid_set_foam(RID p_fluid, bool p_enabled, int p_capacity, real_t p_lifetime, real_t p_threshold, real_t p_buoyancy) {
+void GodotPhysXServer3D::particle_fluid_set_foam(RID p_fluid, bool p_enabled, int p_capacity, real_t p_lifetime, real_t p_threshold, real_t p_buoyancy, real_t p_size) {
 	GodotPhysXParticleFluid3D *fluid = fluid_owner.get_or_null(p_fluid);
 	ERR_FAIL_NULL(fluid);
 	fluid->set_foam_capacity(p_capacity > 0 ? (uint32_t)p_capacity : 1);
 	fluid->set_foam_lifetime(p_lifetime);
 	fluid->set_foam_threshold(p_threshold);
 	fluid->set_foam_buoyancy(p_buoyancy);
+	fluid->set_foam_size(p_size);
 	fluid->set_foam_enabled(p_enabled);
 }
 
@@ -850,6 +851,66 @@ int GodotPhysXServer3D::particle_fluid_get_foam_count(RID p_fluid) const {
 	GodotPhysXParticleFluid3D *fluid = fluid_owner.get_or_null(p_fluid);
 	ERR_FAIL_NULL_V(fluid, 0);
 	return (int)fluid->get_foam_count();
+}
+
+void GodotPhysXServer3D::particle_fluid_set_surface_mesh(RID p_fluid, bool p_enabled) {
+	GodotPhysXParticleFluid3D *fluid = fluid_owner.get_or_null(p_fluid);
+	ERR_FAIL_NULL(fluid);
+	fluid->set_surface_mesh_enabled(p_enabled);
+}
+
+void GodotPhysXServer3D::particle_fluid_set_surface_anisotropy(RID p_fluid, bool p_enabled) {
+	GodotPhysXParticleFluid3D *fluid = fluid_owner.get_or_null(p_fluid);
+	ERR_FAIL_NULL(fluid);
+	fluid->set_surface_anisotropy_enabled(p_enabled);
+}
+
+int GodotPhysXServer3D::particle_fluid_get_surface_mesh(RID p_fluid, PackedVector3Array &r_vertices, PackedVector3Array &r_normals, PackedInt32Array &r_indices, uint32_t &r_version) const {
+	GodotPhysXParticleFluid3D *fluid = fluid_owner.get_or_null(p_fluid);
+	ERR_FAIL_NULL_V(fluid, 0);
+	LocalVector<Vector3> v, n;
+	LocalVector<int32_t> idx;
+	const uint32_t tris = fluid->copy_surface_mesh(v, n, idx, r_version);
+	if (tris == UINT32_MAX) {
+		return -1; // unchanged; caller keeps its current mesh
+	}
+	r_vertices.resize(v.size());
+	r_normals.resize(n.size());
+	r_indices.resize(idx.size());
+	if (v.size() > 0) {
+		memcpy(r_vertices.ptrw(), v.ptr(), v.size() * sizeof(Vector3));
+	}
+	if (n.size() > 0) {
+		memcpy(r_normals.ptrw(), n.ptr(), n.size() * sizeof(Vector3));
+	}
+	if (idx.size() > 0) {
+		memcpy(r_indices.ptrw(), idx.ptr(), idx.size() * sizeof(int32_t));
+	}
+	return (int)tris;
+}
+
+int GodotPhysXServer3D::particle_fluid_get_foam_mesh(RID p_fluid, PackedVector3Array &r_vertices, PackedVector3Array &r_normals, PackedInt32Array &r_indices, uint32_t &r_version) const {
+	GodotPhysXParticleFluid3D *fluid = fluid_owner.get_or_null(p_fluid);
+	ERR_FAIL_NULL_V(fluid, 0);
+	LocalVector<Vector3> v, n;
+	LocalVector<int32_t> idx;
+	const uint32_t tris = fluid->copy_foam_mesh(v, n, idx, r_version);
+	if (tris == UINT32_MAX) {
+		return -1;
+	}
+	r_vertices.resize(v.size());
+	r_normals.resize(n.size());
+	r_indices.resize(idx.size());
+	if (v.size() > 0) {
+		memcpy(r_vertices.ptrw(), v.ptr(), v.size() * sizeof(Vector3));
+	}
+	if (n.size() > 0) {
+		memcpy(r_normals.ptrw(), n.ptr(), n.size() * sizeof(Vector3));
+	}
+	if (idx.size() > 0) {
+		memcpy(r_indices.ptrw(), idx.ptr(), idx.size() * sizeof(int32_t));
+	}
+	return (int)tris;
 }
 
 Vector<Vector3> GodotPhysXServer3D::particle_fluid_get_positions(RID p_fluid) const {

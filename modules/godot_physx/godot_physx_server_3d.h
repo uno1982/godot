@@ -236,11 +236,20 @@ public:
 	void particle_fluid_set_particles(RID p_fluid, const Vector<Vector3> &p_positions, const Vector3 &p_initial_velocity);
 	void particle_fluid_emit(RID p_fluid, const Vector<Vector3> &p_positions, const Vector3 &p_velocity);
 	void particle_fluid_clear(RID p_fluid);
-	void particle_fluid_set_foam(RID p_fluid, bool p_enabled, int p_capacity, real_t p_lifetime, real_t p_threshold, real_t p_buoyancy);
+	void particle_fluid_set_foam(RID p_fluid, bool p_enabled, int p_capacity, real_t p_lifetime, real_t p_threshold, real_t p_buoyancy, real_t p_size);
 	Vector<Vector3> particle_fluid_get_positions(RID p_fluid) const;
 	Vector<Vector3> particle_fluid_get_foam_positions(RID p_fluid) const;
 	int particle_fluid_get_particle_count(RID p_fluid) const;
 	int particle_fluid_get_foam_count(RID p_fluid) const;
+
+	void particle_fluid_set_surface_mesh(RID p_fluid, bool p_enabled);
+	void particle_fluid_set_surface_anisotropy(RID p_fluid, bool p_enabled);
+	// Fills Godot arrays with the latest GPU isosurface; returns the triangle count.
+	// r_version: pass the last-seen version; returns -1 (leaving r_* untouched) if
+	// the mesh is unchanged, else the triangle count and the new version.
+	int particle_fluid_get_surface_mesh(RID p_fluid, PackedVector3Array &r_vertices, PackedVector3Array &r_normals, PackedInt32Array &r_indices, uint32_t &r_version) const;
+	// Same, for the coarse foam isosurface layer (diffuse particles).
+	int particle_fluid_get_foam_mesh(RID p_fluid, PackedVector3Array &r_vertices, PackedVector3Array &r_normals, PackedInt32Array &r_indices, uint32_t &r_version) const;
 	real_t particle_fluid_get_submersion(RID p_fluid, const AABB &p_world_aabb) const;
 
 	/* MISC */

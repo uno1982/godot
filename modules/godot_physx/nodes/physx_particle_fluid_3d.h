@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "core/templates/local_vector.h"
 #include "scene/3d/visual_instance_3d.h"
 #include "scene/resources/mesh.h"
 
@@ -63,20 +64,54 @@ class PhysXParticleFluid3D : public GeometryInstance3D {
 	float emission_radius = 0.1; // spawn disc/sphere radius at the node origin
 	Vector3 emission_velocity = Vector3(0, -3, 0); // local space; length is speed
 
+	// When true, PhysX marching-cubes a smooth triangle mesh from the particles
+	// (PxIsosurfaceExtractor) and this node draws it as an ArrayMesh.
+	bool surface_mesh = false;
+	// Opt-in: feed PhysX per-particle anisotropy to the isosurface extractor.
+	// Crisper crests, but it needles fast particles, so keep it off while emitting.
+	bool surface_anisotropy = false;
+	RID array_mesh;
+	Ref<Material> water_material;
+	uint32_t surface_mesh_version = 0;
+
+	// Foam isosurface layer: a coarser second mesh over the diffuse particles,
+	// drawn only alongside surface_mesh. Its own world-space instance.
+	RID foam_array_mesh;
+	RID foam_mesh_instance;
+	Ref<Material> foam_water_material;
+	uint32_t foam_surface_mesh_version = 0;
+
 	bool foam_enabled = false;
 	int foam_particle_count = 16384;
 	float foam_lifetime = 1.5;
 	float foam_threshold = 300.0;
 	float foam_buoyancy = 0.9;
+	float foam_size = 0.0; // froth clump scale; 0 = follow particle_size
+	float _effective_foam_size() const { return foam_size > 0.0f ? foam_size : particle_size; }
 
 	bool spawned = false;
 	double emit_accum = 0.0;
+
+	// Editor-only: a cheap CPU particle animation (spawn -> gravity -> recycle)
+	// so the emitter's motion reads in the viewport. Never runs at game time.
+	RID preview_multimesh;
+	Ref<Mesh> preview_mesh;
+	LocalVector<Vector3> preview_pos;
+	LocalVector<Vector3> preview_vel;
+	LocalVector<float> preview_age;
+	double preview_accum = 0.0;
+	double preview_throttle = 0.0;
+	void _editor_preview_enter();
+	void _editor_preview_exit();
+	void _editor_preview_step(double p_delta);
 
 	void _make_fluid();
 	void _free_fluid();
 	void _apply_params();
 	void _apply_foam();
 	void _update_render();
+	void _update_surface_mesh();
+	void _commit_iso_mesh(RID p_mesh, PackedVector3Array &verts, PackedVector3Array &normals, PackedInt32Array &indices, const Ref<Material> &p_material, bool p_to_local, bool p_keep_largest_component, float p_feature_size);
 	void _emit_step(double p_delta);
 
 protected:
@@ -110,6 +145,11 @@ public:
 	void set_emission_velocity(const Vector3 &p_velocity);
 	Vector3 get_emission_velocity() const { return emission_velocity; }
 
+	void set_surface_mesh(bool p_enabled);
+	bool is_surface_mesh() const { return surface_mesh; }
+	void set_surface_anisotropy(bool p_enabled);
+	bool is_surface_anisotropy() const { return surface_anisotropy; }
+
 	void set_foam_enabled(bool p_enabled);
 	bool is_foam_enabled() const { return foam_enabled; }
 	void set_foam_particle_count(int p_count);
@@ -120,6 +160,8 @@ public:
 	float get_foam_threshold() const { return foam_threshold; }
 	void set_foam_buoyancy(float p_v);
 	float get_foam_buoyancy() const { return foam_buoyancy; }
+	void set_foam_size(float p_v);
+	float get_foam_size() const { return foam_size; }
 	int get_live_foam_count() const;
 
 	// Fill the region (centered on this node) with a jittered grid of particles.
@@ -134,6 +176,7 @@ public:
 	float get_submersion(const AABB &p_world_aabb) const;
 
 	AABB get_aabb() const override;
+	PackedStringArray get_configuration_warnings() const override;
 
 	PhysXParticleFluid3D();
 	~PhysXParticleFluid3D();

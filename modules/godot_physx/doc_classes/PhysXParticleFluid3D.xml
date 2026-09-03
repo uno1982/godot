@@ -69,13 +69,16 @@
 			How strongly bubble-type foam particles (those below the surface) rise back up, from 0 to 1. Only used when [member foam_enabled] is set.
 		</member>
 		<member name="foam_enabled" type="bool" setter="set_foam_enabled" getter="is_foam_enabled" default="false">
-			When enabled, the solver spawns diffuse particles — foam, spray and bubbles — wherever the fluid is agitated enough (splashes, streams hitting a pool, fast-moving crests). They are drawn as a separate cloud of small spheres and do not affect the fluid. Toggling this or changing [member foam_particle_count] rebuilds the particle buffer.
+			When enabled, the solver spawns diffuse particles — foam, spray and bubbles — wherever the fluid is agitated enough (splashes, streams hitting a pool, fast-moving crests). They do not affect the fluid. With [member surface_mesh] on they are drawn as their own coarse isosurface layer — a whiter, rougher froth that sits on the water and depth-sorts with it; otherwise they are drawn as a cloud of small spheres. Toggling this or changing [member foam_particle_count] rebuilds the particle buffer.
 		</member>
 		<member name="foam_lifetime" type="float" setter="set_foam_lifetime" getter="get_foam_lifetime" default="1.5">
 			How long, in seconds, a diffuse particle lives before it disappears. Only used when [member foam_enabled] is set.
 		</member>
 		<member name="foam_particle_count" type="int" setter="set_foam_particle_count" getter="get_foam_particle_count" default="16384">
 			Maximum number of diffuse particles. Only used when [member foam_enabled] is set.
+		</member>
+		<member name="foam_size" type="float" setter="set_foam_size" getter="get_foam_size" default="0.0">
+			Froth clump scale, in meters, for the foam layer — independent of [member particle_size]. Larger values give chunkier sea-foam, smaller values a finer spray. [code]0[/code] means follow [member particle_size]. Only used when [member foam_enabled] is set; changing it while [member surface_mesh] is on rebuilds the foam extractor.
 		</member>
 		<member name="foam_threshold" type="float" setter="set_foam_threshold" getter="get_foam_threshold" default="300.0">
 			How agitated the fluid must be locally before diffuse particles spawn there. Lower values produce foam more readily. Only used when [member foam_enabled] is set.
@@ -91,6 +94,13 @@
 		</member>
 		<member name="spawn_region_size" type="Vector3" setter="set_spawn_region_size" getter="get_spawn_region_size" default="Vector3(1, 1, 1)">
 			Size of the box, centered on the node, that [method spawn] fills with particles.
+		</member>
+		<member name="surface_anisotropy" type="bool" setter="set_surface_anisotropy" getter="is_surface_anisotropy" default="false">
+			Only used when [member surface_mesh] is enabled. Anisotropy is PhysX computing a per-particle ellipsoid from each particle's neighbor distribution instead of treating every particle as a sphere: a particle deep in the fluid stays round, while one on the surface or in a thin sheet is flattened and aligned to that surface. Feeding those ellipsoids to the isosurface extractor gives sharper wave crests and thinner splash sheets, so the surface looks less like a cluster of blobs.
+			The trade-off is that a fast-moving or isolated particle gets a strongly stretched ellipsoid that marching cubes can mesh as a thin spike, so this is off by default and best reserved for a settled pool. Leave it disabled while the fluid is actively emitting or splashing.
+		</member>
+		<member name="surface_mesh" type="bool" setter="set_surface_mesh" getter="is_surface_mesh" default="false">
+			When enabled, PhysX marching-cubes a smooth triangle mesh from the particles on the GPU (position smoothing + [code]PxIsosurfaceExtractor[/code], plus optional [member surface_anisotropy]) and this node draws that instead of the sphere [MultiMesh]. Apply a water look with [member GeometryInstance3D.material_override] (transparency + refraction).
 		</member>
 		<member name="surface_tension" type="float" setter="set_surface_tension" getter="get_surface_tension" default="0.006">
 			Strength of the force that minimizes the fluid's surface area, rounding off droplets and edges.

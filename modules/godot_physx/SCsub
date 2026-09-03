@@ -73,6 +73,7 @@ if env["platform"] == "windows":
 module_obj = []
 env_physx.add_source_files(module_obj, "*.cpp")
 env_physx.add_source_files(module_obj, "joints/*.cpp")
+env_physx.add_source_files(module_obj, "nodes/*.cpp")
 env_physx.add_source_files(module_obj, "objects/*.cpp")
 env_physx.add_source_files(module_obj, "shapes/*.cpp")
 env_physx.add_source_files(module_obj, "spaces/*.cpp")

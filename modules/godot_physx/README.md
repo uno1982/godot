@@ -112,6 +112,36 @@ that overlap the area, each physics step, folded across overlapping areas in
   and Jolt apply area wind only to `SoftBody3D`; this backend also applies it to
   rigid bodies.
 
+## GPU fluid — `PhysXParticleFluid3D`
+
+A `GeometryInstance3D`-derived node that fills a box region with GPU position-
+based fluid particles (PhysX 5 `PxPBDParticleSystem`). The particles collide with
+the rigid bodies in the same space and are drawn as a `MultiMesh` of spheres
+(`material_override` applies). Tunables: `particle_count`, `particle_size`,
+`viscosity`, `surface_tension`, `cohesion`, `vorticity`.
+
+Set `emitting` to stream particles in over time instead of spawning them all at
+once — a faucet or hose. Particles spawn near the node origin at `emission_rate`
+per second within `emission_radius` and with `emission_velocity` (node-local),
+and once `particle_count` is reached the oldest particles are recycled.
+
+Set `foam_enabled` to have the solver spawn diffuse particles — foam, spray and
+bubbles — where the fluid is agitated (`PxParticleAndDiffuseBuffer`). They render
+as a separate sphere cloud, do not affect the fluid, and are tuned with
+`foam_particle_count`, `foam_lifetime`, `foam_threshold`, `foam_buoyancy`.
+
+`get_submersion(world_aabb)` returns the 0..1 fraction of a box currently filled
+with fluid — a primitive for script-side buoyancy.
+
+Rigid-body interaction is collision only: bodies splash and displace the fluid,
+but PhysX PBD does not produce accurate density-based buoyancy (a light body
+does not cleanly float, a dense one does not cleanly sink through). Use
+`get_submersion()` to apply your own buoyant force where that matters.
+
+GPU-only: the node is inert unless the active physics engine is PhysX, the build
+has GPU support, and a CUDA device is present. See the class reference for
+details.
+
 ## Determinism and multiplayer
 
 - **GPU dynamics is never deterministic** — GPU solver scheduling varies run to

@@ -47,6 +47,7 @@ class GodotPhysXBody3D;
 class GodotPhysXShape3D;
 class GodotPhysXArea3D;
 class GodotPhysXJoint3D;
+class GodotPhysXParticleFluid3D;
 
 // PhysX 5 implementation of PhysicsServer3D, built on top of PhysicsServer3DDummy
 // so that only the methods the backend actually implements need to be overridden;
@@ -67,6 +68,7 @@ class GodotPhysXServer3D : public PhysicsServer3DDummy {
 	mutable RID_PtrOwner<GodotPhysXBody3D, true> body_owner;
 	mutable RID_PtrOwner<GodotPhysXShape3D, true> shape_owner;
 	mutable RID_PtrOwner<GodotPhysXJoint3D, true> joint_owner;
+	mutable RID_PtrOwner<GodotPhysXParticleFluid3D, true> fluid_owner;
 
 	HashSet<GodotPhysXSpace3D *> active_spaces;
 
@@ -224,6 +226,22 @@ public:
 	virtual real_t generic_6dof_joint_get_param(RID p_joint, Vector3::Axis p_axis, G6DOFJointAxisParam p_param) const override;
 	virtual void generic_6dof_joint_set_flag(RID p_joint, Vector3::Axis p_axis, G6DOFJointAxisFlag p_flag, bool p_enable) override;
 	virtual bool generic_6dof_joint_get_flag(RID p_joint, Vector3::Axis p_axis, G6DOFJointAxisFlag p_flag) const override;
+
+	/* PARTICLE FLUID (module extension -- not part of PhysicsServer3D) */
+	// Called by PhysXParticleFluid3D via GodotPhysXServer3D::get_singleton().
+	RID particle_fluid_create();
+	void particle_fluid_set_space(RID p_fluid, RID p_space);
+	void particle_fluid_set_param(RID p_fluid, int p_param, real_t p_value);
+	void particle_fluid_set_capacity(RID p_fluid, int p_max);
+	void particle_fluid_set_particles(RID p_fluid, const Vector<Vector3> &p_positions, const Vector3 &p_initial_velocity);
+	void particle_fluid_emit(RID p_fluid, const Vector<Vector3> &p_positions, const Vector3 &p_velocity);
+	void particle_fluid_clear(RID p_fluid);
+	void particle_fluid_set_foam(RID p_fluid, bool p_enabled, int p_capacity, real_t p_lifetime, real_t p_threshold, real_t p_buoyancy);
+	Vector<Vector3> particle_fluid_get_positions(RID p_fluid) const;
+	Vector<Vector3> particle_fluid_get_foam_positions(RID p_fluid) const;
+	int particle_fluid_get_particle_count(RID p_fluid) const;
+	int particle_fluid_get_foam_count(RID p_fluid) const;
+	real_t particle_fluid_get_submersion(RID p_fluid, const AABB &p_world_aabb) const;
 
 	/* MISC */
 	virtual void free_rid(RID p_rid) override;

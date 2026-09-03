@@ -47,12 +47,14 @@ class PxCudaContextManager;
 
 class GodotPhysXBody3D;
 class GodotPhysXArea3D;
+class GodotPhysXParticleFluid3D;
 class GodotPhysXDirectSpaceState3D;
 
 class GodotPhysXSpace3D {
 	RID self;
 	physx::PxPhysics *px_physics = nullptr;
 	physx::PxScene *px_scene = nullptr;
+	physx::PxCudaContextManager *px_cuda = nullptr; // null unless a GPU build with a usable CUDA device
 	physx::PxMaterial *default_material = nullptr;
 	GodotPhysXDirectSpaceState3D *direct_state = nullptr;
 
@@ -72,6 +74,7 @@ class GodotPhysXSpace3D {
 	HashSet<GodotPhysXBody3D *> awake_bodies; // active as of the last step()
 	HashSet<GodotPhysXBody3D *> contact_reporters; // bodies with contact monitoring on
 	HashSet<GodotPhysXArea3D *> areas;
+	HashSet<GodotPhysXParticleFluid3D *> fluids;
 	LocalVector<GodotPhysXBody3D *> sync_bodies; // to notify in the next call_queries()
 
 public:
@@ -80,6 +83,7 @@ public:
 
 	physx::PxPhysics *get_px_physics() const { return px_physics; }
 	physx::PxScene *get_px_scene() const { return px_scene; }
+	physx::PxCudaContextManager *get_px_cuda() const { return px_cuda; }
 	physx::PxMaterial *get_default_material() const { return default_material; }
 	real_t get_last_step() const { return last_step; }
 	Vector3 get_gravity() const { return gravity; }
@@ -114,6 +118,9 @@ public:
 
 	void register_area(GodotPhysXArea3D *p_area) { areas.insert(p_area); }
 	void unregister_area(GodotPhysXArea3D *p_area) { areas.erase(p_area); }
+
+	void register_fluid(GodotPhysXParticleFluid3D *p_fluid) { fluids.insert(p_fluid); }
+	void unregister_fluid(GodotPhysXParticleFluid3D *p_fluid) { fluids.erase(p_fluid); }
 
 	// Drop a body from every area's overlap set (body leaving the simulation).
 	void body_removed_from_areas(GodotPhysXBody3D *p_body);

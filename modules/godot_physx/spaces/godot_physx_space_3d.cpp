@@ -34,6 +34,7 @@
 #include "../godot_physx_project_settings.h"
 #include "../objects/godot_physx_area_3d.h"
 #include "../objects/godot_physx_body_3d.h"
+#include "../objects/godot_physx_particle_fluid_3d.h"
 #include "../shapes/godot_physx_shape_3d.h"
 #include "godot_physx_direct_state_3d.h"
 
@@ -199,13 +200,14 @@ GodotPhysXSpace3D::GodotPhysXSpace3D(PxPhysics *p_physics, PxDefaultCpuDispatche
 	}
 
 	if (p_cuda) {
+		px_cuda = p_cuda;
 		scene_desc.cudaContextManager = p_cuda;
 		scene_desc.flags |= PxSceneFlag::eENABLE_GPU_DYNAMICS;
 		scene_desc.broadPhaseType = PxBroadPhaseType::eGPU;
 		// Headroom for large scenes; PhysX grows some of these on demand but
-		// warns if the initial capacity is exceeded.
-		// Sized for tens of thousands of colliding rigid bodies; disable the
-		// deformable/particle buffers we don't use yet.
+		// warns if the initial capacity is exceeded. Sized for tens of thousands
+		// of colliding rigid bodies plus a modest particle-contact budget for
+		// PhysXParticleFluid3D; deformable surface/volume buffers stay off.
 		scene_desc.gpuMaxNumPartitions = 8;
 		scene_desc.gpuDynamicsConfig.tempBufferCapacity = 64 * 1024 * 1024;
 		scene_desc.gpuDynamicsConfig.maxRigidContactCount = 4 * 1024 * 1024;
@@ -215,7 +217,7 @@ GodotPhysXSpace3D::GodotPhysXSpace3D(PxPhysics *p_physics, PxDefaultCpuDispatche
 		scene_desc.gpuDynamicsConfig.collisionStackSize = 256 * 1024 * 1024;
 		scene_desc.gpuDynamicsConfig.maxDeformableSurfaceContacts = 0;
 		scene_desc.gpuDynamicsConfig.maxDeformableVolumeContacts = 0;
-		scene_desc.gpuDynamicsConfig.maxParticleContacts = 0;
+		scene_desc.gpuDynamicsConfig.maxParticleContacts = 1 * 1024 * 1024;
 		gpu_enabled = true;
 	}
 
@@ -311,6 +313,11 @@ void GodotPhysXSpace3D::step(real_t p_step) {
 	PxU32 nb_active = 0;
 	PxActor **active = px_scene->getActiveActors(nb_active);
 	for (PxU32 i = 0; i < nb_active; i++) {
+		// The active set also contains particle systems and any future deformable
+		// actors; only rigid dynamics carry a GodotPhysXBody3D in userData.
+		if (!active[i]->is<PxRigidDynamic>()) {
+			continue;
+		}
 		GodotPhysXBody3D *body = static_cast<GodotPhysXBody3D *>(active[i]->userData);
 		if (!body) {
 			continue;
@@ -318,6 +325,10 @@ void GodotPhysXSpace3D::step(real_t p_step) {
 		body->pull_transform_from_px();
 		now_awake.insert(body);
 		sync_bodies.push_back(body);
+	}
+
+	for (GodotPhysXParticleFluid3D *fluid : fluids) {
+		fluid->read_back();
 	}
 
 	for (GodotPhysXBody3D *body : awake_bodies) {

@@ -35,6 +35,7 @@
 #include "joints/godot_physx_joint_3d.h"
 #include "objects/godot_physx_area_3d.h"
 #include "objects/godot_physx_body_3d.h"
+#include "objects/godot_physx_cloth_3d.h"
 #include "objects/godot_physx_particle_fluid_3d.h"
 #include "shapes/godot_physx_shape_3d.h"
 #include "spaces/godot_physx_direct_state_3d.h"
@@ -937,6 +938,79 @@ real_t GodotPhysXServer3D::particle_fluid_get_submersion(RID p_fluid, const AABB
 	return fluid->get_submersion(p_world_aabb);
 }
 
+/* GPU CLOTH */
+
+RID GodotPhysXServer3D::cloth_create() {
+	if (!px_cuda) {
+		return RID(); // no CUDA -> the node uses its CPU fallback
+	}
+	GodotPhysXCloth3D *cloth = memnew(GodotPhysXCloth3D);
+	RID rid = cloth_owner.make_rid(cloth);
+	cloth->set_self(rid);
+	return rid;
+}
+
+void GodotPhysXServer3D::cloth_set_space(RID p_cloth, RID p_space) {
+	GodotPhysXCloth3D *cloth = cloth_owner.get_or_null(p_cloth);
+	ERR_FAIL_NULL(cloth);
+	cloth->set_space(space_owner.get_or_null(p_space));
+}
+
+void GodotPhysXServer3D::cloth_set_params(RID p_cloth, real_t p_thickness, real_t p_density, real_t p_stretch, real_t p_bend, real_t p_damping, uint32_t p_collision_mask) {
+	GodotPhysXCloth3D *cloth = cloth_owner.get_or_null(p_cloth);
+	ERR_FAIL_NULL(cloth);
+	cloth->set_params(p_thickness, p_density, p_stretch, p_bend, p_damping, p_collision_mask);
+}
+
+void GodotPhysXServer3D::cloth_build(RID p_cloth, const Vector<Vector3> &p_positions, const Vector<int32_t> &p_indices, const Transform3D &p_xform) {
+	GodotPhysXCloth3D *cloth = cloth_owner.get_or_null(p_cloth);
+	ERR_FAIL_NULL(cloth);
+	cloth->build(p_positions, p_indices, p_xform);
+}
+
+void GodotPhysXServer3D::cloth_set_pinned(RID p_cloth, const Vector<int32_t> &p_pinned) {
+	GodotPhysXCloth3D *cloth = cloth_owner.get_or_null(p_cloth);
+	ERR_FAIL_NULL(cloth);
+	cloth->set_pinned(p_pinned);
+}
+
+void GodotPhysXServer3D::cloth_set_pin_targets(RID p_cloth, const Vector<Vector3> &p_world_targets) {
+	GodotPhysXCloth3D *cloth = cloth_owner.get_or_null(p_cloth);
+	ERR_FAIL_NULL(cloth);
+	cloth->set_pin_targets(p_world_targets);
+}
+
+void GodotPhysXServer3D::cloth_apply_wind(RID p_cloth, const Vector3 &p_wind, real_t p_drag, real_t p_lift, real_t p_dt) {
+	GodotPhysXCloth3D *cloth = cloth_owner.get_or_null(p_cloth);
+	ERR_FAIL_NULL(cloth);
+	cloth->apply_wind(p_wind, p_drag, p_lift, p_dt);
+}
+
+bool GodotPhysXServer3D::cloth_is_ready(RID p_cloth) const {
+	GodotPhysXCloth3D *cloth = cloth_owner.get_or_null(p_cloth);
+	return cloth && cloth->is_ready();
+}
+
+int GodotPhysXServer3D::cloth_get_mesh(RID p_cloth, PackedVector3Array &r_positions, PackedInt32Array &r_indices, uint32_t &r_version) const {
+	GodotPhysXCloth3D *cloth = cloth_owner.get_or_null(p_cloth);
+	ERR_FAIL_NULL_V(cloth, 0);
+	LocalVector<Vector3> p;
+	LocalVector<int32_t> idx;
+	const uint32_t tris = cloth->copy_mesh(p, idx, r_version);
+	if (tris == UINT32_MAX) {
+		return -1;
+	}
+	r_positions.resize(p.size());
+	r_indices.resize(idx.size());
+	if (p.size() > 0) {
+		memcpy(r_positions.ptrw(), p.ptr(), p.size() * sizeof(Vector3));
+	}
+	if (idx.size() > 0) {
+		memcpy(r_indices.ptrw(), idx.ptr(), idx.size() * sizeof(int32_t));
+	}
+	return (int)tris;
+}
+
 /* MISC */
 
 void GodotPhysXServer3D::free_rid(RID p_rid) {
@@ -955,6 +1029,10 @@ void GodotPhysXServer3D::free_rid(RID p_rid) {
 		fluid->set_space(nullptr);
 		fluid_owner.free(p_rid);
 		memdelete(fluid);
+	} else if (GodotPhysXCloth3D *cloth = cloth_owner.get_or_null(p_rid)) {
+		cloth->set_space(nullptr);
+		cloth_owner.free(p_rid);
+		memdelete(cloth);
 	} else if (GodotPhysXArea3D *area = area_owner.get_or_null(p_rid)) {
 		area->set_space(nullptr);
 		area_owner.free(p_rid);

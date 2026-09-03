@@ -34,6 +34,7 @@
 #include "../godot_physx_project_settings.h"
 #include "../objects/godot_physx_area_3d.h"
 #include "../objects/godot_physx_body_3d.h"
+#include "../objects/godot_physx_cloth_3d.h"
 #include "../objects/godot_physx_particle_fluid_3d.h"
 #include "../shapes/godot_physx_shape_3d.h"
 #include "godot_physx_direct_state_3d.h"
@@ -215,7 +216,9 @@ GodotPhysXSpace3D::GodotPhysXSpace3D(PxPhysics *p_physics, PxDefaultCpuDispatche
 		scene_desc.gpuDynamicsConfig.heapCapacity = 256 * 1024 * 1024;
 		scene_desc.gpuDynamicsConfig.foundLostPairsCapacity = 4 * 1024 * 1024;
 		scene_desc.gpuDynamicsConfig.collisionStackSize = 256 * 1024 * 1024;
-		scene_desc.gpuDynamicsConfig.maxDeformableSurfaceContacts = 0;
+		// Non-zero so PxDeformableSurface (cloth) can generate contacts; a
+		// surface touching anything with this at 0 overflows and kills GPU sim.
+		scene_desc.gpuDynamicsConfig.maxDeformableSurfaceContacts = 512 * 1024;
 		scene_desc.gpuDynamicsConfig.maxDeformableVolumeContacts = 0;
 		scene_desc.gpuDynamicsConfig.maxParticleContacts = 1 * 1024 * 1024;
 		gpu_enabled = true;
@@ -329,6 +332,9 @@ void GodotPhysXSpace3D::step(real_t p_step) {
 
 	for (GodotPhysXParticleFluid3D *fluid : fluids) {
 		fluid->read_back();
+	}
+	for (GodotPhysXCloth3D *cloth : cloths) {
+		cloth->read_back();
 	}
 
 	for (GodotPhysXBody3D *body : awake_bodies) {

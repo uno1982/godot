@@ -162,6 +162,30 @@ setup. `surface_anisotropy` optionally feeds PhysX per-particle anisotropy to th
 extractor for sharper crests — off by default; leave it off while emitting, where
 fast particles along the stream can mesh as spikes.
 
+## Cloth — `PhysXCloth3D`
+
+A cloth patch: a generated grid or a supplied triangle mesh, simulated and drawn
+as an `ArrayMesh` with a standard `material_override`. `simulation_mode` picks the
+solver:
+
+- **GPU** — a PhysX `PxDeformableSurface` (its own XPBD solver on CUDA). High
+  vertex counts, proper draping and two-way rigid-body contact. Needs a
+  `physx_gpu=yes` build and a CUDA device.
+- **CPU** — a built-in extended position-based-dynamics solver (`cloth/`). No
+  PhysX dependency, so it runs on any platform. Collision goes through
+  `PhysicsDirectSpaceState3D` queries and works regardless of the active engine.
+
+`Auto` (the default) uses the GPU path when it can and falls back to the CPU one
+otherwise, transparently — the same node either way. `is_gpu_accelerated()`
+reports which ran.
+
+Pin an edge, the corners or explicit vertex indices with `pin_mode` /
+`pinned_vertices`, or attach the pins to a moving `Node3D` with `anchor_path`.
+Wind comes from an assigned `wind_area` (`Area3D`) plus a constant `wind` vector,
+with `drag` / `lift` / `wind_turbulence` shaping the response. The node has a
+viewport gizmo: the rest-grid outline with size handles, a marker on each pinned
+vertex and a wind arrow.
+
 ## Determinism and multiplayer
 
 - **GPU dynamics is never deterministic** — GPU solver scheduling varies run to
@@ -184,6 +208,8 @@ For deterministic lockstep multiplayer, use the Jolt backend.
 - **Cylinder shapes** are approximated by a 16-sided convex prism.
 - **Concave (trimesh) shapes** are supported on static and kinematic bodies
   only, as in most engines.
+- **Cloth self-collision** is disabled; a cloth can pass through itself. Cloth
+  tearing is not implemented.
 - Windows x86-64 is the only platform wired up in the build script so far.
 
 ## Layout
@@ -193,7 +219,10 @@ For deterministic lockstep multiplayer, use the Jolt backend.
 | `godot_physx_server_3d.*` | `PhysicsServer3D` implementation; owns the PhysX foundation, physics, CPU dispatcher and CUDA context |
 | `godot_physx_project_settings.*` | registers and reads the `physics/physx_3d/*` settings |
 | `godot_physx_conversions.h` | `Vector3` / `Quaternion` / `Transform3D` ↔ PhysX conversions |
-| `objects/` | rigid bodies and areas |
+| `objects/` | rigid bodies, areas, the GPU fluid and the GPU cloth surface |
 | `shapes/` | collision shape wrappers and mesh cooking |
 | `spaces/` | the `PxScene` wrapper, direct space/body state, area-override application |
 | `joints/` | all `Joint3D` types |
+| `cloth/` | the CPU (XPBD) cloth solver — no PhysX dependency |
+| `nodes/` | `PhysXParticleFluid3D`, `PhysXCloth3D` |
+| `editor/` | viewport gizmos for the fluid and cloth nodes |

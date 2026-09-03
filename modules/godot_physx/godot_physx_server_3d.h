@@ -48,6 +48,7 @@ class GodotPhysXShape3D;
 class GodotPhysXArea3D;
 class GodotPhysXJoint3D;
 class GodotPhysXParticleFluid3D;
+class GodotPhysXCloth3D;
 
 // PhysX 5 implementation of PhysicsServer3D, built on top of PhysicsServer3DDummy
 // so that only the methods the backend actually implements need to be overridden;
@@ -69,6 +70,7 @@ class GodotPhysXServer3D : public PhysicsServer3DDummy {
 	mutable RID_PtrOwner<GodotPhysXShape3D, true> shape_owner;
 	mutable RID_PtrOwner<GodotPhysXJoint3D, true> joint_owner;
 	mutable RID_PtrOwner<GodotPhysXParticleFluid3D, true> fluid_owner;
+	mutable RID_PtrOwner<GodotPhysXCloth3D, true> cloth_owner;
 
 	HashSet<GodotPhysXSpace3D *> active_spaces;
 
@@ -251,6 +253,19 @@ public:
 	// Same, for the coarse foam isosurface layer (diffuse particles).
 	int particle_fluid_get_foam_mesh(RID p_fluid, PackedVector3Array &r_vertices, PackedVector3Array &r_normals, PackedInt32Array &r_indices, uint32_t &r_version) const;
 	real_t particle_fluid_get_submersion(RID p_fluid, const AABB &p_world_aabb) const;
+
+	// GPU cloth (PxDeformableSurface). Returns RID() when no CUDA device is
+	// available -- the caller then uses its CPU fallback.
+	RID cloth_create();
+	void cloth_set_space(RID p_cloth, RID p_space);
+	void cloth_set_params(RID p_cloth, real_t p_thickness, real_t p_density, real_t p_stretch, real_t p_bend, real_t p_damping, uint32_t p_collision_mask);
+	void cloth_build(RID p_cloth, const Vector<Vector3> &p_positions, const Vector<int32_t> &p_indices, const Transform3D &p_xform);
+	void cloth_set_pinned(RID p_cloth, const Vector<int32_t> &p_pinned);
+	void cloth_set_pin_targets(RID p_cloth, const Vector<Vector3> &p_world_targets);
+	void cloth_apply_wind(RID p_cloth, const Vector3 &p_wind, real_t p_drag, real_t p_lift, real_t p_dt);
+	bool cloth_is_ready(RID p_cloth) const;
+	int cloth_get_mesh(RID p_cloth, PackedVector3Array &r_positions, PackedInt32Array &r_indices, uint32_t &r_version) const;
+	bool has_gpu() const { return px_cuda != nullptr; }
 
 	/* MISC */
 	virtual void free_rid(RID p_rid) override;

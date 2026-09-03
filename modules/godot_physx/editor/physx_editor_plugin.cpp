@@ -30,11 +30,13 @@
 
 #include "physx_editor_plugin.h"
 
+#include "../nodes/physx_cloth_3d.h"
 #include "../nodes/physx_particle_fluid_3d.h"
 
 #include "editor/editor_undo_redo_manager.h"
 #include "editor/scene/3d/node_3d_editor_plugin.h"
 #include "editor/settings/editor_settings.h"
+#include "scene/3d/physics/area_3d.h"
 
 PhysXParticleFluid3DGizmoPlugin::PhysXParticleFluid3DGizmoPlugin() {
 	helper.instantiate();
@@ -156,8 +158,153 @@ void PhysXParticleFluid3DGizmoPlugin::commit_handle(const EditorNode3DGizmo *p_g
 	ur->commit_action();
 }
 
+// --- PhysXCloth3D ------------------------------------------------------------
+
+PhysXCloth3DGizmoPlugin::PhysXCloth3DGizmoPlugin() {
+	helper.instantiate();
+	create_material("cloth_outline", Color(0.55, 0.8, 0.45));
+	create_material("cloth_wind", Color(0.5, 0.85, 1.0));
+	create_material("cloth_pins", Color(1.0, 0.55, 0.2), false, true); // on top, so pins show through the cloth
+	create_handle_material("handles");
+}
+
+bool PhysXCloth3DGizmoPlugin::has_gizmo(Node3D *p_spatial) {
+	return Object::cast_to<PhysXCloth3D>(p_spatial) != nullptr;
+}
+
+String PhysXCloth3DGizmoPlugin::get_gizmo_name() const {
+	return "PhysXCloth3D";
+}
+
+int PhysXCloth3DGizmoPlugin::get_priority() const {
+	return -1;
+}
+
+bool PhysXCloth3DGizmoPlugin::is_selectable_when_hidden() const {
+	return true;
+}
+
+void PhysXCloth3DGizmoPlugin::redraw(EditorNode3DGizmo *p_gizmo) {
+	PhysXCloth3D *cloth = Object::cast_to<PhysXCloth3D>(p_gizmo->get_node_3d());
+	p_gizmo->clear();
+
+	const Vector2 gs = cloth->get_grid_size();
+	const Vector3 hx = Vector3(gs.x * 0.5, 0, 0);
+	const Vector3 hy = Vector3(0, gs.y * 0.5, 0);
+
+	// Rest grid outline (the node itself draws the filled rest mesh).
+	Vector<Vector3> outline;
+	const Vector3 c00 = -hx - hy;
+	const Vector3 c10 = hx - hy;
+	const Vector3 c11 = hx + hy;
+	const Vector3 c01 = -hx + hy;
+	outline.push_back(c00);
+	outline.push_back(c10);
+	outline.push_back(c10);
+	outline.push_back(c11);
+	outline.push_back(c11);
+	outline.push_back(c01);
+	outline.push_back(c01);
+	outline.push_back(c00);
+	p_gizmo->add_lines(outline, get_material("cloth_outline", p_gizmo));
+	p_gizmo->add_collision_segments(outline);
+
+	// Size handles: treat the grid as a flat box so the tested box handle logic
+	// can drive width/height.
+	p_gizmo->add_handles(helper->box_get_handles(Vector3(gs.x, gs.y, 0.02)), get_material("handles", p_gizmo));
+
+	// Pinned vertices: a small cross at each.
+	const PackedVector3Array pins = cloth->get_pinned_positions();
+	if (!pins.is_empty()) {
+		const float s = MAX(gs.length() * 0.02f, 0.02f);
+		Vector<Vector3> marks;
+		for (const Vector3 &p : pins) {
+			marks.push_back(p - Vector3(s, 0, 0));
+			marks.push_back(p + Vector3(s, 0, 0));
+			marks.push_back(p - Vector3(0, s, 0));
+			marks.push_back(p + Vector3(0, s, 0));
+			marks.push_back(p - Vector3(0, 0, s));
+			marks.push_back(p + Vector3(0, 0, s));
+		}
+		p_gizmo->add_lines(marks, get_material("cloth_pins", p_gizmo));
+	}
+
+	// Wind arrow: the constant wind, or the assigned Area3D's direction.
+	Vector3 wdir = cloth->get_wind();
+	Area3D *area = Object::cast_to<Area3D>(cloth->get_node_or_null(cloth->get_wind_area()));
+	if (area) {
+		Node3D *src = Object::cast_to<Node3D>(area->get_node_or_null(area->get_wind_source_path()));
+		if (src) {
+			const Transform3D wt = cloth->get_global_transform().affine_inverse() * src->get_global_transform();
+			wdir += -wt.basis.get_column(Vector3::AXIS_Z).normalized() * MAX(area->get_wind_force_magnitude(), 1.0);
+		}
+	}
+	if (!wdir.is_zero_approx()) {
+		Vector3 dir = wdir.normalized();
+		Vector3 up = dir.cross(Vector3(0, 1, 0));
+		if (up.is_zero_approx()) {
+			up = dir.cross(Vector3(1, 0, 0));
+		}
+		up.normalize();
+		const float len = CLAMP(wdir.length() * 0.15f, 0.5f, MAX(gs.length(), 1.0f));
+		const float head = len * 0.18f;
+		const Vector3 base = -dir * len * 0.5;
+		const Vector3 tip = dir * len * 0.5;
+		Vector<Vector3> arrow;
+		arrow.push_back(base);
+		arrow.push_back(tip);
+		arrow.push_back(tip);
+		arrow.push_back(tip - dir * head + up * head);
+		arrow.push_back(tip);
+		arrow.push_back(tip - dir * head - up * head);
+		p_gizmo->add_lines(arrow, get_material("cloth_wind", p_gizmo));
+	}
+}
+
+String PhysXCloth3DGizmoPlugin::get_handle_name(const EditorNode3DGizmo *p_gizmo, int p_id, bool p_secondary) const {
+	return helper->box_get_handle_name(p_id);
+}
+
+Variant PhysXCloth3DGizmoPlugin::get_handle_value(const EditorNode3DGizmo *p_gizmo, int p_id, bool p_secondary) const {
+	const Vector2 gs = Object::cast_to<PhysXCloth3D>(p_gizmo->get_node_3d())->get_grid_size();
+	return Vector3(gs.x, gs.y, 0.02);
+}
+
+void PhysXCloth3DGizmoPlugin::begin_handle_action(const EditorNode3DGizmo *p_gizmo, int p_id, bool p_secondary) {
+	helper->initialize_handle_action(get_handle_value(p_gizmo, p_id, p_secondary), p_gizmo->get_node_3d()->get_global_transform());
+}
+
+void PhysXCloth3DGizmoPlugin::set_handle(const EditorNode3DGizmo *p_gizmo, int p_id, bool p_secondary, Camera3D *p_camera, const Point2 &p_point) {
+	PhysXCloth3D *cloth = Object::cast_to<PhysXCloth3D>(p_gizmo->get_node_3d());
+	Vector3 size(cloth->get_grid_size().x, cloth->get_grid_size().y, 0.02);
+
+	Vector3 sg[2];
+	helper->get_segment(p_camera, p_point, sg);
+	Vector3 position;
+	helper->box_set_handle(sg, p_id, size, position);
+	cloth->set_grid_size(Vector2(MAX(size.x, 0.05), MAX(size.y, 0.05)));
+}
+
+void PhysXCloth3DGizmoPlugin::commit_handle(const EditorNode3DGizmo *p_gizmo, int p_id, bool p_secondary, const Variant &p_restore, bool p_cancel) {
+	PhysXCloth3D *cloth = Object::cast_to<PhysXCloth3D>(p_gizmo->get_node_3d());
+	const Vector3 restore = p_restore;
+	if (p_cancel) {
+		cloth->set_grid_size(Vector2(restore.x, restore.y));
+		return;
+	}
+	EditorUndoRedoManager *ur = EditorUndoRedoManager::get_singleton();
+	ur->create_action(TTR("Change Cloth Grid Size"));
+	ur->add_do_method(cloth, "set_grid_size", cloth->get_grid_size());
+	ur->add_undo_method(cloth, "set_grid_size", Vector2(restore.x, restore.y));
+	ur->commit_action();
+}
+
 PhysXEditorPlugin::PhysXEditorPlugin() {
-	Ref<PhysXParticleFluid3DGizmoPlugin> gizmo_plugin;
-	gizmo_plugin.instantiate();
-	Node3DEditor::get_singleton()->add_gizmo_plugin(gizmo_plugin);
+	Ref<PhysXParticleFluid3DGizmoPlugin> fluid_gizmo;
+	fluid_gizmo.instantiate();
+	Node3DEditor::get_singleton()->add_gizmo_plugin(fluid_gizmo);
+
+	Ref<PhysXCloth3DGizmoPlugin> cloth_gizmo;
+	cloth_gizmo.instantiate();
+	Node3DEditor::get_singleton()->add_gizmo_plugin(cloth_gizmo);
 }

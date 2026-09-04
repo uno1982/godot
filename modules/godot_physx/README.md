@@ -200,11 +200,23 @@ For deterministic lockstep multiplayer, use the Jolt backend.
 - **Joint chains under sustained force.** With the default `PGS` solver a chain
   of roughly three or more pin/6DOF joints will drift apart under a continuous
   external force such as area wind. Short chains, ragdolls and pendulums are
-  fine; for longer wind-loaded chains switch `solver_type` to `TGS`.
+  fine; for longer wind-loaded chains switch `solver_type` to `TGS`, or add a
+  `Generic6DOFJoint3D` linear/angular spring on each link to pull it back toward
+  its rest pose (PhysX 5 removed joint projection, so a spring is the closest
+  substitute).
 - **Not yet implemented:** heightmap and separation-ray shapes; area-to-area
   detection (`Area3D` monitoring another `Area3D`); center-of-mass and inertia
-  tensor overrides; 6DOF angular motors; joint softness / bias parameters.
+  tensor overrides; 6DOF angular motors; joint softness / bias / restitution
+  parameters. 6DOF linear and angular springs are supported (mapped onto PhysX
+  joint drives).
   Unsupported shapes are treated as having no collision and log a warning once.
+- **`PhysicalBone3D`** (physics-driven skeleton bones / ragdolls) simulates —
+  bodies, joints and the per-step transform sync all work — but the joint
+  softness / bias / relaxation parameters and `omit_force_integration` are not
+  mapped, so joint stiffness can't be tuned and the animated-to-simulated blend
+  is approximate. `SkeletonModifier3D` spring bones (`SpringBoneSimulator3D`,
+  for hair and clothing) are engine-side and unaffected — they work identically
+  on any backend.
 - **Cylinder shapes** are approximated by a 16-sided convex prism.
 - **Concave (trimesh) shapes** are supported on static and kinematic bodies
   only, as in most engines.

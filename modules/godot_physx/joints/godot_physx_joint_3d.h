@@ -71,6 +71,12 @@ class GodotPhysXJoint3D {
 		bool lin_motor = false, ang_motor = false;
 		real_t lin_motor_target = 0.0, lin_motor_force = 0.0;
 		real_t ang_motor_target = 0.0, ang_motor_force = 0.0;
+		// Spring drives: a restoring force toward the equilibrium point, holds a
+		// loaded chain together better than plain limits (PhysX has no joint
+		// projection anymore).
+		bool lin_spring = false, ang_spring = false;
+		real_t lin_spring_stiffness = 0.0, lin_spring_damping = 0.0, lin_spring_eq = 0.0;
+		real_t ang_spring_stiffness = 0.0, ang_spring_damping = 0.0, ang_spring_eq = 0.0;
 	} axis6[3];
 
 	void _destroy();

@@ -207,19 +207,55 @@ void GodotPhysXJoint3D::_apply_params() {
 					(PxReal)axis6[1].ang_lower, (PxReal)axis6[1].ang_upper,
 					(PxReal)axis6[2].ang_lower, (PxReal)axis6[2].ang_upper));
 
-			PxVec3 lin_target(0.0f);
-			bool any_lin_motor = false;
+			// Linear drives: a spring (stiffness toward an equilibrium point) and a
+			// velocity motor share the per-axis drive slot.
+			PxVec3 drive_pos(0.0f);
+			PxVec3 lin_vel_target(0.0f);
+			bool any_lin_drive = false;
 			for (int a = 0; a < 3; a++) {
-				if (axis6[a].lin_motor) {
-					any_lin_motor = true;
-					const PxReal f = (PxReal)(axis6[a].lin_motor_force > 0.0 ? axis6[a].lin_motor_force : PX_MAX_F32);
-					PxD6JointDrive drive(0.0f, 1.0e6f, f);
-					j->setDrive((PxD6Drive::Enum)(PxD6Drive::eX + a), drive);
-					(&lin_target.x)[a] = (PxReal)axis6[a].lin_motor_target;
+				const Axis6DOF &ax = axis6[a];
+				if (!ax.lin_spring && !ax.lin_motor) {
+					continue;
+				}
+				any_lin_drive = true;
+				const PxReal k = ax.lin_spring ? (PxReal)ax.lin_spring_stiffness : 0.0f;
+				const PxReal d = ax.lin_spring ? (PxReal)ax.lin_spring_damping : 1.0e6f;
+				const PxReal f = (ax.lin_motor && ax.lin_motor_force > 0.0) ? (PxReal)ax.lin_motor_force : PX_MAX_F32;
+				j->setDrive((PxD6Drive::Enum)(PxD6Drive::eX + a), PxD6JointDrive(k, d, f));
+				if (ax.lin_spring) {
+					(&drive_pos.x)[a] = (PxReal)ax.lin_spring_eq;
+				}
+				if (ax.lin_motor) {
+					(&lin_vel_target.x)[a] = (PxReal)ax.lin_motor_target;
+				}
+				// A drive only acts on an axis that is not locked. Free any axis
+				// that has a spring but no valid limit range.
+				if (ax.lin_spring && !(ax.lin_limit && ax.lin_upper > ax.lin_lower)) {
+					j->setMotion(lin_axes[a], PxD6Motion::eFREE);
 				}
 			}
-			if (any_lin_motor) {
-				j->setDriveVelocity(lin_target, PxVec3(0.0f));
+
+			// Angular springs: axis X -> twist drive, axis Y -> swing1, axis Z ->
+			// swing2. The drive target rotation is built from the equilibrium angles.
+			const PxD6Drive::Enum ang_drives[3] = { PxD6Drive::eTWIST, PxD6Drive::eSWING1, PxD6Drive::eSWING2 };
+			const PxVec3 ang_drive_axis[3] = { PxVec3(1, 0, 0), PxVec3(0, 1, 0), PxVec3(0, 0, 1) };
+			PxQuat drive_rot(PxIdentity);
+			for (int a = 0; a < 3; a++) {
+				const Axis6DOF &ax = axis6[a];
+				if (!ax.ang_spring) {
+					continue;
+				}
+				j->setDrive(ang_drives[a], PxD6JointDrive((PxReal)ax.ang_spring_stiffness, (PxReal)ax.ang_spring_damping, PX_MAX_F32));
+				drive_rot = drive_rot * PxQuat((PxReal)ax.ang_spring_eq, ang_drive_axis[a]);
+				any_lin_drive = true;
+				if (!(ax.ang_limit && ax.ang_upper > ax.ang_lower)) {
+					j->setMotion(ang_axes[a], PxD6Motion::eFREE);
+				}
+			}
+
+			if (any_lin_drive) {
+				j->setDrivePosition(PxTransform(drive_pos, drive_rot), true);
+				j->setDriveVelocity(lin_vel_target, PxVec3(0.0f));
 			}
 		} break;
 
@@ -467,8 +503,26 @@ void GodotPhysXJoint3D::set_6dof_param(Vector3::Axis p_axis, PhysicsServer3D::G6
 		case PhysicsServer3D::G6DOF_JOINT_ANGULAR_MOTOR_FORCE_LIMIT:
 			ax.ang_motor_force = p_value;
 			break;
+		case PhysicsServer3D::G6DOF_JOINT_LINEAR_SPRING_STIFFNESS:
+			ax.lin_spring_stiffness = p_value;
+			break;
+		case PhysicsServer3D::G6DOF_JOINT_LINEAR_SPRING_DAMPING:
+			ax.lin_spring_damping = p_value;
+			break;
+		case PhysicsServer3D::G6DOF_JOINT_LINEAR_SPRING_EQUILIBRIUM_POINT:
+			ax.lin_spring_eq = p_value;
+			break;
+		case PhysicsServer3D::G6DOF_JOINT_ANGULAR_SPRING_STIFFNESS:
+			ax.ang_spring_stiffness = p_value;
+			break;
+		case PhysicsServer3D::G6DOF_JOINT_ANGULAR_SPRING_DAMPING:
+			ax.ang_spring_damping = p_value;
+			break;
+		case PhysicsServer3D::G6DOF_JOINT_ANGULAR_SPRING_EQUILIBRIUM_POINT:
+			ax.ang_spring_eq = p_value;
+			break;
 		default:
-			break; // softness / restitution / damping / springs / ERP not mapped
+			break; // softness / restitution / ERP not mapped
 	}
 	_apply_params();
 }
@@ -484,6 +538,18 @@ real_t GodotPhysXJoint3D::get_6dof_param(Vector3::Axis p_axis, PhysicsServer3D::
 			return ax.ang_lower;
 		case PhysicsServer3D::G6DOF_JOINT_ANGULAR_UPPER_LIMIT:
 			return ax.ang_upper;
+		case PhysicsServer3D::G6DOF_JOINT_LINEAR_SPRING_STIFFNESS:
+			return ax.lin_spring_stiffness;
+		case PhysicsServer3D::G6DOF_JOINT_LINEAR_SPRING_DAMPING:
+			return ax.lin_spring_damping;
+		case PhysicsServer3D::G6DOF_JOINT_LINEAR_SPRING_EQUILIBRIUM_POINT:
+			return ax.lin_spring_eq;
+		case PhysicsServer3D::G6DOF_JOINT_ANGULAR_SPRING_STIFFNESS:
+			return ax.ang_spring_stiffness;
+		case PhysicsServer3D::G6DOF_JOINT_ANGULAR_SPRING_DAMPING:
+			return ax.ang_spring_damping;
+		case PhysicsServer3D::G6DOF_JOINT_ANGULAR_SPRING_EQUILIBRIUM_POINT:
+			return ax.ang_spring_eq;
 		default:
 			return 0.0;
 	}
@@ -504,6 +570,12 @@ void GodotPhysXJoint3D::set_6dof_flag(Vector3::Axis p_axis, PhysicsServer3D::G6D
 		case PhysicsServer3D::G6DOF_JOINT_FLAG_ENABLE_MOTOR:
 			ax.ang_motor = p_enable;
 			break;
+		case PhysicsServer3D::G6DOF_JOINT_FLAG_ENABLE_LINEAR_SPRING:
+			ax.lin_spring = p_enable;
+			break;
+		case PhysicsServer3D::G6DOF_JOINT_FLAG_ENABLE_ANGULAR_SPRING:
+			ax.ang_spring = p_enable;
+			break;
 		default:
 			break;
 	}
@@ -521,6 +593,10 @@ bool GodotPhysXJoint3D::get_6dof_flag(Vector3::Axis p_axis, PhysicsServer3D::G6D
 			return ax.lin_motor;
 		case PhysicsServer3D::G6DOF_JOINT_FLAG_ENABLE_MOTOR:
 			return ax.ang_motor;
+		case PhysicsServer3D::G6DOF_JOINT_FLAG_ENABLE_LINEAR_SPRING:
+			return ax.lin_spring;
+		case PhysicsServer3D::G6DOF_JOINT_FLAG_ENABLE_ANGULAR_SPRING:
+			return ax.ang_spring;
 		default:
 			return false;
 	}

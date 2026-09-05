@@ -186,6 +186,33 @@ with `drag` / `lift` / `wind_turbulence` shaping the response. The node has a
 viewport gizmo: the rest-grid outline with size handles, a marker on each pinned
 vertex and a wind arrow.
 
+## Chunk bursts — `PhysXChunkEmitter3D`
+
+Call `spawn_at(position, direction)` — typically from a raycast hit — and a burst
+of small rigid-body chunks flies out, bounces and settles. Real `PhysicsServer3D`
+bodies, not a particle effect, so they land on slopes and pile up convincingly;
+drawn as one `MultiMesh`. General-purpose: impact debris (the "shoot the ground
+and chunks fly everywhere" effect from PhysX-sponsored titles of the GameWorks
+era — Borderlands 2's debris system, for one), an exploding crate (`spread_degrees
+= 180` scatters a burst in every direction instead of a cone), a rockslide or
+falling debris (`emitting` + `emission_rate` for a continuous stream instead of a
+one-off burst), confetti that actually collides — anything that wants many small
+solid things flying and settling for real. `chunk_shape` picks box or sphere
+chunks; `chunk_mesh` overrides the default box/sphere with any mesh.
+
+Needs no PhysX-specific code (it talks to `PhysicsServer3D` generically, so it
+works on any backend), but on this module with a `physx_gpu=yes` build and a
+CUDA device it automatically rides the same GPU rigid-body dynamics as the rest
+of the scene — the whole space is GPU-accelerated, not individual actors — which
+is what makes a high `chunk_count` / `max_active` affordable. Lower them on the
+CPU path, the same way PhysX-era games scaled debris down without a supporting
+GPU.
+
+`max_active` is a hard budget shared across every chunk this emitter has spawned,
+burst or continuous: past it, the oldest chunks are freed to make room. `lifetime`
+additionally recycles a chunk after it's been alive that long even under budget,
+so chunks never linger forever.
+
 ## Determinism and multiplayer
 
 - **GPU dynamics is never deterministic** — GPU solver scheduling varies run to
@@ -236,5 +263,5 @@ For deterministic lockstep multiplayer, use the Jolt backend.
 | `spaces/` | the `PxScene` wrapper, direct space/body state, area-override application |
 | `joints/` | all `Joint3D` types |
 | `cloth/` | the CPU (XPBD) cloth solver — no PhysX dependency |
-| `nodes/` | `PhysXParticleFluid3D`, `PhysXCloth3D` |
+| `nodes/` | `PhysXParticleFluid3D`, `PhysXCloth3D`, `PhysXChunkEmitter3D` |
 | `editor/` | viewport gizmos for the fluid and cloth nodes |

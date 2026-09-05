@@ -465,6 +465,8 @@ public:
 	const PxRigidActor *self_actor = nullptr;
 	const HashSet<RID> *exclude_bodies = nullptr;
 	const HashSet<ObjectID> *exclude_objects = nullptr;
+	uint32_t self_layer = 0;
+	uint32_t self_mask = 0;
 
 	virtual PxQueryHitType::Enum preFilter(const PxFilterData &, const PxShape *p_shape, const PxRigidActor *p_actor, PxHitFlags &) override {
 		if (p_actor == self_actor) {
@@ -481,6 +483,12 @@ public:
 			return PxQueryHitType::eNONE;
 		}
 		if (exclude_objects && exclude_objects->has(b->get_instance_id())) {
+			return PxQueryHitType::eNONE;
+		}
+		// Same collision-layer/mask rule as regular contacts: hit only if
+		// either side's mask matches the other's layer.
+		const bool collide = (self_layer & b->get_collision_mask()) || (b->get_collision_layer() & self_mask);
+		if (!collide) {
 			return PxQueryHitType::eNONE;
 		}
 		return PxQueryHitType::eBLOCK;
@@ -514,6 +522,8 @@ bool GodotPhysXSpace3D::test_body_motion(GodotPhysXBody3D *p_body, const Physics
 	filter.self_actor = p_body->get_px_actor();
 	filter.exclude_bodies = &p_params.exclude_bodies;
 	filter.exclude_objects = &p_params.exclude_objects;
+	filter.self_layer = p_body->get_collision_layer();
+	filter.self_mask = p_body->get_collision_mask();
 	PxQueryFilterData fd(PxQueryFlag::eSTATIC | PxQueryFlag::eDYNAMIC | PxQueryFlag::ePREFILTER);
 
 	// --- Depenetration recovery -------------------------------------------------

@@ -150,7 +150,12 @@ void GodotPhysXBody3D::_build_actor() {
 
 	if (PxRigidDynamic *dyn = px_actor->is<PxRigidDynamic>()) {
 		if (mode != PhysicsServer3D::BODY_MODE_KINEMATIC) {
-			PxRigidBodyExt::updateMassAndInertia(*dyn, mass > 0.0 ? (PxReal)mass : 1.0f);
+			// setMassAndUpdateInertia takes an absolute mass, matching Godot's
+			// RigidBody3D.mass semantics -- updateMassAndInertia's argument is a
+			// *density*, which silently gave the wrong mass for any shape whose
+			// volume isn't ~1 m^3 (it only looked right for unit-sized shapes,
+			// where mass and density are numerically the same).
+			PxRigidBodyExt::setMassAndUpdateInertia(*dyn, mass > 0.0 ? (PxReal)mass : 1.0f);
 			dyn->setActorFlag(PxActorFlag::eDISABLE_GRAVITY, gravity_scale == 0.0);
 			dyn->setSleepThreshold((PxReal)space->get_sleep_energy_threshold());
 			dyn->setWakeCounter((PxReal)space->get_time_before_sleep());
@@ -310,7 +315,7 @@ void GodotPhysXBody3D::set_param(PhysicsServer3D::BodyParameter p_param, const V
 		}
 		if (PxRigidDynamic *dyn = px_actor->is<PxRigidDynamic>()) {
 			if (p_param == PhysicsServer3D::BODY_PARAM_MASS && mode != PhysicsServer3D::BODY_MODE_KINEMATIC) {
-				PxRigidBodyExt::updateMassAndInertia(*dyn, mass > 0.0 ? (PxReal)mass : 1.0f);
+				PxRigidBodyExt::setMassAndUpdateInertia(*dyn, mass > 0.0 ? (PxReal)mass : 1.0f);
 			}
 			if (p_param == PhysicsServer3D::BODY_PARAM_GRAVITY_SCALE) {
 				dyn->setActorFlag(PxActorFlag::eDISABLE_GRAVITY, gravity_scale == 0.0);

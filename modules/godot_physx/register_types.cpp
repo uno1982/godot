@@ -32,6 +32,7 @@
 
 #include "godot_physx_project_settings.h"
 #include "godot_physx_server_3d.h"
+#include "nodes/physx_chunk_emitter_3d.h"
 #include "nodes/physx_cloth_3d.h"
 #include "nodes/physx_particle_fluid_3d.h"
 
@@ -66,6 +67,7 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 	if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE) {
 		GDREGISTER_CLASS(PhysXParticleFluid3D);
 		GDREGISTER_CLASS(PhysXCloth3D);
+		GDREGISTER_CLASS(PhysXChunkEmitter3D);
 	}
 
 #ifdef TOOLS_ENABLED

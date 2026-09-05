@@ -265,3 +265,22 @@ For deterministic lockstep multiplayer, use the Jolt backend.
 | `cloth/` | the CPU (XPBD) cloth solver — no PhysX dependency |
 | `nodes/` | `PhysXParticleFluid3D`, `PhysXCloth3D`, `PhysXChunkEmitter3D` |
 | `editor/` | viewport gizmos for the fluid and cloth nodes |
+
+## License
+
+The module's own source is under the same MIT license as Godot Engine (see the
+header of each file).
+
+It links **NVIDIA PhysX 5** (<https://github.com/NVIDIA-Omniverse/PhysX>),
+which is distributed under the BSD-3-Clause license — a full copy is in
+[`PHYSX-LICENSE.md`](PHYSX-LICENSE.md). The PhysX SDK is *not* vendored here;
+`SCsub` links it from an out-of-tree build pointed at by `physx_sdk=` /
+`PHYSX_SDK`. The static PhysX libraries are compiled into the Godot binary, so
+any binary you distribute must carry the PhysX copyright notice and disclaimer
+(e.g. by shipping `PHYSX-LICENSE.md` alongside it or adding a stanza to the
+engine's `COPYRIGHT.txt`).
+
+With `physx_gpu=yes` the build also depends on `PhysXGpu_64.dll` (same PhysX
+SDK, same BSD-3-Clause license, built from its GPU source) and, at runtime, on
+an NVIDIA driver's CUDA library (`nvcuda.dll`) — the CUDA toolkit is only
+needed to *build* the SDK, not to ship it.

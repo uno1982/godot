@@ -49,6 +49,7 @@ class GodotPhysXBody3D;
 class GodotPhysXArea3D;
 class GodotPhysXParticleFluid3D;
 class GodotPhysXCloth3D;
+class GodotPhysXSoftBody3D;
 class GodotPhysXDirectSpaceState3D;
 
 class GodotPhysXSpace3D {
@@ -77,6 +78,7 @@ class GodotPhysXSpace3D {
 	HashSet<GodotPhysXArea3D *> areas;
 	HashSet<GodotPhysXParticleFluid3D *> fluids;
 	HashSet<GodotPhysXCloth3D *> cloths;
+	HashSet<GodotPhysXSoftBody3D *> soft_bodies;
 	LocalVector<GodotPhysXBody3D *> sync_bodies; // to notify in the next call_queries()
 
 public:
@@ -125,6 +127,8 @@ public:
 	void unregister_fluid(GodotPhysXParticleFluid3D *p_fluid) { fluids.erase(p_fluid); }
 	void register_cloth(GodotPhysXCloth3D *p_cloth) { cloths.insert(p_cloth); }
 	void unregister_cloth(GodotPhysXCloth3D *p_cloth) { cloths.erase(p_cloth); }
+	void register_soft_body(GodotPhysXSoftBody3D *p_sb) { soft_bodies.insert(p_sb); }
+	void unregister_soft_body(GodotPhysXSoftBody3D *p_sb) { soft_bodies.erase(p_sb); }
 
 	// Drop a body from every area's overlap set (body leaving the simulation).
 	void body_removed_from_areas(GodotPhysXBody3D *p_body);

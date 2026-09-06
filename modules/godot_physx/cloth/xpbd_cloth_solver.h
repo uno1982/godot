@@ -36,9 +36,12 @@
 #include "core/templates/local_vector.h"
 #include "core/variant/variant.h"
 
-// A small extended position-based-dynamics (XPBD) cloth solver -- no PhysX and no
-// scene dependency, so it runs on any platform as the CPU fallback for the
-// PhysX GPU deformable-surface path.
+// A small extended position-based-dynamics (XPBD) solver -- no PhysX and no
+// scene dependency, so it runs on any platform. It is the CPU fallback for the
+// PhysX GPU deformable-surface path (cloth) and also backs the module's
+// SoftBody3D implementation: a closed triangle mesh whose edge constraints hold
+// its shape and whose optional volume constraint (pressure > 0) stops it
+// collapsing. (Named ...ClothSolver for historical reasons.)
 //
 // It uses the "small steps" formulation (Macklin et al. 2019): each frame is
 // split into a number of substeps, and every substep does a single Gauss-Seidel
@@ -57,6 +60,14 @@ public:
 		float drag = 1.0f; // air drag normal to each triangle
 		float lift = 0.2f; // sideways push from air flowing across a triangle
 		float density = 0.2f; // kg/m^2, sets per-vertex mass
+		// Closed-mesh volume preservation. `pressure` is the target enclosed
+		// volume as a fraction of the rest volume: 0 disables the constraint
+		// (plain cloth), 1 holds the rest shape, >1 inflates. `pressure_stiffness`
+		// (0..1] is how hard it pulls back -- 1 is near-incompressible, small
+		// values let it squish. Only meaningful for a watertight mesh.
+		float pressure = 0.0f;
+		float pressure_stiffness = 0.5f;
+		float max_speed = 0.0f; // 0 = uncapped; else clamps per-vertex speed
 	};
 
 	Settings settings;
@@ -92,8 +103,13 @@ public:
 	LocalVector<Vector3> &positions_mut() { return positions; }
 	LocalVector<Vector3> &velocities_mut() { return velocities; }
 	const LocalVector<Vector3> &get_positions() const { return positions; }
+	const LocalVector<Vector3> &get_velocities() const { return velocities; }
 	const LocalVector<int> &get_indices() const { return indices; }
 	float vertex_radius() const { return thickness; }
+	// Total rest surface area, for turning a target total mass into an areal density.
+	float rest_surface_area() const;
+	// Scale every constraint's rest length (SoftBody3D shrinking_factor).
+	void set_rest_length_scale(float p_scale);
 
 private:
 	struct DistanceConstraint {
@@ -117,8 +133,12 @@ private:
 	int cols = 0;
 	int rows = 0;
 	float thickness = 0.01f; // half-spacing, used as the collision radius
+	float rest_volume = 0.0f; // signed enclosed volume of the rest mesh
+	float applied_rest_scale = 1.0f; // last shrinking_factor applied to constraint rest lengths
 
 	void _add_constraint(int p_a, int p_b, float p_compliance);
 	void _finalize();
 	void _apply_aero(float p_dt, const Vector3 &p_wind);
+	void _solve_volume(float p_sdt);
+	float _mesh_volume(const LocalVector<Vector3> &p_pos) const;
 };

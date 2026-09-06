@@ -36,6 +36,7 @@
 #include "../objects/godot_physx_body_3d.h"
 #include "../objects/godot_physx_cloth_3d.h"
 #include "../objects/godot_physx_particle_fluid_3d.h"
+#include "../objects/godot_physx_soft_body_3d.h"
 #include "../shapes/godot_physx_shape_3d.h"
 #include "godot_physx_direct_state_3d.h"
 
@@ -335,6 +336,11 @@ void GodotPhysXSpace3D::step(real_t p_step) {
 	}
 	for (GodotPhysXCloth3D *cloth : cloths) {
 		cloth->read_back();
+	}
+	// CPU soft bodies advance after the rigid solve so their per-vertex world
+	// query sees this step's final rigid poses.
+	for (GodotPhysXSoftBody3D *sb : soft_bodies) {
+		sb->step(p_step, gravity);
 	}
 
 	for (GodotPhysXBody3D *body : awake_bodies) {

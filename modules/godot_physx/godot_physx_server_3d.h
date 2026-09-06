@@ -49,6 +49,7 @@ class GodotPhysXArea3D;
 class GodotPhysXJoint3D;
 class GodotPhysXParticleFluid3D;
 class GodotPhysXCloth3D;
+class GodotPhysXSoftBody3D;
 
 // PhysX 5 implementation of PhysicsServer3D, built on top of PhysicsServer3DDummy
 // so that only the methods the backend actually implements need to be overridden;
@@ -71,6 +72,7 @@ class GodotPhysXServer3D : public PhysicsServer3DDummy {
 	mutable RID_PtrOwner<GodotPhysXJoint3D, true> joint_owner;
 	mutable RID_PtrOwner<GodotPhysXParticleFluid3D, true> fluid_owner;
 	mutable RID_PtrOwner<GodotPhysXCloth3D, true> cloth_owner;
+	mutable RID_PtrOwner<GodotPhysXSoftBody3D, true> soft_body_owner;
 
 	HashSet<GodotPhysXSpace3D *> active_spaces;
 
@@ -266,6 +268,50 @@ public:
 	bool cloth_is_ready(RID p_cloth) const;
 	int cloth_get_mesh(RID p_cloth, PackedVector3Array &r_positions, PackedInt32Array &r_indices, uint32_t &r_version) const;
 	bool has_gpu() const { return px_cuda != nullptr; }
+
+	/* SOFT BODY */
+	// Backs the stock SoftBody3D node with the module's CPU XPBD solver.
+
+	virtual RID soft_body_create() override;
+	virtual void soft_body_update_rendering_server(RID p_body, RequiredParam<PhysicsServer3DRenderingServerHandler> rp_rendering_server_handler) override;
+	virtual void soft_body_set_space(RID p_body, RID p_space) override;
+	virtual RID soft_body_get_space(RID p_body) const override;
+	virtual void soft_body_set_mesh(RID p_body, RID p_mesh) override;
+	virtual AABB soft_body_get_bounds(RID p_body) const override;
+	virtual void soft_body_set_collision_layer(RID p_body, uint32_t p_layer) override;
+	virtual uint32_t soft_body_get_collision_layer(RID p_body) const override;
+	virtual void soft_body_set_collision_mask(RID p_body, uint32_t p_mask) override;
+	virtual uint32_t soft_body_get_collision_mask(RID p_body) const override;
+	virtual void soft_body_add_collision_exception(RID p_body, RID p_body_b) override;
+	virtual void soft_body_remove_collision_exception(RID p_body, RID p_body_b) override;
+	virtual void soft_body_get_collision_exceptions(RID p_body, List<RID> *p_exceptions) override;
+	virtual void soft_body_set_state(RID p_body, BodyState p_state, const Variant &p_variant) override;
+	virtual Variant soft_body_get_state(RID p_body, BodyState p_state) const override;
+	virtual void soft_body_set_transform(RID p_body, const Transform3D &p_transform) override;
+	virtual void soft_body_set_ray_pickable(RID p_body, bool p_enable) override;
+	virtual void soft_body_set_simulation_precision(RID p_body, int p_simulation_precision) override;
+	virtual int soft_body_get_simulation_precision(RID p_body) const override;
+	virtual void soft_body_set_total_mass(RID p_body, real_t p_total_mass) override;
+	virtual real_t soft_body_get_total_mass(RID p_body) const override;
+	virtual void soft_body_set_linear_stiffness(RID p_body, real_t p_stiffness) override;
+	virtual real_t soft_body_get_linear_stiffness(RID p_body) const override;
+	virtual void soft_body_set_shrinking_factor(RID p_body, real_t p_shrinking_factor) override;
+	virtual real_t soft_body_get_shrinking_factor(RID p_body) const override;
+	virtual void soft_body_set_pressure_coefficient(RID p_body, real_t p_pressure_coefficient) override;
+	virtual real_t soft_body_get_pressure_coefficient(RID p_body) const override;
+	virtual void soft_body_set_damping_coefficient(RID p_body, real_t p_damping_coefficient) override;
+	virtual real_t soft_body_get_damping_coefficient(RID p_body) const override;
+	virtual void soft_body_set_drag_coefficient(RID p_body, real_t p_drag_coefficient) override;
+	virtual real_t soft_body_get_drag_coefficient(RID p_body) const override;
+	virtual void soft_body_move_point(RID p_body, int p_point_index, const Vector3 &p_global_position) override;
+	virtual Vector3 soft_body_get_point_global_position(RID p_body, int p_point_index) const override;
+	virtual void soft_body_remove_all_pinned_points(RID p_body) override;
+	virtual void soft_body_pin_point(RID p_body, int p_point_index, bool p_pin) override;
+	virtual bool soft_body_is_point_pinned(RID p_body, int p_point_index) const override;
+	virtual void soft_body_apply_point_impulse(RID p_body, int p_point_index, const Vector3 &p_impulse) override;
+	virtual void soft_body_apply_point_force(RID p_body, int p_point_index, const Vector3 &p_force) override;
+	virtual void soft_body_apply_central_impulse(RID p_body, const Vector3 &p_impulse) override;
+	virtual void soft_body_apply_central_force(RID p_body, const Vector3 &p_force) override;
 
 	/* MISC */
 	virtual void free_rid(RID p_rid) override;

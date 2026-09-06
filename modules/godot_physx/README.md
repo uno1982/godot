@@ -186,6 +186,24 @@ with `drag` / `lift` / `wind_turbulence` shaping the response. The node has a
 viewport gizmo: the rest-grid outline with size handles, a marker on each pinned
 vertex and a wind arrow.
 
+## Soft bodies — stock `SoftBody3D`
+
+The stock `SoftBody3D` node works on this backend (the `soft_body_*`
+`PhysicsServer3D` API is implemented) — its gizmo for painting pinned vertices
+and its inspector (`total_mass`, `pressure_coefficient`, `linear_stiffness`,
+`simulation_precision`, `damping_coefficient`, `drag_coefficient`,
+`shrinking_factor`) all apply, no module-specific node.
+
+It runs on the CPU: the same XPBD solver as CPU cloth (`cloth/`), over the
+render mesh welded to unique vertex positions. Edge constraints hold the shape;
+`pressure_coefficient > 0` adds a volume constraint that keeps a closed mesh
+from collapsing (and larger values just make that stiffer, they don't inflate).
+Collision against rigid bodies is a per-vertex `PhysicsDirectSpaceState3D`
+query each step, so it respects `collision_mask` and collision exceptions on any
+engine. There is no GPU path yet — PhysX's `PxDeformableVolume` (tetrahedral FEM
+on CUDA) is a separate, future addition; today a `SoftBody3D` simulates the same
+whether or not CUDA is present.
+
 ## Chunk bursts — `PhysXChunkEmitter3D`
 
 Call `spawn_at(position, direction)` — typically from a raycast hit — and a burst

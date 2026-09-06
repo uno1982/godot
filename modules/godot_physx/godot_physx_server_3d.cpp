@@ -37,6 +37,7 @@
 #include "objects/godot_physx_body_3d.h"
 #include "objects/godot_physx_cloth_3d.h"
 #include "objects/godot_physx_particle_fluid_3d.h"
+#include "objects/godot_physx_soft_body_3d.h"
 #include "shapes/godot_physx_shape_3d.h"
 #include "spaces/godot_physx_direct_state_3d.h"
 #include "spaces/godot_physx_space_3d.h"
@@ -481,15 +482,26 @@ void GodotPhysXServer3D::body_set_shape_disabled(RID p_body, int p_shape_idx, bo
 }
 
 void GodotPhysXServer3D::body_attach_object_instance_id(RID p_body, ObjectID p_id) {
-	GodotPhysXBody3D *body = body_owner.get_or_null(p_body);
-	ERR_FAIL_NULL(body);
-	body->set_instance_id(p_id);
+	if (GodotPhysXBody3D *body = body_owner.get_or_null(p_body)) {
+		body->set_instance_id(p_id);
+		return;
+	}
+	// The stock SoftBody3D node attaches its id through this call too.
+	if (GodotPhysXSoftBody3D *soft_body = soft_body_owner.get_or_null(p_body)) {
+		soft_body->set_instance_id(p_id);
+		return;
+	}
+	ERR_FAIL_MSG("PhysX: body_attach_object_instance_id on an invalid RID.");
 }
 
 ObjectID GodotPhysXServer3D::body_get_object_instance_id(RID p_body) const {
-	GodotPhysXBody3D *body = body_owner.get_or_null(p_body);
-	ERR_FAIL_NULL_V(body, ObjectID());
-	return body->get_instance_id();
+	if (GodotPhysXBody3D *body = body_owner.get_or_null(p_body)) {
+		return body->get_instance_id();
+	}
+	if (GodotPhysXSoftBody3D *soft_body = soft_body_owner.get_or_null(p_body)) {
+		return soft_body->get_instance_id();
+	}
+	ERR_FAIL_V_MSG(ObjectID(), "PhysX: body_get_object_instance_id on an invalid RID.");
 }
 
 void GodotPhysXServer3D::body_set_collision_layer(RID p_body, uint32_t p_layer) {
@@ -1011,6 +1023,242 @@ int GodotPhysXServer3D::cloth_get_mesh(RID p_cloth, PackedVector3Array &r_positi
 	return (int)tris;
 }
 
+/* SOFT BODY */
+
+#define GET_SOFT_BODY(m_ret) \
+	GodotPhysXSoftBody3D *soft_body = soft_body_owner.get_or_null(p_body); \
+	ERR_FAIL_NULL_V(soft_body, m_ret);
+#define GET_SOFT_BODY_V() \
+	GodotPhysXSoftBody3D *soft_body = soft_body_owner.get_or_null(p_body); \
+	ERR_FAIL_NULL(soft_body);
+
+RID GodotPhysXServer3D::soft_body_create() {
+	GodotPhysXSoftBody3D *soft_body = memnew(GodotPhysXSoftBody3D);
+	RID rid = soft_body_owner.make_rid(soft_body);
+	soft_body->set_self(rid);
+	return rid;
+}
+
+void GodotPhysXServer3D::soft_body_update_rendering_server(RID p_body, RequiredParam<PhysicsServer3DRenderingServerHandler> rp_rendering_server_handler) {
+	GET_SOFT_BODY_V();
+	EXTRACT_PARAM_OR_FAIL(p_rendering_server_handler, rp_rendering_server_handler);
+	soft_body->update_rendering_server(p_rendering_server_handler);
+}
+
+void GodotPhysXServer3D::soft_body_set_space(RID p_body, RID p_space) {
+	GET_SOFT_BODY_V();
+	soft_body->set_space(space_owner.get_or_null(p_space));
+}
+
+RID GodotPhysXServer3D::soft_body_get_space(RID p_body) const {
+	GET_SOFT_BODY(RID());
+	GodotPhysXSpace3D *space = soft_body->get_space();
+	return space ? space->get_self() : RID();
+}
+
+void GodotPhysXServer3D::soft_body_set_mesh(RID p_body, RID p_mesh) {
+	GET_SOFT_BODY_V();
+	soft_body->set_mesh(p_mesh);
+}
+
+AABB GodotPhysXServer3D::soft_body_get_bounds(RID p_body) const {
+	GET_SOFT_BODY(AABB());
+	return soft_body->get_bounds();
+}
+
+void GodotPhysXServer3D::soft_body_set_collision_layer(RID p_body, uint32_t p_layer) {
+	GET_SOFT_BODY_V();
+	soft_body->set_collision_layer(p_layer);
+}
+
+uint32_t GodotPhysXServer3D::soft_body_get_collision_layer(RID p_body) const {
+	GET_SOFT_BODY(0);
+	return soft_body->get_collision_layer();
+}
+
+void GodotPhysXServer3D::soft_body_set_collision_mask(RID p_body, uint32_t p_mask) {
+	GET_SOFT_BODY_V();
+	soft_body->set_collision_mask(p_mask);
+}
+
+uint32_t GodotPhysXServer3D::soft_body_get_collision_mask(RID p_body) const {
+	GET_SOFT_BODY(0);
+	return soft_body->get_collision_mask();
+}
+
+void GodotPhysXServer3D::soft_body_add_collision_exception(RID p_body, RID p_body_b) {
+	GET_SOFT_BODY_V();
+	soft_body->add_collision_exception(p_body_b);
+}
+
+void GodotPhysXServer3D::soft_body_remove_collision_exception(RID p_body, RID p_body_b) {
+	GET_SOFT_BODY_V();
+	soft_body->remove_collision_exception(p_body_b);
+}
+
+void GodotPhysXServer3D::soft_body_get_collision_exceptions(RID p_body, List<RID> *p_exceptions) {
+	GET_SOFT_BODY_V();
+	for (const RID &e : soft_body->get_collision_exceptions()) {
+		p_exceptions->push_back(e);
+	}
+}
+
+void GodotPhysXServer3D::soft_body_set_state(RID p_body, BodyState p_state, const Variant &p_variant) {
+	GET_SOFT_BODY_V();
+	if (p_state == BODY_STATE_TRANSFORM) {
+		soft_body->set_transform(p_variant);
+	}
+	// Linear/angular velocity and sleep have no meaning for a vertex cloud here.
+}
+
+Variant GodotPhysXServer3D::soft_body_get_state(RID p_body, BodyState p_state) const {
+	GET_SOFT_BODY(Variant());
+	switch (p_state) {
+		case BODY_STATE_TRANSFORM: {
+			// Origin at the current bounds center; basis stays identity (the sim
+			// runs in world space, like every other backend's soft body).
+			return Transform3D(Basis(), soft_body->get_bounds().get_center());
+		}
+		case BODY_STATE_LINEAR_VELOCITY:
+		case BODY_STATE_ANGULAR_VELOCITY:
+			return Vector3();
+		case BODY_STATE_SLEEPING:
+		case BODY_STATE_CAN_SLEEP:
+			return false;
+	}
+	return Variant();
+}
+
+void GodotPhysXServer3D::soft_body_set_transform(RID p_body, const Transform3D &p_transform) {
+	GET_SOFT_BODY_V();
+	soft_body->set_transform(p_transform);
+}
+
+void GodotPhysXServer3D::soft_body_set_ray_pickable(RID p_body, bool p_enable) {
+	GET_SOFT_BODY_V();
+	soft_body->set_ray_pickable(p_enable);
+}
+
+void GodotPhysXServer3D::soft_body_set_simulation_precision(RID p_body, int p_simulation_precision) {
+	GET_SOFT_BODY_V();
+	soft_body->set_simulation_precision(p_simulation_precision);
+}
+
+int GodotPhysXServer3D::soft_body_get_simulation_precision(RID p_body) const {
+	GET_SOFT_BODY(0);
+	return soft_body->get_simulation_precision();
+}
+
+void GodotPhysXServer3D::soft_body_set_total_mass(RID p_body, real_t p_total_mass) {
+	GET_SOFT_BODY_V();
+	soft_body->set_total_mass(p_total_mass);
+}
+
+real_t GodotPhysXServer3D::soft_body_get_total_mass(RID p_body) const {
+	GET_SOFT_BODY(0);
+	return soft_body->get_total_mass();
+}
+
+void GodotPhysXServer3D::soft_body_set_linear_stiffness(RID p_body, real_t p_stiffness) {
+	GET_SOFT_BODY_V();
+	soft_body->set_linear_stiffness(p_stiffness);
+}
+
+real_t GodotPhysXServer3D::soft_body_get_linear_stiffness(RID p_body) const {
+	GET_SOFT_BODY(0);
+	return soft_body->get_linear_stiffness();
+}
+
+void GodotPhysXServer3D::soft_body_set_shrinking_factor(RID p_body, real_t p_shrinking_factor) {
+	GET_SOFT_BODY_V();
+	soft_body->set_shrinking_factor(p_shrinking_factor);
+}
+
+real_t GodotPhysXServer3D::soft_body_get_shrinking_factor(RID p_body) const {
+	GET_SOFT_BODY(0);
+	return soft_body->get_shrinking_factor();
+}
+
+void GodotPhysXServer3D::soft_body_set_pressure_coefficient(RID p_body, real_t p_pressure_coefficient) {
+	GET_SOFT_BODY_V();
+	soft_body->set_pressure_coefficient(p_pressure_coefficient);
+}
+
+real_t GodotPhysXServer3D::soft_body_get_pressure_coefficient(RID p_body) const {
+	GET_SOFT_BODY(0);
+	return soft_body->get_pressure_coefficient();
+}
+
+void GodotPhysXServer3D::soft_body_set_damping_coefficient(RID p_body, real_t p_damping_coefficient) {
+	GET_SOFT_BODY_V();
+	soft_body->set_damping_coefficient(p_damping_coefficient);
+}
+
+real_t GodotPhysXServer3D::soft_body_get_damping_coefficient(RID p_body) const {
+	GET_SOFT_BODY(0);
+	return soft_body->get_damping_coefficient();
+}
+
+void GodotPhysXServer3D::soft_body_set_drag_coefficient(RID p_body, real_t p_drag_coefficient) {
+	GET_SOFT_BODY_V();
+	soft_body->set_drag_coefficient(p_drag_coefficient);
+}
+
+real_t GodotPhysXServer3D::soft_body_get_drag_coefficient(RID p_body) const {
+	GET_SOFT_BODY(0);
+	return soft_body->get_drag_coefficient();
+}
+
+void GodotPhysXServer3D::soft_body_move_point(RID p_body, int p_point_index, const Vector3 &p_global_position) {
+	GET_SOFT_BODY_V();
+	soft_body->move_point(p_point_index, p_global_position);
+}
+
+Vector3 GodotPhysXServer3D::soft_body_get_point_global_position(RID p_body, int p_point_index) const {
+	GET_SOFT_BODY(Vector3());
+	return soft_body->get_point_global_position(p_point_index);
+}
+
+void GodotPhysXServer3D::soft_body_remove_all_pinned_points(RID p_body) {
+	GET_SOFT_BODY_V();
+	soft_body->unpin_all();
+}
+
+void GodotPhysXServer3D::soft_body_pin_point(RID p_body, int p_point_index, bool p_pin) {
+	GET_SOFT_BODY_V();
+	soft_body->pin_point(p_point_index, p_pin);
+}
+
+bool GodotPhysXServer3D::soft_body_is_point_pinned(RID p_body, int p_point_index) const {
+	GET_SOFT_BODY(false);
+	return soft_body->is_point_pinned(p_point_index);
+}
+
+void GodotPhysXServer3D::soft_body_apply_point_impulse(RID p_body, int p_point_index, const Vector3 &p_impulse) {
+	GET_SOFT_BODY_V();
+	soft_body->apply_point_impulse(p_point_index, p_impulse);
+}
+
+void GodotPhysXServer3D::soft_body_apply_point_force(RID p_body, int p_point_index, const Vector3 &p_force) {
+	GET_SOFT_BODY_V();
+	const double dt = soft_body->get_space() ? soft_body->get_space()->get_last_step() : 0.0;
+	soft_body->apply_point_force(p_point_index, p_force, dt);
+}
+
+void GodotPhysXServer3D::soft_body_apply_central_impulse(RID p_body, const Vector3 &p_impulse) {
+	GET_SOFT_BODY_V();
+	soft_body->apply_central_impulse(p_impulse);
+}
+
+void GodotPhysXServer3D::soft_body_apply_central_force(RID p_body, const Vector3 &p_force) {
+	GET_SOFT_BODY_V();
+	const double dt = soft_body->get_space() ? soft_body->get_space()->get_last_step() : 0.0;
+	soft_body->apply_central_force(p_force, dt);
+}
+
+#undef GET_SOFT_BODY
+#undef GET_SOFT_BODY_V
+
 /* MISC */
 
 void GodotPhysXServer3D::free_rid(RID p_rid) {
@@ -1033,6 +1281,10 @@ void GodotPhysXServer3D::free_rid(RID p_rid) {
 		cloth->set_space(nullptr);
 		cloth_owner.free(p_rid);
 		memdelete(cloth);
+	} else if (GodotPhysXSoftBody3D *soft_body = soft_body_owner.get_or_null(p_rid)) {
+		soft_body->set_space(nullptr);
+		soft_body_owner.free(p_rid);
+		memdelete(soft_body);
 	} else if (GodotPhysXArea3D *area = area_owner.get_or_null(p_rid)) {
 		area->set_space(nullptr);
 		area_owner.free(p_rid);

@@ -45,6 +45,53 @@ void XPBDClothSolver::clear() {
 	indices.clear();
 	cols = 0;
 	rows = 0;
+	rest_volume = 0.0f;
+	applied_rest_scale = 1.0f;
+}
+
+// Signed enclosed volume of the closed triangle mesh via the divergence
+// theorem: V = (1/6) sum over tris of x_a . (x_b x x_c), in the mesh's own
+// winding. Origin-independent for a watertight mesh; the centroid offset just
+// keeps the numbers small when the body sits far from the world origin.
+float XPBDClothSolver::_mesh_volume(const LocalVector<Vector3> &p_pos) const {
+	if (p_pos.is_empty() || indices.size() < 3) {
+		return 0.0f;
+	}
+	Vector3 ref;
+	for (uint32_t i = 0; i < p_pos.size(); i++) {
+		ref += p_pos[i];
+	}
+	ref /= (float)p_pos.size();
+	double v = 0.0;
+	for (uint32_t t = 0; t + 2 < indices.size(); t += 3) {
+		const Vector3 a = p_pos[indices[t]] - ref;
+		const Vector3 b = p_pos[indices[t + 1]] - ref;
+		const Vector3 c = p_pos[indices[t + 2]] - ref;
+		v += (double)a.dot(b.cross(c));
+	}
+	return (float)(v / 6.0);
+}
+
+float XPBDClothSolver::rest_surface_area() const {
+	double area = 0.0;
+	for (uint32_t t = 0; t + 2 < indices.size(); t += 3) {
+		const Vector3 &a = rest_positions[indices[t]];
+		const Vector3 &b = rest_positions[indices[t + 1]];
+		const Vector3 &c = rest_positions[indices[t + 2]];
+		area += 0.5 * (double)(b - a).cross(c - a).length();
+	}
+	return (float)area;
+}
+
+void XPBDClothSolver::set_rest_length_scale(float p_scale) {
+	if (p_scale <= 0.0f || Math::is_equal_approx(p_scale, applied_rest_scale)) {
+		return;
+	}
+	const float rel = p_scale / applied_rest_scale;
+	for (uint32_t i = 0; i < constraints.size(); i++) {
+		constraints[i].rest *= rel;
+	}
+	applied_rest_scale = p_scale;
 }
 
 void XPBDClothSolver::_add_constraint(int p_a, int p_b, float p_compliance) {
@@ -201,6 +248,65 @@ void XPBDClothSolver::_finalize() {
 		base_inv_mass[i] = 1.0f / m;
 		inv_mass[i] = base_inv_mass[i];
 	}
+
+	rest_volume = _mesh_volume(rest_positions);
+}
+
+// One global XPBD volume constraint: C = V(x) - pressure * rest_volume, with the
+// per-vertex gradient dV/dx_i accumulated from the incident triangles. Keeps a
+// closed soft body from pancaking under gravity and lets pressure > 1 inflate it.
+void XPBDClothSolver::_solve_volume(float p_sdt) {
+	if (settings.pressure <= 0.0f || Math::is_zero_approx(rest_volume) || indices.size() < 3) {
+		return;
+	}
+	const int n = positions.size();
+
+	Vector3 ref;
+	for (int i = 0; i < n; i++) {
+		ref += positions[i];
+	}
+	ref /= (float)MAX(n, 1);
+
+	LocalVector<Vector3> grad;
+	grad.resize(n);
+	for (int i = 0; i < n; i++) {
+		grad[i] = Vector3();
+	}
+	double vol = 0.0;
+	for (uint32_t t = 0; t + 2 < indices.size(); t += 3) {
+		const int ia = indices[t];
+		const int ib = indices[t + 1];
+		const int ic = indices[t + 2];
+		const Vector3 a = positions[ia] - ref;
+		const Vector3 b = positions[ib] - ref;
+		const Vector3 c = positions[ic] - ref;
+		vol += (double)a.dot(b.cross(c));
+		grad[ia] += b.cross(c) * (1.0f / 6.0f);
+		grad[ib] += c.cross(a) * (1.0f / 6.0f);
+		grad[ic] += a.cross(b) * (1.0f / 6.0f);
+	}
+	const float constraint = (float)(vol / 6.0) - settings.pressure * rest_volume;
+
+	float denom = 0.0f;
+	for (int i = 0; i < n; i++) {
+		denom += inv_mass[i] * grad[i].length_squared();
+	}
+	if (denom < 1.0e-12f) {
+		return;
+	}
+	// pressure_stiffness in (0,1] -> XPBD compliance: 1 is near-rigid, small
+	// values are soft. Scaled by rest_volume^2 so the response is shape-size
+	// independent.
+	const float k = CLAMP(settings.pressure_stiffness, 0.01f, 1.0f);
+	const float compliance = (1.0f - k) * 1.0e-3f * MAX(rest_volume * rest_volume, 1.0e-6f);
+	const float alpha = compliance / (p_sdt * p_sdt);
+	const float dlambda = -constraint / (denom + alpha);
+	for (int i = 0; i < n; i++) {
+		if (inv_mass[i] == 0.0f) {
+			continue;
+		}
+		positions[i] += grad[i] * (dlambda * inv_mass[i]);
+	}
 }
 
 void XPBDClothSolver::reset(const Transform3D &p_xform) {
@@ -326,14 +432,25 @@ void XPBDClothSolver::step(float p_dt, const Vector3 &p_gravity, const Vector3 &
 			positions[c.b] -= d * (dlambda * wb);
 		}
 
+		// Optional closed-mesh volume/pressure constraint (soft bodies).
+		_solve_volume(sdt);
+
 		// Update velocities from the constrained motion.
 		const float inv_sdt = 1.0f / sdt;
+		const float max_speed = settings.max_speed;
 		for (int i = 0; i < n; i++) {
 			if (inv_mass[i] == 0.0f) {
 				velocities[i] = Vector3();
 				continue;
 			}
-			velocities[i] = (positions[i] - prev[i]) * inv_sdt * vel_retain;
+			Vector3 v = (positions[i] - prev[i]) * inv_sdt * vel_retain;
+			if (max_speed > 0.0f) {
+				const float sp = v.length();
+				if (sp > max_speed) {
+					v *= max_speed / sp;
+				}
+			}
+			velocities[i] = v;
 		}
 	}
 }

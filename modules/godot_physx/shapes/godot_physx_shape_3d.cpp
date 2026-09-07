@@ -329,3 +329,64 @@ void GodotPhysXShape3D::set_data(const Variant &p_data) {
 		} break;
 	}
 }
+
+GodotPhysXShape3D::ScaledGeometry GodotPhysXShape3D::scaled_geometry(const Vector3 &p_scale) const {
+	ScaledGeometry out;
+	out.local_pose = geom.local_pose;
+
+	const PxVec3 a((PxReal)Math::abs(p_scale.x), (PxReal)Math::abs(p_scale.y), (PxReal)Math::abs(p_scale.z));
+
+	switch (geom.type) {
+		case PxGeometryType::eBOX: {
+			const PxVec3 he = geom.box.halfExtents;
+			out.geom = PxBoxGeometry(he.x * a.x, he.y * a.y, he.z * a.z);
+		} break;
+
+		case PxGeometryType::eSPHERE: {
+			if (!(Math::is_equal_approx(a.x, a.y) && Math::is_equal_approx(a.y, a.z))) {
+				WARN_PRINT_ONCE("PhysX: a sphere collision shape can't take non-uniform scale; using the mean axis.");
+			}
+			out.geom = PxSphereGeometry(geom.sphere.radius * (a.x + a.y + a.z) / 3.0f);
+		} break;
+
+		case PxGeometryType::eCAPSULE: {
+			// The module rotates the capsule's local pose so PhysX +X maps to
+			// Godot +Y: half-height follows Godot Y, radius follows Godot X/Z.
+			if (!Math::is_equal_approx(a.x, a.z)) {
+				WARN_PRINT_ONCE("PhysX: a capsule collision shape can't take non-uniform X/Z scale; using the mean.");
+			}
+			out.geom = PxCapsuleGeometry(geom.capsule.radius * (a.x + a.z) * 0.5f, geom.capsule.halfHeight * a.y);
+		} break;
+
+		case PxGeometryType::eCONVEXMESH: {
+			// PxMeshScale takes signed components -- a mirrored convex is valid.
+			PxConvexMeshGeometry g = geom.convex;
+			g.scale = PxMeshScale(to_px(p_scale));
+			out.geom = g;
+		} break;
+
+		case PxGeometryType::eTRIANGLEMESH: {
+			PxTriangleMeshGeometry g = geom.trimesh;
+			g.scale = PxMeshScale(to_px(p_scale));
+			out.geom = g;
+		} break;
+
+		case PxGeometryType::eHEIGHTFIELD: {
+			PxHeightFieldGeometry g = geom.heightfield;
+			g.rowScale *= a.x;
+			g.columnScale *= a.z;
+			g.heightScale *= a.y;
+			out.geom = g;
+			// The local pose centers the grid and lifts by the baked height
+			// offset -- both are in unscaled sample units, so scale them too.
+			out.local_pose.p.x *= a.x;
+			out.local_pose.p.y *= a.y;
+			out.local_pose.p.z *= a.z;
+		} break;
+
+		default: {
+			out.geom = geom.geometry();
+		} break;
+	}
+	return out;
+}

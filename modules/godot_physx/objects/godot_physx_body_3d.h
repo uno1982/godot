@@ -78,6 +78,9 @@ private:
 	LocalVector<ShapeRef> shapes;
 
 	Transform3D body_transform;
+	// Node scale baked into the shapes on the last _build_actor(); a change
+	// re-cooks (PhysX actor poses carry no scale).
+	Vector3 built_scale = Vector3(1, 1, 1);
 	Vector3 linear_velocity;
 	Vector3 angular_velocity;
 	real_t mass = 1.0;

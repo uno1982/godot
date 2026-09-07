@@ -67,6 +67,7 @@ private:
 
 	LocalVector<ShapeRef> shapes;
 	Transform3D area_transform;
+	Vector3 built_scale = Vector3(1, 1, 1); // node scale baked into shapes on last _build_actor()
 	uint32_t collision_layer = 1;
 	uint32_t collision_mask = 1;
 	bool monitorable = false;

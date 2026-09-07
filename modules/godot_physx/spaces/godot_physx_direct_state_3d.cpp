@@ -228,7 +228,7 @@ public:
 	}
 };
 
-const GodotPhysXShapeGeometry *query_geometry(RID p_shape_rid) {
+GodotPhysXShape3D *query_shape(RID p_shape_rid) {
 	GodotPhysXServer3D *server = GodotPhysXServer3D::get_singleton();
 	if (!server) {
 		return nullptr;
@@ -237,7 +237,7 @@ const GodotPhysXShapeGeometry *query_geometry(RID p_shape_rid) {
 	if (!shape || !shape->is_valid()) {
 		return nullptr;
 	}
-	return &shape->get_geometry();
+	return shape;
 }
 
 } //namespace
@@ -318,8 +318,9 @@ int GodotPhysXDirectSpaceState3D::intersect_point(const PointParameters &p_param
 int GodotPhysXDirectSpaceState3D::intersect_shape(const ShapeParameters &p_parameters, ShapeResult *r_results, int p_result_max) {
 	PxScene *scene = space ? space->get_px_scene() : nullptr;
 	ERR_FAIL_NULL_V(scene, 0);
-	const GodotPhysXShapeGeometry *g = query_geometry(p_parameters.shape_rid);
-	ERR_FAIL_NULL_V(g, 0);
+	GodotPhysXShape3D *shape = query_shape(p_parameters.shape_rid);
+	ERR_FAIL_NULL_V(shape, 0);
+	const GodotPhysXShape3D::ScaledGeometry g = shape->scaled_geometry(p_parameters.transform.basis.get_scale());
 	if (p_result_max <= 0) {
 		return 0;
 	}
@@ -333,8 +334,8 @@ int GodotPhysXDirectSpaceState3D::intersect_shape(const ShapeParameters &p_param
 	touches.resize(p_result_max);
 	PxOverlapBuffer buf(touches.ptr(), (PxU32)p_result_max);
 
-	const PxTransform pose = to_px(p_parameters.transform) * g->local_pose;
-	scene->overlap(g->geometry(), pose, buf, fd, &filter);
+	const PxTransform pose = to_px(p_parameters.transform) * g.local_pose;
+	scene->overlap(g.geom.any(), pose, buf, fd, &filter);
 
 	int count = 0;
 	for (PxU32 i = 0; i < buf.getNbTouches() && count < p_result_max; i++) {
@@ -357,8 +358,9 @@ bool GodotPhysXDirectSpaceState3D::cast_motion(const ShapeParameters &p_paramete
 
 	PxScene *scene = space ? space->get_px_scene() : nullptr;
 	ERR_FAIL_NULL_V(scene, false);
-	const GodotPhysXShapeGeometry *g = query_geometry(p_parameters.shape_rid);
-	ERR_FAIL_NULL_V(g, false);
+	GodotPhysXShape3D *shape = query_shape(p_parameters.shape_rid);
+	ERR_FAIL_NULL_V(shape, false);
+	const GodotPhysXShape3D::ScaledGeometry g = shape->scaled_geometry(p_parameters.transform.basis.get_scale());
 
 	const real_t motion_len = p_parameters.motion.length();
 	if (motion_len <= CMP_EPSILON) {
@@ -370,9 +372,9 @@ bool GodotPhysXDirectSpaceState3D::cast_motion(const ShapeParameters &p_paramete
 	filter.collision_mask = p_parameters.collision_mask;
 	PxQueryFilterData fd(PxQueryFlag::eSTATIC | PxQueryFlag::eDYNAMIC | PxQueryFlag::ePREFILTER);
 
-	const PxTransform pose = to_px(p_parameters.transform) * g->local_pose;
+	const PxTransform pose = to_px(p_parameters.transform) * g.local_pose;
 	PxSweepBuffer hit;
-	const bool has_hit = scene->sweep(g->geometry(), pose, to_px(p_parameters.motion / motion_len),
+	const bool has_hit = scene->sweep(g.geom.any(), pose, to_px(p_parameters.motion / motion_len),
 			(PxReal)motion_len, hit, PxHitFlag::ePOSITION | PxHitFlag::eNORMAL, fd, &filter);
 
 	if (!has_hit || !hit.hasBlock) {
@@ -398,8 +400,9 @@ bool GodotPhysXDirectSpaceState3D::collide_shape(const ShapeParameters &p_parame
 	r_result_count = 0;
 	PxScene *scene = space ? space->get_px_scene() : nullptr;
 	ERR_FAIL_NULL_V(scene, false);
-	const GodotPhysXShapeGeometry *g = query_geometry(p_parameters.shape_rid);
-	ERR_FAIL_NULL_V(g, false);
+	GodotPhysXShape3D *shape = query_shape(p_parameters.shape_rid);
+	ERR_FAIL_NULL_V(shape, false);
+	const GodotPhysXShape3D::ScaledGeometry g = shape->scaled_geometry(p_parameters.transform.basis.get_scale());
 	if (p_result_max <= 0) {
 		return false;
 	}
@@ -414,14 +417,14 @@ bool GodotPhysXDirectSpaceState3D::collide_shape(const ShapeParameters &p_parame
 	touches.resize(MAX(max_hits, 1));
 	PxOverlapBuffer buf(touches.ptr(), (PxU32)MAX(max_hits, 1));
 
-	const PxTransform pose = to_px(p_parameters.transform) * g->local_pose;
-	scene->overlap(g->geometry(), pose, buf, fd, &filter);
+	const PxTransform pose = to_px(p_parameters.transform) * g.local_pose;
+	scene->overlap(g.geom.any(), pose, buf, fd, &filter);
 
 	for (PxU32 i = 0; i < buf.getNbTouches() && r_result_count + 2 <= p_result_max; i++) {
 		const PxOverlapHit &h = buf.getTouch(i);
 		PxVec3 dir;
 		PxF32 depth;
-		if (PxGeometryQuery::computePenetration(dir, depth, g->geometry(), pose,
+		if (PxGeometryQuery::computePenetration(dir, depth, g.geom.any(), pose,
 					h.shape->getGeometry(), h.actor->getGlobalPose() * h.shape->getLocalPose())) {
 			const Vector3 on_collider = to_godot(pose.p) - to_godot(dir) * depth;
 			r_results[r_result_count++] = to_godot(pose.p); // point on the query shape
@@ -434,8 +437,9 @@ bool GodotPhysXDirectSpaceState3D::collide_shape(const ShapeParameters &p_parame
 bool GodotPhysXDirectSpaceState3D::rest_info(const ShapeParameters &p_parameters, ShapeRestInfo *r_info) {
 	PxScene *scene = space ? space->get_px_scene() : nullptr;
 	ERR_FAIL_NULL_V(scene, false);
-	const GodotPhysXShapeGeometry *g = query_geometry(p_parameters.shape_rid);
-	ERR_FAIL_NULL_V(g, false);
+	GodotPhysXShape3D *shape = query_shape(p_parameters.shape_rid);
+	ERR_FAIL_NULL_V(shape, false);
+	const GodotPhysXShape3D::ScaledGeometry g = shape->scaled_geometry(p_parameters.transform.basis.get_scale());
 
 	QueryFilter filter;
 	filter.exclude = &p_parameters.exclude;
@@ -444,8 +448,8 @@ bool GodotPhysXDirectSpaceState3D::rest_info(const ShapeParameters &p_parameters
 
 	PxOverlapHit touch;
 	PxOverlapBuffer buf(&touch, 1);
-	const PxTransform pose = to_px(p_parameters.transform) * g->local_pose;
-	scene->overlap(g->geometry(), pose, buf, fd, &filter);
+	const PxTransform pose = to_px(p_parameters.transform) * g.local_pose;
+	scene->overlap(g.geom.any(), pose, buf, fd, &filter);
 	if (buf.getNbTouches() == 0) {
 		return false;
 	}
@@ -454,7 +458,7 @@ bool GodotPhysXDirectSpaceState3D::rest_info(const ShapeParameters &p_parameters
 	PxVec3 dir;
 	PxF32 depth;
 	const PxTransform collider_pose = h.actor->getGlobalPose() * h.shape->getLocalPose();
-	if (!PxGeometryQuery::computePenetration(dir, depth, g->geometry(), pose, h.shape->getGeometry(), collider_pose)) {
+	if (!PxGeometryQuery::computePenetration(dir, depth, g.geom.any(), pose, h.shape->getGeometry(), collider_pose)) {
 		return false;
 	}
 

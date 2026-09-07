@@ -35,10 +35,13 @@
 #include "core/variant/variant.h"
 #include "servers/physics_3d/physics_server_3d.h"
 
+#include "core/math/vector3.h"
+
 #include <foundation/PxTransform.h>
 #include <geometry/PxBoxGeometry.h>
 #include <geometry/PxCapsuleGeometry.h>
 #include <geometry/PxConvexMeshGeometry.h>
+#include <geometry/PxGeometryHelpers.h>
 #include <geometry/PxHeightFieldGeometry.h>
 #include <geometry/PxPlaneGeometry.h>
 #include <geometry/PxSphereGeometry.h>
@@ -99,4 +102,16 @@ public:
 	// Trimesh and height field: PhysX only allows these on static/kinematic actors.
 	bool is_static_only() const { return type == PhysicsServer3D::SHAPE_CONCAVE_POLYGON || type == PhysicsServer3D::SHAPE_HEIGHTMAP; }
 	const GodotPhysXShapeGeometry &get_geometry() const { return geom; }
+
+	// A shape resource is shared, so per-attach node scale can't be baked at
+	// cook time. This returns the geometry with `p_scale` applied plus the
+	// matching local pose. Box and mesh/convex/height-field take full
+	// non-uniform scale (mesh via PxMeshScale, height field via row/col/height
+	// scale); sphere and capsule are uniform-only and warn otherwise, matching
+	// Jolt.
+	struct ScaledGeometry {
+		physx::PxGeometryHolder geom;
+		physx::PxTransform local_pose{ physx::PxIdentity };
+	};
+	ScaledGeometry scaled_geometry(const Vector3 &p_scale) const;
 };

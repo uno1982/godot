@@ -65,6 +65,13 @@ copy <sdk>\bin\win.x86_64.vc143.mt\release\PhysXGpu_64.dll bin\
 At startup a GPU build logs `PhysX: CUDA context ready on device '...'`; if no
 usable CUDA device is found it warns and falls back to CPU simulation.
 
+`build_physx.py` compiles native GPU code (SASS) for `sm_75` (Turing) through
+`sm_120` (Blackwell), plus a PTX fallback the driver JITs for anything newer.
+Older cards (Pascal `sm_61` and below) aren't targeted; widen the SASS list in
+`misc/physx_patches/0002-gpu-turing-sm75-arch.patch` if you need one. A card
+with no matching SASS still runs, but every kernel is JIT-compiled at load and
+GPU dynamics is several times slower.
+
 To confirm a stock build is unaffected, build with
 `module_godot_physx_enabled=no` (or simply without an SDK configured).
 

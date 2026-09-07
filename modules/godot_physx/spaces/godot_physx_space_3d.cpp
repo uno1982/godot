@@ -217,10 +217,11 @@ GodotPhysXSpace3D::GodotPhysXSpace3D(PxPhysics *p_physics, PxDefaultCpuDispatche
 		scene_desc.gpuDynamicsConfig.heapCapacity = 256 * 1024 * 1024;
 		scene_desc.gpuDynamicsConfig.foundLostPairsCapacity = 4 * 1024 * 1024;
 		scene_desc.gpuDynamicsConfig.collisionStackSize = 256 * 1024 * 1024;
-		// Non-zero so PxDeformableSurface (cloth) can generate contacts; a
-		// surface touching anything with this at 0 overflows and kills GPU sim.
+		// Non-zero so PxDeformableSurface (cloth) / PxDeformableVolume (GPU soft
+		// bodies) can generate contacts; either touching anything with its
+		// budget at 0 overflows and kills GPU sim.
 		scene_desc.gpuDynamicsConfig.maxDeformableSurfaceContacts = 512 * 1024;
-		scene_desc.gpuDynamicsConfig.maxDeformableVolumeContacts = 0;
+		scene_desc.gpuDynamicsConfig.maxDeformableVolumeContacts = 1024 * 1024;
 		scene_desc.gpuDynamicsConfig.maxParticleContacts = 1 * 1024 * 1024;
 		gpu_enabled = true;
 	}
@@ -337,9 +338,12 @@ void GodotPhysXSpace3D::step(real_t p_step) {
 	for (GodotPhysXCloth3D *cloth : cloths) {
 		cloth->read_back();
 	}
-	// CPU soft bodies advance after the rigid solve so their per-vertex world
-	// query sees this step's final rigid poses.
+	// GPU soft bodies (PxDeformableVolume) simulated inside px_scene -- pull
+	// their deformed state off the device. CPU soft bodies advance here, after
+	// the rigid solve, so their per-vertex world query sees this step's final
+	// rigid poses.
 	for (GodotPhysXSoftBody3D *sb : soft_bodies) {
+		sb->read_back();
 		sb->step(p_step, gravity);
 	}
 

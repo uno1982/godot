@@ -72,6 +72,14 @@ public:
 	// GPU path). A fixed value is useful for reproducible profiling.
 	inline static int cpu_worker_threads = 0;
 
+	// physics/physx_3d/soft_body/mode
+	//
+	// Backend for the stock SoftBody3D node. 0 = Auto (GPU PxDeformableVolume
+	// when the mesh tetrahedralizes and CUDA is present, else the CPU XPBD
+	// solver -- decided per body), 1 = force CPU, 2 = force GPU. A per-body
+	// override is available as node metadata "physx_soft_mode" = "cpu"/"gpu".
+	inline static int soft_body_mode = 0;
+
 	static void register_settings();
 	static void read_settings();
 };

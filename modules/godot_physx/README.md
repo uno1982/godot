@@ -268,6 +268,11 @@ For deterministic lockstep multiplayer, use the Jolt backend.
 - **`HeightMapShape3D`** works — a `PxHeightField` quantized to 16 bits over the
   map's height range (so vertical resolution is `(max_height − min_height) /
   65535`). Like concave (trimesh) shapes, it is static/kinematic only.
+- **Non-uniform node scale on mesh, convex and height-map shapes is ignored** —
+  PhysX carries no scale on a static/kinematic actor pose and the module does
+  not yet bake it into the geometry. Primitive shapes are unaffected (their size
+  comes pre-scaled from Godot). For a larger height field, use more samples
+  rather than scaling the body.
 - **`PhysicalBone3D`** (physics-driven skeleton bones / ragdolls) simulates —
   bodies, joints and the per-step transform sync all work — but the joint
   softness / bias / relaxation parameters and `omit_force_integration` are not

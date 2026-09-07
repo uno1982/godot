@@ -273,11 +273,13 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   [PR #503](https://github.com/NVIDIA-Omniverse/PhysX/pull/503)) — without it a
   body straddling the height-field boundary faults the GPU narrowphase and kills
   the CUDA context. `build_physx.py` applies it automatically.
-- **Non-uniform node scale on mesh, convex and height-map shapes is ignored** —
-  PhysX carries no scale on a static/kinematic actor pose and the module does
-  not yet bake it into the geometry. Primitive shapes are unaffected (their size
-  comes pre-scaled from Godot). For a larger height field, use more samples
-  rather than scaling the body.
+- **Node scale** is baked into the collision geometry when the actor is built
+  (PhysX actor poses carry no scale): box per-axis, convex and trimesh via
+  `PxMeshScale`, height field via row/column/height scale — full non-uniform
+  scale on all of those, like Jolt. **Sphere and capsule are uniform-only**;
+  non-uniform scale on them collapses to the mean axis and logs a warning once
+  (a PhysX capsule/sphere can't be an ellipsoid), again matching Jolt. Changing
+  a body's scale at runtime re-cooks its shapes.
 - **`PhysicalBone3D`** (physics-driven skeleton bones / ragdolls) simulates —
   bodies, joints and the per-step transform sync all work — but the joint
   softness / bias / relaxation parameters and `omit_force_integration` are not

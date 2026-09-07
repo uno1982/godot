@@ -527,6 +527,9 @@ bool GodotPhysXSpace3D::test_body_motion(GodotPhysXBody3D *p_body, const Physics
 	}
 
 	const PxReal margin = MAX((PxReal)p_params.margin, 0.0001f);
+	// PhysX poses carry no scale, so the mover's node scale is baked into its
+	// query geometry (combined with any per-shape transform scale).
+	const Vector3 motion_scale = p_params.from.basis.get_scale();
 
 	MotionFilter filter;
 	filter.self_actor = p_body->get_px_actor();
@@ -554,19 +557,19 @@ bool GodotPhysXSpace3D::test_body_motion(GodotPhysXBody3D *p_body, const Physics
 			if (!sr || !sr->shape || !sr->shape->is_valid()) {
 				continue;
 			}
-			const GodotPhysXShapeGeometry &g = sr->shape->get_geometry();
-			const PxTransform pose = PxTransform(recover) * to_px(p_params.from) * to_px(sr->xform) * g.local_pose;
+			const GodotPhysXShape3D::ScaledGeometry sg = sr->shape->scaled_geometry(motion_scale * sr->xform.basis.get_scale());
+			const PxTransform pose = PxTransform(recover) * to_px(p_params.from) * to_px(sr->xform) * sg.local_pose;
 
 			PxOverlapHit touches[16];
 			PxOverlapBuffer buf(touches, 16);
 			PxQueryFilterData ofd(fd.flags | PxQueryFlag::eNO_BLOCK);
-			px_scene->overlap(g.geometry(), pose, buf, ofd, &filter);
+			px_scene->overlap(sg.geom.any(), pose, buf, ofd, &filter);
 			for (PxU32 t = 0; t < buf.getNbTouches(); t++) {
 				const PxOverlapHit &h = buf.getTouch(t);
 				PxVec3 dir;
 				PxF32 depth;
 				const PxTransform other_pose = h.actor->getGlobalPose() * h.shape->getLocalPose();
-				if (PxGeometryQuery::computePenetration(dir, depth, g.geometry(), pose, h.shape->getGeometry(), other_pose)) {
+				if (PxGeometryQuery::computePenetration(dir, depth, sg.geom.any(), pose, h.shape->getGeometry(), other_pose)) {
 					iter_recover += dir * (depth + margin);
 					any = true;
 					if (iter == 0 && depth > rec_depth) {
@@ -605,25 +608,26 @@ bool GodotPhysXSpace3D::test_body_motion(GodotPhysXBody3D *p_body, const Physics
 			if (!sr || !sr->shape || !sr->shape->is_valid()) {
 				continue;
 			}
-			const GodotPhysXShapeGeometry &g = sr->shape->get_geometry();
-			const PxTransform pose = recovered_from * to_px(sr->xform) * g.local_pose;
+			const GodotPhysXShape3D::ScaledGeometry sg = sr->shape->scaled_geometry(motion_scale * sr->xform.basis.get_scale());
+			const PxTransform pose = recovered_from * to_px(sr->xform) * sg.local_pose;
 
 			PxSweepBuffer hit;
-			if (px_scene->sweep(g.geometry(), pose, unit_dir, (PxReal)motion_len, hit,
+			if (px_scene->sweep(sg.geom.any(), pose, unit_dir, (PxReal)motion_len, hit,
 						PxHitFlag::ePOSITION | PxHitFlag::eNORMAL | PxHitFlag::eMTD,
 						fd, &filter, nullptr, 0.0f) &&
 					hit.hasBlock) {
-				// Internal-edge fix: a capsule sweeping over a triangle mesh
-				// catches on the shared edges between facets and PhysX hands back
-				// the edge normal (often axis-aligned, looks like a wall). Swap in
-				// the real triangle face normal so a walking character slides on
-				// the surface instead of hitting phantom steps.
-				if (g.geometry().getType() == PxGeometryType::eTRIANGLEMESH &&
-						hit.block.faceIndex != 0xffffffffu) {
+				// Internal-edge fix: sweeping over a triangle-mesh surface catches
+				// on the shared edges between facets and PhysX hands back the edge
+				// normal (often axis-aligned, looks like a wall). Swap in the real
+				// triangle face normal so a walking character slides on the surface
+				// instead of hitting phantom steps.
+				if (hit.block.actor && hit.block.shape && hit.block.faceIndex != 0xffffffffu &&
+						hit.block.shape->getGeometry().getType() == PxGeometryType::eTRIANGLEMESH) {
 					const PxTransform hit_pose = hit.block.actor->getGlobalPose() *
 							hit.block.shape->getLocalPose();
 					PxTriangle tri;
-					PxMeshQuery::getTriangle(static_cast<const PxTriangleMeshGeometry &>(g.geometry()),
+					PxMeshQuery::getTriangle(
+							static_cast<const PxTriangleMeshGeometry &>(hit.block.shape->getGeometry()),
 							hit_pose, hit.block.faceIndex, tri);
 					PxVec3 face_n;
 					tri.normal(face_n);

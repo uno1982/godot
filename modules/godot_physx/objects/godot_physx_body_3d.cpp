@@ -124,6 +124,10 @@ void GodotPhysXBody3D::_build_actor() {
 
 	const bool non_kinematic_dynamic = _is_dynamic() && mode != PhysicsServer3D::BODY_MODE_KINEMATIC;
 
+	// PhysX actor poses carry no scale, so the node's scale is baked into each
+	// shape's geometry here (combined with any per-shape transform scale).
+	built_scale = body_transform.basis.get_scale();
+
 	for (uint32_t shape_idx = 0; shape_idx < shapes.size(); shape_idx++) {
 		const ShapeRef &sr = shapes[shape_idx];
 		if (sr.disabled || !sr.shape || !sr.shape->is_valid()) {
@@ -133,13 +137,13 @@ void GodotPhysXBody3D::_build_actor() {
 			ERR_PRINT_ONCE("PhysX: concave (trimesh) and height-map shapes are only supported on static and kinematic bodies; shape skipped.");
 			continue;
 		}
-		const GodotPhysXShapeGeometry &g = sr.shape->get_geometry();
-		PxShape *px_shape = physics->createShape(g.geometry(), *material, true);
+		const GodotPhysXShape3D::ScaledGeometry sg = sr.shape->scaled_geometry(built_scale * sr.xform.basis.get_scale());
+		PxShape *px_shape = physics->createShape(sg.geom.any(), *material, true);
 		if (!px_shape) {
-			ERR_PRINT_ONCE(vformat("PhysX: createShape failed for geometry type %d.", (int)g.geometry().getType()));
+			ERR_PRINT_ONCE(vformat("PhysX: createShape failed for geometry type %d.", (int)sg.geom.getType()));
 			continue;
 		}
-		px_shape->setLocalPose(to_px(sr.xform) * g.local_pose);
+		px_shape->setLocalPose(to_px(sr.xform) * sg.local_pose);
 		// Store the Godot shape index so queries can report body_shape.
 		px_shape->userData = reinterpret_cast<void *>(static_cast<uintptr_t>(shape_idx));
 		px_actor->attachShape(*px_shape);
@@ -348,6 +352,11 @@ void GodotPhysXBody3D::set_state(PhysicsServer3D::BodyState p_state, const Varia
 		case PhysicsServer3D::BODY_STATE_TRANSFORM: {
 			body_transform = p_value;
 			if (px_actor) {
+				if (!body_transform.basis.get_scale().is_equal_approx(built_scale)) {
+					// Scale changed -- shapes must be re-cooked.
+					_build_actor();
+					break;
+				}
 				const PxTransform pose = to_px(body_transform);
 				if (PxRigidDynamic *dyn = px_actor->is<PxRigidDynamic>()) {
 					if (mode == PhysicsServer3D::BODY_MODE_KINEMATIC) {

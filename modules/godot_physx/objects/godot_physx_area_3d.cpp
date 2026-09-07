@@ -73,19 +73,20 @@ void GodotPhysXArea3D::_build_actor() {
 	px_actor = physics->createRigidStatic(to_px(area_transform));
 	ERR_FAIL_NULL(px_actor);
 	px_actor->userData = this;
+	built_scale = area_transform.basis.get_scale();
 
 	for (uint32_t i = 0; i < shapes.size(); i++) {
 		const ShapeRef &sr = shapes[i];
 		if (sr.disabled || !sr.shape || !sr.shape->is_valid()) {
 			continue;
 		}
-		const GodotPhysXShapeGeometry &g = sr.shape->get_geometry();
-		PxShape *px_shape = physics->createShape(g.geometry(), *material, true,
+		const GodotPhysXShape3D::ScaledGeometry sg = sr.shape->scaled_geometry(built_scale * sr.xform.basis.get_scale());
+		PxShape *px_shape = physics->createShape(sg.geom.any(), *material, true,
 				PxShapeFlag::eTRIGGER_SHAPE | PxShapeFlag::eSCENE_QUERY_SHAPE);
 		if (!px_shape) {
 			continue;
 		}
-		px_shape->setLocalPose(to_px(sr.xform) * g.local_pose);
+		px_shape->setLocalPose(to_px(sr.xform) * sg.local_pose);
 		px_shape->userData = reinterpret_cast<void *>(static_cast<uintptr_t>(i));
 		px_actor->attachShape(*px_shape);
 		px_shape->release();
@@ -188,6 +189,10 @@ const GodotPhysXArea3D::ShapeRef *GodotPhysXArea3D::get_shape_ref(int p_idx) con
 void GodotPhysXArea3D::set_transform(const Transform3D &p_transform) {
 	area_transform = p_transform;
 	if (px_actor) {
+		if (!area_transform.basis.get_scale().is_equal_approx(built_scale)) {
+			_build_actor(); // scale changed -- re-cook shapes
+			return;
+		}
 		px_actor->setGlobalPose(to_px(area_transform));
 	}
 }

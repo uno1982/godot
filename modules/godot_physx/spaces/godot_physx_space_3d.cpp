@@ -594,6 +594,10 @@ bool GodotPhysXSpace3D::test_body_motion(GodotPhysXBody3D *p_body, const Physics
 	PxSweepHit best_hit;
 	bool has_hit = false;
 
+	// Extra depenetration from geometry that computePenetration() can't handle
+	// (triangle meshes, height fields): the swept MTD below fills this in.
+	PxVec3 mtd_recover(0.0f);
+
 	if (motion_len > CMP_EPSILON) {
 		const PxVec3 unit_dir = to_px(p_params.motion / motion_len);
 		for (int i = 0; i < shape_count; i++) {
@@ -606,9 +610,47 @@ bool GodotPhysXSpace3D::test_body_motion(GodotPhysXBody3D *p_body, const Physics
 
 			PxSweepBuffer hit;
 			if (px_scene->sweep(g.geometry(), pose, unit_dir, (PxReal)motion_len, hit,
-						PxHitFlag::ePOSITION | PxHitFlag::eNORMAL | PxHitFlag::ePRECISE_SWEEP,
+						PxHitFlag::ePOSITION | PxHitFlag::eNORMAL | PxHitFlag::eMTD,
 						fd, &filter, nullptr, 0.0f) &&
 					hit.hasBlock) {
+				// Internal-edge fix: a capsule sweeping over a triangle mesh
+				// catches on the shared edges between facets and PhysX hands back
+				// the edge normal (often axis-aligned, looks like a wall). Swap in
+				// the real triangle face normal so a walking character slides on
+				// the surface instead of hitting phantom steps.
+				if (g.geometry().getType() == PxGeometryType::eTRIANGLEMESH &&
+						hit.block.faceIndex != 0xffffffffu) {
+					const PxTransform hit_pose = hit.block.actor->getGlobalPose() *
+							hit.block.shape->getLocalPose();
+					PxTriangle tri;
+					PxMeshQuery::getTriangle(static_cast<const PxTriangleMeshGeometry &>(g.geometry()),
+							hit_pose, hit.block.faceIndex, tri);
+					PxVec3 face_n;
+					tri.normal(face_n);
+					if (face_n.dot(hit.block.normal) < 0.0f) {
+						face_n = -face_n;
+					}
+					hit.block.normal = face_n;
+				}
+				// eMTD reports an initial overlap as a negative distance with the
+				// push-out normal. The body isn't blocked from moving -- it just
+				// needs depenetrating -- so record the push and don't clamp the
+				// travel. This is the only depenetration path for tri-mesh /
+				// height-field terrain (computePenetration() rejects those).
+				if (hit.block.distance <= 0.0f) {
+					const PxF32 pen = -hit.block.distance;
+					mtd_recover += hit.block.normal * (pen + margin);
+					// Only report a floor-like overlap so move_and_slide keeps a
+					// character grounded. Near-horizontal push-outs here are
+					// almost always a facet edge the capsule is grazing -- just
+					// depenetrate, don't treat it as a wall that stops the travel
+					// (that leaves a walking character frozen mid-slope).
+					if (hit.block.normal.y > 0.3f && (!has_hit || safe_fraction > (real_t)0.0)) {
+						best_hit = hit.block;
+						has_hit = true;
+					}
+					continue;
+				}
 				// Ignore contacts that don't actually oppose the motion: a hit
 				// whose normal faces along (rather than against) the sweep is a
 				// grazing/edge contact from sliding on a surface.
@@ -625,8 +667,10 @@ bool GodotPhysXSpace3D::test_body_motion(GodotPhysXBody3D *p_body, const Physics
 		}
 	}
 
+	const PxVec3 total_recover = recover_motion + mtd_recover;
+
 	if (r_result) {
-		r_result->travel = to_godot(recover_motion) + p_params.motion * safe_fraction;
+		r_result->travel = to_godot(total_recover) + p_params.motion * safe_fraction;
 		r_result->remainder = p_params.motion - p_params.motion * safe_fraction;
 		r_result->collision_safe_fraction = safe_fraction;
 		r_result->collision_unsafe_fraction = safe_fraction;

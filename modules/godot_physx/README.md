@@ -83,15 +83,18 @@ scene or at runtime.
 
 ## Project settings
 
-All under `physics/physx_3d/simulation/`:
+Under `physics/physx_3d/simulation/`:
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `solver_type` | `PGS` | `PGS` is PhysX's classic solver and matches the other backends' feel in large rigid-body scenes. `TGS` is steadier for joint chains under sustained external forces (wind, thrusters) but can be looser on joints in big mixed piles. |
+| `solver_type` | `PGS` | `PGS` is PhysX's classic solver and matches the other backends' feel in large rigid-body scenes. `TGS` is steadier for joint chains under sustained external forces (wind, thrusters) but can be looser on joints in big mixed piles. GPU soft bodies need `TGS` for firm soft-vs-soft contact. |
 | `enhanced_determinism` | `false` | Makes the CPU simulation reproducible across runs on the same binary and platform, independent of worker-thread count and API call order. It is **not** cross-platform deterministic and has a performance cost. Enabling it forces the CPU solver even when a CUDA device is present, because the GPU solver is never deterministic. |
 | `allow_sleep` | `true` | When off, no rigid body ever sleeps — the same as turning `RigidBody3D.can_sleep` off on every body. Useful for debugging or setups that need every body integrated every step. |
 | `stabilization` | `true` | `PxSceneFlag::eENABLE_STABILIZATION` — damps low-mass stacked bodies toward rest so piles settle and sleep instead of jittering. Turn it off if it causes visible drift on very light bodies. |
 | `cpu_worker_threads` | `0` (auto) | Size of the PhysX CPU task pool. `0` picks a value based on the active path: a small pool (2–4) when GPU dynamics is running, since the CPU mostly waits on the GPU each step; most of the machine otherwise. A fixed value overrides this in both cases — setting it high while on the GPU path will usually cost performance, not gain it. |
+
+And `physics/physx_3d/soft_body/mode` — `Auto` / `CPU` / `GPU` for the stock
+`SoftBody3D` node (see [Soft bodies](#soft-bodies--stock-softbody3d)).
 
 The standard `physics/3d/sleep_threshold_linear`, `sleep_threshold_angular` and
 `time_before_sleep` project settings also apply — they are mapped onto PhysX's
@@ -194,15 +197,23 @@ and its inspector (`total_mass`, `pressure_coefficient`, `linear_stiffness`,
 `simulation_precision`, `damping_coefficient`, `drag_coefficient`,
 `shrinking_factor`) all apply, no module-specific node.
 
-It runs on the CPU: the same XPBD solver as CPU cloth (`cloth/`), over the
-render mesh welded to unique vertex positions. Edge constraints hold the shape;
-`pressure_coefficient > 0` adds a volume constraint that keeps a closed mesh
-from collapsing (and larger values just make that stiffer, they don't inflate).
-Collision against rigid bodies is a per-vertex `PhysicsDirectSpaceState3D`
-query each step, so it respects `collision_mask` and collision exceptions on any
-engine. There is no GPU path yet — PhysX's `PxDeformableVolume` (tetrahedral FEM
-on CUDA) is a separate, future addition; today a `SoftBody3D` simulates the same
-whether or not CUDA is present.
+Each soft body resolves independently to one of two paths:
+
+- **GPU** — a PhysX `PxDeformableVolume` (tetrahedral FEM on CUDA). Cooked from
+  the render mesh with a conforming tet mesh, so the collision surface lines up
+  with the render vertices and reads straight back each step. GPU volumes also
+  collide with **each other** (firmly under the TGS solver; on PGS the contact
+  is soft and transient — a stack slowly compacts).
+- **CPU** — the same XPBD solver as CPU cloth (`cloth/`), over the welded render
+  mesh. Edge constraints hold the shape; `pressure_coefficient > 0` adds a
+  volume constraint that keeps a closed mesh from collapsing. Collision against
+  rigid bodies is a per-vertex `PhysicsDirectSpaceState3D` query. Soft bodies do
+  **not** collide with each other on this path (same as Jolt and Godot Physics).
+
+`physics/physx_3d/soft_body/mode` picks the path: `Auto` (default — GPU when the
+mesh tetrahedralizes and CUDA is present, else CPU, decided per body), `CPU`, or
+`GPU`. A per-body override is the node metadata `physx_soft_mode` = `"cpu"` or
+`"gpu"`. `enhanced_determinism` forces every soft body to CPU (no CUDA context).
 
 ## Chunk bursts — `PhysXChunkEmitter3D`
 

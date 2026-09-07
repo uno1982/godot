@@ -30,9 +30,12 @@
 
 #include "godot_physx_soft_body_3d.h"
 
+#include "../godot_physx_project_settings.h"
 #include "../spaces/godot_physx_direct_state_3d.h"
 #include "../spaces/godot_physx_space_3d.h"
 
+#include "core/config/project_settings.h"
+#include "core/object/object.h"
 #include "core/templates/hash_map.h"
 #include "servers/physics_3d/physics_server_3d.h"
 #include "servers/rendering/rendering_server.h"
@@ -40,6 +43,9 @@
 
 GodotPhysXSoftBody3D::~GodotPhysXSoftBody3D() {
 	set_space(nullptr);
+	if (volume) {
+		memdelete(volume);
+	}
 	if (collision_sphere.is_valid()) {
 		PhysicsServer3D::get_singleton()->free_rid(collision_sphere);
 	}
@@ -52,17 +58,27 @@ void GodotPhysXSoftBody3D::set_space(GodotPhysXSpace3D *p_space) {
 	if (space) {
 		space->unregister_soft_body(this);
 	}
+	// The GPU volume is bound to a scene; drop it on space change and let the
+	// next set_mesh / rebuild decide the path again.
+	if (volume) {
+		memdelete(volume);
+		volume = nullptr;
+		using_gpu = false;
+	}
 	space = p_space;
 	if (space) {
 		space->register_soft_body(this);
 		if (mesh_ready) {
-			solver.reset(transform);
-			_update_normals_and_bounds();
+			_rebuild_from_mesh();
 		}
 	}
 }
 
 void GodotPhysXSoftBody3D::_apply_solver_settings() {
+	if (using_gpu && volume) {
+		volume->apply_params(_gpu_params());
+		return;
+	}
 	XPBDClothSolver::Settings s = solver.settings;
 	s.substeps = MAX(simulation_precision, 1);
 	// linear_stiffness in [0,1] -> stretch compliance: 1 is rigid (0 compliance),
@@ -92,8 +108,8 @@ void GodotPhysXSoftBody3D::_apply_solver_settings() {
 	solver.settings = s;
 }
 
-void GodotPhysXSoftBody3D::_rebuild_from_mesh() {
-	const bool was_running = mesh_ready && placed;
+void GodotPhysXSoftBody3D::_rebuild_from_mesh(bool p_keep_state) {
+	const bool was_running = p_keep_state && mesh_ready && placed;
 	Vector<Vector3> prev_positions;
 	Vector<Vector3> prev_velocities;
 	if (was_running) {
@@ -111,6 +127,11 @@ void GodotPhysXSoftBody3D::_rebuild_from_mesh() {
 	map_visual_to_physics.clear();
 	visual_vertex_count = 0;
 	solver.clear();
+	if (volume) {
+		memdelete(volume);
+		volume = nullptr;
+	}
+	using_gpu = false;
 
 	if (mesh.is_null()) {
 		return;
@@ -151,6 +172,18 @@ void GodotPhysXSoftBody3D::_rebuild_from_mesh() {
 		welded_indices.write[i] = (int32_t)map_visual_to_physics[indices[i]];
 	}
 
+	// GPU path first (per-body Auto): a PxDeformableVolume if the mesh cooks and
+	// CUDA is up. Only once the node has handed us its world transform -- a
+	// volume is a live scene actor the moment it's added, so building it at the
+	// origin would have it eject off the floor. Before that, fall through to the
+	// CPU solver (which is gated in step()); set_transform() rebuilds.
+	if (placed && _try_build_gpu(welded, welded_indices)) {
+		using_gpu = true;
+		mesh_ready = true;
+		_sync_gpu_pins(); // re-apply any pins set before the volume existed
+		return;
+	}
+
 	solver.build_mesh(welded, welded_indices);
 	if (!solver.is_built()) {
 		return;
@@ -181,6 +214,87 @@ void GodotPhysXSoftBody3D::_rebuild_from_mesh() {
 	_update_normals_and_bounds();
 }
 
+GodotPhysXSoftVolume3D::Params GodotPhysXSoftBody3D::_gpu_params() const {
+	GodotPhysXSoftVolume3D::Params p;
+	const float k = CLAMP((float)linear_stiffness, 0.0f, 1.0f);
+	p.youngs_modulus = Math::lerp(2.0e4f, 5.0e7f, k * k);
+	// pressure_coefficient (0..~100) -> Poisson ratio toward the 0.49 near-
+	// incompressible limit; 0 leaves it a soft, compressible blob.
+	p.poisson_ratio = CLAMP(0.30f + (float)pressure_coefficient / 100.0f * 0.19f, 0.05f, 0.49f);
+	p.damping = MAX((float)damping_coefficient, 0.0f);
+	p.dynamic_friction = 0.5f;
+	p.total_mass = MAX((float)total_mass, 0.001f);
+	p.solver_iterations = CLAMP(simulation_precision, 4, 60);
+	p.max_speed = 30.0f;
+	p.collision_layer = collision_layer;
+	p.collision_mask = collision_mask;
+	return p;
+}
+
+bool GodotPhysXSoftBody3D::_try_build_gpu(const PackedVector3Array &p_welded, const PackedInt32Array &p_indices) {
+	if (!space || !space->get_px_cuda()) {
+		return false;
+	}
+	// Mode resolution: node metadata "physx_soft_mode" overrides the project
+	// setting; both can force CPU or GPU, otherwise it's Auto (try GPU). Read
+	// the setting live so a runtime change (e.g. a test or a demo toggle) takes
+	// effect on the next rebuild.
+	int mode = 0; // 0 Auto, 1 CPU, 2 GPU
+	if (ProjectSettings *ps = ProjectSettings::get_singleton()) {
+		const Variant v = ps->get("physics/physx_3d/soft_body/mode");
+		if (v.get_type() == Variant::INT) {
+			mode = (int)v;
+		}
+	}
+	if (instance_id.is_valid()) {
+		Object *obj = ObjectDB::get_instance(instance_id);
+		if (obj && obj->has_meta("physx_soft_mode")) {
+			const String m = String(obj->get_meta("physx_soft_mode")).to_lower();
+			if (m == "cpu") {
+				mode = 1;
+			} else if (m == "gpu") {
+				mode = 2;
+			}
+		}
+	}
+	if (mode == 1) {
+		return false;
+	}
+
+	Vector<Vector3> wv;
+	wv.resize(p_welded.size());
+	for (int i = 0; i < p_welded.size(); i++) {
+		wv.write[i] = p_welded[i];
+	}
+	Vector<int32_t> idx;
+	idx.resize(p_indices.size());
+	for (int i = 0; i < p_indices.size(); i++) {
+		idx.write[i] = p_indices[i];
+	}
+
+	GodotPhysXSoftVolume3D *v = memnew(GodotPhysXSoftVolume3D);
+	if (!v->build(space, wv, idx, transform, _gpu_params())) {
+		memdelete(v);
+		if (mode == 2) {
+			ERR_PRINT("PhysX: SoftBody3D forced to GPU but the mesh could not be tetrahedralized; it will be inert.");
+		}
+		return false;
+	}
+	volume = v;
+	print_verbose("PhysX: SoftBody3D -> GPU PxDeformableVolume.");
+	if (GodotPhysXProjectSettings::solver_type != 1) { // not TGS
+		static bool warned = false;
+		if (!warned) {
+			warned = true;
+			WARN_PRINT("PhysX: GPU soft bodies (PxDeformableVolume) resolve soft-vs-soft contact reliably only under "
+					   "the TGS solver. On PGS the contact is soft and transient -- a pile settles but slowly compacts "
+					   "as bodies sink through each other. Set physics/physx_3d/simulation/solver_type = TGS for firm "
+					   "soft-vs-soft stacking. Soft-vs-rigid is unaffected.");
+		}
+	}
+	return true;
+}
+
 void GodotPhysXSoftBody3D::set_mesh(RID p_mesh) {
 	if (p_mesh == mesh) {
 		return;
@@ -190,7 +304,7 @@ void GodotPhysXSoftBody3D::set_mesh(RID p_mesh) {
 	// pose -- _rebuild_from_mesh() preserves positions when the vertex count is
 	// unchanged.
 	mesh = p_mesh;
-	_rebuild_from_mesh();
+	_rebuild_from_mesh(true);
 }
 
 void GodotPhysXSoftBody3D::set_transform(const Transform3D &p_transform) {
@@ -203,9 +317,15 @@ void GodotPhysXSoftBody3D::set_transform(const Transform3D &p_transform) {
 			return;
 		}
 	}
+	const bool first_placement = !placed;
 	transform = p_transform;
 	placed = true;
-	if (mesh_ready) {
+	if (mesh_ready && (using_gpu || first_placement)) {
+		// GPU: the volume bakes its placement into the cooked vertices, so any
+		// move is a rebuild. First real placement: rebuild too, so the GPU path
+		// (which was skipped while unplaced) now gets its shot.
+		_rebuild_from_mesh();
+	} else if (mesh_ready) {
 		solver.reset(transform);
 		_update_normals_and_bounds();
 	}
@@ -248,19 +368,39 @@ void GodotPhysXSoftBody3D::set_drag_coefficient(real_t p_drag) {
 	_apply_solver_settings();
 }
 
+void GodotPhysXSoftBody3D::_sync_gpu_pins() {
+	if (!using_gpu || !volume) {
+		return;
+	}
+	Vector<int> idx;
+	Vector<Vector3> targets;
+	for (const int rp : pinned_render_points) {
+		idx.push_back(rp);
+		const HashMap<int, Vector3>::ConstIterator t = pin_targets.find(rp);
+		targets.push_back(t ? t->value : Vector3(NAN, 0, 0));
+	}
+	volume->set_pins(idx, targets);
+}
+
 void GodotPhysXSoftBody3D::move_point(int p_point_index, const Vector3 &p_global_position) {
 	if (p_point_index < 0) {
 		return;
 	}
 	pinned_render_points.insert(p_point_index); // a moved point is a pinned point
-	if (mesh_ready && p_point_index < (int)visual_vertex_count) {
+	pin_targets[p_point_index] = p_global_position;
+	if (using_gpu) {
+		_sync_gpu_pins();
+	} else if (mesh_ready && p_point_index < (int)visual_vertex_count) {
 		solver.set_pin_target((int)map_visual_to_physics[p_point_index], p_global_position);
 	}
 }
 
 Vector3 GodotPhysXSoftBody3D::get_point_global_position(int p_point_index) const {
 	ERR_FAIL_INDEX_V(p_point_index, (int)visual_vertex_count, Vector3());
-	const int v = (int)map_visual_to_physics[p_point_index];
+	const uint32_t v = map_visual_to_physics[p_point_index];
+	if (using_gpu && volume) {
+		return volume->get_vertex_position(v);
+	}
 	return solver.get_positions()[v];
 }
 
@@ -272,8 +412,11 @@ void GodotPhysXSoftBody3D::pin_point(int p_point_index, bool p_pin) {
 		pinned_render_points.insert(p_point_index);
 	} else {
 		pinned_render_points.erase(p_point_index);
+		pin_targets.erase(p_point_index);
 	}
-	if (mesh_ready && p_point_index < (int)visual_vertex_count) {
+	if (using_gpu) {
+		_sync_gpu_pins();
+	} else if (mesh_ready && p_point_index < (int)visual_vertex_count) {
 		solver.set_pinned((int)map_visual_to_physics[p_point_index], p_pin);
 	}
 }
@@ -287,6 +430,11 @@ bool GodotPhysXSoftBody3D::is_point_pinned(int p_point_index) const {
 
 void GodotPhysXSoftBody3D::unpin_all() {
 	pinned_render_points.clear();
+	pin_targets.clear();
+	if (using_gpu) {
+		_sync_gpu_pins();
+		return;
+	}
 	const int n = solver.vertex_count();
 	for (int i = 0; i < n; i++) {
 		solver.set_pinned(i, false);
@@ -295,8 +443,12 @@ void GodotPhysXSoftBody3D::unpin_all() {
 
 void GodotPhysXSoftBody3D::apply_point_impulse(int p_point_index, const Vector3 &p_impulse) {
 	ERR_FAIL_INDEX(p_point_index, (int)visual_vertex_count);
-	const int v = (int)map_visual_to_physics[p_point_index];
-	if (solver.is_pinned(v)) {
+	const uint32_t v = map_visual_to_physics[p_point_index];
+	if (using_gpu && volume) {
+		volume->add_point_impulse(v, p_impulse);
+		return;
+	}
+	if (solver.is_pinned((int)v)) {
 		return;
 	}
 	// impulse = mass * dv; solver mass is areal, approximate per-vertex via total.
@@ -310,6 +462,10 @@ void GodotPhysXSoftBody3D::apply_point_force(int p_point_index, const Vector3 &p
 }
 
 void GodotPhysXSoftBody3D::apply_central_impulse(const Vector3 &p_impulse) {
+	if (using_gpu && volume) {
+		volume->add_central_impulse(p_impulse);
+		return;
+	}
 	const int n = solver.vertex_count();
 	if (n == 0) {
 		return;
@@ -441,6 +597,9 @@ void GodotPhysXSoftBody3D::_resolve_contacts() {
 }
 
 void GodotPhysXSoftBody3D::step(double p_delta, const Vector3 &p_gravity) {
+	if (using_gpu) {
+		return; // the PxDeformableVolume advances inside px_scene->simulate()
+	}
 	// Wait for the node to hand us its world transform -- stepping from the
 	// mesh-local rest pose would drop the body through the floor and the
 	// collision pass would then fling it out.
@@ -456,6 +615,14 @@ void GodotPhysXSoftBody3D::step(double p_delta, const Vector3 &p_gravity) {
 	_resolve_contacts();
 	_damp_rigid_drift();
 	_update_normals_and_bounds();
+}
+
+void GodotPhysXSoftBody3D::read_back() {
+	if (!using_gpu || !volume) {
+		return;
+	}
+	volume->read_back();
+	bounds = volume->get_bounds();
 }
 
 // Gauss-Seidel constraint ordering and the volume solve each leave a tiny,
@@ -522,6 +689,15 @@ void GodotPhysXSoftBody3D::_damp_rigid_drift() {
 
 void GodotPhysXSoftBody3D::update_rendering_server(PhysicsServer3DRenderingServerHandler *p_handler) {
 	if (!mesh_ready || !p_handler) {
+		return;
+	}
+	if (using_gpu && volume) {
+		for (uint32_t i = 0; i < visual_vertex_count; i++) {
+			const uint32_t v = map_visual_to_physics[i];
+			p_handler->set_vertex(i, volume->get_vertex_position(v));
+			p_handler->set_normal(i, volume->get_vertex_normal(v));
+		}
+		p_handler->set_aabb(volume->get_bounds());
 		return;
 	}
 	const LocalVector<Vector3> &pos = solver.get_positions();

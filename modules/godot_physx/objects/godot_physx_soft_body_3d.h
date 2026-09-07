@@ -31,9 +31,11 @@
 #pragma once
 
 #include "../cloth/xpbd_cloth_solver.h"
+#include "godot_physx_soft_volume_3d.h"
 
 #include "core/math/aabb.h"
 #include "core/math/transform_3d.h"
+#include "core/templates/hash_map.h"
 #include "core/templates/hash_set.h"
 #include "core/templates/local_vector.h"
 #include "core/templates/rid.h"
@@ -41,23 +43,31 @@
 class GodotPhysXSpace3D;
 class PhysicsServer3DRenderingServerHandler;
 
-// CPU soft body backing the stock SoftBody3D node on the PhysX backend. It runs
-// the module's XPBD solver over the render mesh (welded to unique positions):
-// edge constraints hold the shape, an optional volume constraint (pressure)
-// keeps a closed mesh from collapsing, and a per-vertex query against the PhysX
-// scene pushes vertices out of rigid bodies each step. No PhysX deformable
-// actor is created -- PxDeformableVolume (GPU FEM) is a separate, future path.
+// Soft body backing the stock SoftBody3D node on the PhysX backend. Resolves
+// per body to one of two paths:
+//   - GPU: a PhysX PxDeformableVolume (tetrahedral FEM on CUDA), when the mesh
+//     tetrahedralizes and CUDA is available. Volumes also collide with each
+//     other.
+//   - CPU: the module's XPBD solver over the welded render mesh -- edge
+//     constraints hold the shape, an optional volume constraint (pressure)
+//     keeps it from collapsing, a per-vertex scene query pushes it out of
+//     rigid bodies.
+// Mode is Auto by default; forced by the "physx_soft_mode" node metadata or the
+// physics/physx_3d/soft_body/mode project setting.
 class GodotPhysXSoftBody3D {
 	RID self;
 	ObjectID instance_id;
 	GodotPhysXSpace3D *space = nullptr;
 
 	XPBDClothSolver solver;
+	GodotPhysXSoftVolume3D *volume = nullptr; // non-null == GPU path
+	bool using_gpu = false;
 
 	RID mesh;
 	LocalVector<uint32_t> map_visual_to_physics; // render vertex -> solver vertex
 	uint32_t visual_vertex_count = 0;
 	HashSet<int> pinned_render_points; // survives set_mesh, like the other backends
+	HashMap<int, Vector3> pin_targets; // render index -> world hold pos (or NaN.x)
 	LocalVector<Vector3> normals; // per solver vertex, world space
 	AABB bounds;
 	bool mesh_ready = false;
@@ -88,7 +98,13 @@ class GodotPhysXSoftBody3D {
 	int contact_count = 0; // penetrating vertices at the last refresh
 
 	void _apply_solver_settings();
-	void _rebuild_from_mesh();
+	// p_keep_state carries the live CPU sim over when only the mesh handle
+	// changed (the node's private-duplicate swap); false re-seeds from rest at
+	// the current transform (initial build, placement, teleport, space change).
+	void _rebuild_from_mesh(bool p_keep_state = false);
+	bool _try_build_gpu(const PackedVector3Array &p_welded, const PackedInt32Array &p_indices);
+	GodotPhysXSoftVolume3D::Params _gpu_params() const;
+	void _sync_gpu_pins(); // push pinned_render_points / pin_targets to the volume
 	void _refresh_contacts();
 	void _resolve_contacts();
 	void _damp_rigid_drift();
@@ -150,8 +166,13 @@ public:
 	void apply_central_impulse(const Vector3 &p_impulse);
 	void apply_central_force(const Vector3 &p_force, double p_delta);
 
-	// Driven by the space each step.
+	bool is_gpu() const { return using_gpu; }
+
+	// Driven by the space each step: step() advances the CPU path (no-op on
+	// GPU); read_back() pulls the GPU volume's deformed state after
+	// fetchResults() (no-op on CPU).
 	void step(double p_delta, const Vector3 &p_gravity);
+	void read_back();
 	// Feed deformed positions/normals to the render mesh.
 	void update_rendering_server(PhysicsServer3DRenderingServerHandler *p_handler);
 };

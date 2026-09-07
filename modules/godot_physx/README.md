@@ -267,7 +267,12 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   Unsupported shapes are treated as having no collision and log a warning once.
 - **`HeightMapShape3D`** works — a `PxHeightField` quantized to 16 bits over the
   map's height range (so vertical resolution is `(max_height − min_height) /
-  65535`). Like concave (trimesh) shapes, it is static/kinematic only.
+  65535`). Like concave (trimesh) shapes, it is static/kinematic only. The GPU
+  build requires the bundled PhysX patch
+  (`misc/physx_patches/0001-heightfield-gpu-boundary-crash.patch`, upstream
+  [PR #503](https://github.com/NVIDIA-Omniverse/PhysX/pull/503)) — without it a
+  body straddling the height-field boundary faults the GPU narrowphase and kills
+  the CUDA context. `build_physx.py` applies it automatically.
 - **Non-uniform node scale on mesh, convex and height-map shapes is ignored** —
   PhysX carries no scale on a static/kinematic actor pose and the module does
   not yet bake it into the geometry. Primitive shapes are unaffected (their size

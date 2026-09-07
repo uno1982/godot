@@ -29,6 +29,7 @@ PHYSX_REF = "ovphysx-0.5.11"  # PhysX SDK 5.10.0
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PRESET_DIR = os.path.join(HERE, "physx_presets")
+PATCH_DIR = os.path.join(HERE, "physx_patches")
 
 
 def run(cmd, cwd):
@@ -74,6 +75,21 @@ def main():
     physx = os.path.join(src, "physx")
     if not os.path.isdir(physx):
         sys.exit("no physx/ directory in " + src)
+
+    # Apply bundled patches (fixes not yet in the pinned PhysX ref). Each is a
+    # -p1 diff rooted at the checkout; skipped cleanly if already applied.
+    if os.path.isdir(PATCH_DIR):
+        for name in sorted(f for f in os.listdir(PATCH_DIR) if f.endswith(".patch")):
+            patch = os.path.join(PATCH_DIR, name)
+            if subprocess.call(["git", "apply", "--reverse", "--check", patch], cwd=src,
+                               stderr=subprocess.DEVNULL) == 0:
+                print("patch already applied: " + name)
+                continue
+            if subprocess.call(["git", "apply", "--check", patch], cwd=src,
+                               stderr=subprocess.DEVNULL) != 0:
+                sys.exit("bundled patch does not apply (wrong PhysX ref?): " + name)
+            run(["git", "apply", patch], cwd=src)
+            print("applied patch: " + name)
 
     # Install the Godot-tuned preset.
     shutil.copy2(preset_file, os.path.join(physx, "buildtools", "presets", "public", preset + ".xml"))

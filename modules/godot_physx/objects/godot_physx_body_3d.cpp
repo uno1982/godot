@@ -129,8 +129,8 @@ void GodotPhysXBody3D::_build_actor() {
 		if (sr.disabled || !sr.shape || !sr.shape->is_valid()) {
 			continue;
 		}
-		if (sr.shape->is_trimesh() && non_kinematic_dynamic) {
-			ERR_PRINT_ONCE("PhysX: concave (trimesh) shapes are only supported on static and kinematic bodies; shape skipped.");
+		if (sr.shape->is_static_only() && non_kinematic_dynamic) {
+			ERR_PRINT_ONCE("PhysX: concave (trimesh) and height-map shapes are only supported on static and kinematic bodies; shape skipped.");
 			continue;
 		}
 		const GodotPhysXShapeGeometry &g = sr.shape->get_geometry();

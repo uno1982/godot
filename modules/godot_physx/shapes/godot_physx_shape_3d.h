@@ -39,6 +39,7 @@
 #include <geometry/PxBoxGeometry.h>
 #include <geometry/PxCapsuleGeometry.h>
 #include <geometry/PxConvexMeshGeometry.h>
+#include <geometry/PxHeightFieldGeometry.h>
 #include <geometry/PxPlaneGeometry.h>
 #include <geometry/PxSphereGeometry.h>
 #include <geometry/PxTriangleMeshGeometry.h>
@@ -55,6 +56,7 @@ struct GodotPhysXShapeGeometry {
 	physx::PxPlaneGeometry plane{};
 	physx::PxConvexMeshGeometry convex;
 	physx::PxTriangleMeshGeometry trimesh;
+	physx::PxHeightFieldGeometry heightfield;
 
 	physx::PxGeometryType::Enum type = physx::PxGeometryType::eINVALID;
 	physx::PxTransform local_pose{ physx::PxIdentity };
@@ -71,9 +73,10 @@ class GodotPhysXShape3D {
 	GodotPhysXShapeGeometry geom;
 	bool geom_valid = false;
 
-	// Owned cooked meshes (reference-counted by PhysX; released on re-cook/destroy).
+	// Owned cooked geometry (reference-counted by PhysX; released on re-cook/destroy).
 	physx::PxConvexMesh *convex_mesh = nullptr;
 	physx::PxTriangleMesh *triangle_mesh = nullptr;
+	physx::PxHeightField *height_field = nullptr;
 	void _release_meshes();
 
 public:
@@ -93,5 +96,7 @@ public:
 
 	bool is_valid() const { return geom_valid; }
 	bool is_trimesh() const { return type == PhysicsServer3D::SHAPE_CONCAVE_POLYGON; }
+	// Trimesh and height field: PhysX only allows these on static/kinematic actors.
+	bool is_static_only() const { return type == PhysicsServer3D::SHAPE_CONCAVE_POLYGON || type == PhysicsServer3D::SHAPE_HEIGHTMAP; }
 	const GodotPhysXShapeGeometry &get_geometry() const { return geom; }
 };

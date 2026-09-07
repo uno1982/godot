@@ -34,10 +34,15 @@
 #include "../godot_physx_server_3d.h"
 
 #include "core/error/error_macros.h"
+#include "core/math/math_funcs.h"
 #include "core/templates/local_vector.h"
 
 #include <PxPhysicsAPI.h>
 #include <cooking/PxCooking.h>
+#include <float.h>
+#include <geometry/PxHeightField.h>
+#include <geometry/PxHeightFieldDesc.h>
+#include <geometry/PxHeightFieldSample.h>
 
 using namespace physx;
 
@@ -55,6 +60,8 @@ const PxGeometry &GodotPhysXShapeGeometry::geometry() const {
 			return convex;
 		case PxGeometryType::eTRIANGLEMESH:
 			return trimesh;
+		case PxGeometryType::eHEIGHTFIELD:
+			return heightfield;
 		default:
 			return box;
 	}
@@ -72,6 +79,10 @@ void GodotPhysXShape3D::_release_meshes() {
 	if (triangle_mesh) {
 		triangle_mesh->release();
 		triangle_mesh = nullptr;
+	}
+	if (height_field) {
+		height_field->release();
+		height_field = nullptr;
 	}
 }
 
@@ -245,9 +256,75 @@ void GodotPhysXShape3D::set_data(const Variant &p_data) {
 			geom_valid = true;
 		} break;
 
+		case PhysicsServer3D::SHAPE_HEIGHTMAP: {
+			const Dictionary d = p_data;
+			ERR_FAIL_COND(!d.has("width") || !d.has("depth") || !d.has("heights"));
+			const int width = d["width"]; // samples along X
+			const int depth = d["depth"]; // samples along Z
+			const Vector<real_t> heights = d["heights"];
+			ERR_FAIL_COND_MSG(width < 2 || depth < 2, "PhysX: height map must be at least 2x2.");
+			ERR_FAIL_COND_MSG(heights.size() != width * depth,
+					vformat("PhysX: height map has %d samples, expected width*depth = %d.", heights.size(), width * depth));
+
+			real_t min_h = d.get("min_height", 0.0);
+			real_t max_h = d.get("max_height", 0.0);
+			if (min_h >= max_h) { // stale/unset -> derive from the data
+				min_h = FLT_MAX;
+				max_h = -FLT_MAX;
+				for (int i = 0; i < heights.size(); i++) {
+					min_h = MIN(min_h, heights[i]);
+					max_h = MAX(max_h, heights[i]);
+				}
+			}
+			// PhysX samples are PxI16. Map [min_h, max_h] onto the full signed
+			// range so quantization error is (max-min)/65535 and never clips.
+			const float range = MAX((float)(max_h - min_h), 0.001f);
+			const float height_scale = range / 65535.0f;
+			const float inv_scale = 1.0f / height_scale;
+
+			LocalVector<PxHeightFieldSample> samples;
+			samples.resize((uint32_t)(width * depth));
+			// PhysX sample(row, col) = samples[row * nbColumns + col], at local
+			// position (row * rowScale, height * heightScale, col * columnScale).
+			// row = x, col = z; the shape's local pose centers and flips it.
+			for (int z = 0; z < depth; z++) {
+				for (int x = 0; x < width; x++) {
+					const float h = (float)heights[z * width + x];
+					int q = (int)Math::round((h - (float)min_h) * inv_scale) - 32768;
+					q = CLAMP(q, -32768, 32767);
+					PxHeightFieldSample &s = samples[(uint32_t)(x * depth + z)];
+					s.height = (PxI16)q;
+					s.materialIndex0 = 0;
+					s.materialIndex1 = 0;
+				}
+			}
+
+			PxHeightFieldDesc hf_desc;
+			hf_desc.nbRows = (PxU32)width;
+			hf_desc.nbColumns = (PxU32)depth;
+			hf_desc.samples.data = samples.ptr();
+			hf_desc.samples.stride = sizeof(PxHeightFieldSample);
+			hf_desc.flags = PxHeightFieldFlags();
+
+			_release_meshes();
+			height_field = PxCreateHeightField(hf_desc, *PxGetStandaloneInsertionCallback());
+			ERR_FAIL_NULL_MSG(height_field, "PhysX: height field cooking failed.");
+
+			geom.type = PxGeometryType::eHEIGHTFIELD;
+			geom.heightfield = PxHeightFieldGeometry(height_field, PxMeshGeometryFlags(), height_scale, 1.0f, 1.0f);
+			// Godot centers the map on the origin; PhysX puts sample (0,0) there.
+			// Also lift by the baked height offset (sample 0 == world Y min_h + 32768*scale).
+			geom.local_pose = PxTransform(PxVec3(
+					-(float)(width - 1) * 0.5f,
+					(float)min_h + 32768.0f * height_scale,
+					-(float)(depth - 1) * 0.5f));
+			geom_valid = true;
+			print_verbose(vformat("PhysX: built %dx%d height field (range %.2f).", width, depth, (double)range));
+		} break;
+
 		default: {
-			// Separation ray, heightmap and custom shapes aren't implemented;
-			// keep the shape valid-but-inert so RID lifecycle stays clean.
+			// Separation ray and custom shapes aren't implemented; keep the
+			// shape valid-but-inert so RID lifecycle stays clean.
 			WARN_PRINT_ONCE(vformat("PhysX: shape type %d not implemented; treated as no collision.", (int)type));
 		} break;
 	}

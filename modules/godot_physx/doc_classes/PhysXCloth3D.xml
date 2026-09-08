@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<class name="PhysXCloth3D" inherits="GeometryInstance3D" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+<class name="PhysXCloth3D" inherits="GeometryInstance3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
 	<brief_description>
 		A simulated cloth patch, provided by the PhysX module.
 	</brief_description>
@@ -10,6 +10,12 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="get_pinned_positions" qualifiers="const">
+			<return type="PackedVector3Array" />
+			<description>
+				Returns the current positions of the pinned vertices, in this node's local space, in the order they were pinned. Empty until the cloth has been built.
+			</description>
+		</method>
 		<method name="get_vertex_count" qualifiers="const">
 			<return type="int" />
 			<description>

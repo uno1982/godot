@@ -2839,6 +2839,9 @@
 		<member name="physics/physx_3d/simulation/stabilization" type="bool" setter="" getter="" default="true">
 			[b]Note:[/b] Only used when the physics engine is set to [code]PhysX[/code]. Enables PhysX's contact stabilization, which damps stacked low-mass bodies toward rest so piles settle and sleep instead of jittering.
 		</member>
+		<member name="physics/physx_3d/soft_body/mode" type="int" setter="" getter="" default="0">
+			[b]Note:[/b] Only used when the physics engine is set to [code]PhysX[/code]. Solver used for [SoftBody3D] nodes: [code]0[/code] (Auto) picks the GPU deformable-volume solver when a CUDA device is available and the mesh tetrahedralizes cleanly, otherwise the built-in CPU solver; [code]1[/code] (CPU) and [code]2[/code] (GPU) force one path. Individual bodies can override this with a [code]physx_soft_mode[/code] node metadata entry.
+		</member>
 		<member name="rendering/2d/batching/item_buffer_size" type="int" setter="" getter="" default="16384">
 			Maximum number of canvas item commands that can be batched into a single draw call.
 		</member>

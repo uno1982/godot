@@ -59,6 +59,13 @@ PhysXParticleFluid3D::SolverBackend PhysXParticleFluid3D::_resolved_solver() con
 	if (solver != SOLVER_AUTO) {
 		return solver;
 	}
+	// Granular: the MPM solver is the one that actually piles and holds a slope
+	// (PhysX PBD friction cannot), so Auto prefers it even when CUDA is present.
+	// Pick PBD granular explicitly for a pure pour / cascade where the grains
+	// stay in motion.
+	if (_is_granular()) {
+		return SOLVER_MPM;
+	}
 	GodotPhysXServer3D *server = GodotPhysXServer3D::get_singleton();
 	return (server && server->has_gpu()) ? SOLVER_PBD : SOLVER_MPM;
 }
@@ -121,6 +128,12 @@ void PhysXParticleFluid3D::_mpm_configure(bool p_prefill) {
 	s.viscosity = viscosity;
 	s.domain = mpm_domain_size;
 	s.spawn_region = spawn_region_size;
+	s.granular = _is_granular();
+	if (s.granular) {
+		s.granular_hardness = _granular_hardness();
+		s.granular_friction_deg = _granular_friction_deg();
+		s.granular_cohesion = _granular_cohesion();
+	}
 
 	// The MPM grid and the fluid particle spacing are coupled: too few particles
 	// per cell and the sim is noisy. particle_size sets the particle spacing (as
@@ -379,7 +392,7 @@ void PhysXParticleFluid3D::_mpm_step(double p_delta) {
 	// look continuous, not track every substep, so re-mesh it every 3rd step
 	// (~20 Hz) and let the sim run full-rate underneath.
 	static const uint32_t SURFACE_EVERY = 3;
-	const bool want_surface = surface_mesh && array_mesh.is_valid() && (_mpm_surface_tick++ % SURFACE_EVERY == 0);
+	const bool want_surface = surface_mesh && array_mesh.is_valid() && !_is_granular() && (_mpm_surface_tick++ % SURFACE_EVERY == 0);
 
 	if (mpm->get_particle_count() == 0) {
 		// Emit mode, nothing spawned yet.
@@ -388,7 +401,9 @@ void PhysXParticleFluid3D::_mpm_step(double p_delta) {
 	}
 
 	LocalVector<Vector3> impulses;
-	mpm->step(p_delta, cols, &impulses, want_surface);
+	// Granular runs async (visuals a frame late, GPU overlapped); fluid syncs so
+	// its coupling reaction stays in phase with the rigid bodies.
+	mpm->step(p_delta, cols, &impulses, want_surface, _is_granular());
 
 	// Reaction: push the coupled bodies back with the fluid's impulse. Clamp to a
 	// sane per-frame velocity change so a solver blow-up can't launch anything
@@ -410,9 +425,32 @@ void PhysXParticleFluid3D::_mpm_step(double p_delta) {
 			continue;
 		}
 		Vector3 imp = impulses[i];
-		const float cap = rb->get_mass() * 20.0f;
+		// A liquid splash can legitimately shove a body hard; a granular bed can
+		// only *support* one. Cap the granular reaction at a few g of holding
+		// force (dt-scaled) so a body resting in sand is held up, not launched --
+		// grid nodes stopped under a half-buried collider otherwise sum to a
+		// large net-up impulse every step.
+		const float cap = _is_granular()
+				? rb->get_mass() * 35.0f * float(MAX(p_delta, 0.0))
+				: rb->get_mass() * 20.0f;
 		if (imp.length() > cap) {
 			imp = imp.normalized() * cap;
+		}
+		if (_is_granular() && rb->get_mass() > 0.0) {
+			const float vy = rb->get_linear_velocity().y;
+			if (imp.y > 0.0f) {
+				// The lagged grid state overshoots the support impulse, so a
+				// body stood in sand bobs and floats up. The upward reaction
+				// may only arrest the body sinking -- never push past zero,
+				// nothing at all while it is already rising.
+				imp.y = MIN(imp.y, MAX(0.0f, -vy) * rb->get_mass());
+			} else if (vy > 0.0f) {
+				// Body leaving the bed (a jump): grains cling to the capsule
+				// flank and the couple pass's tangential damping would drag the
+				// whole jump back down. Let the sand shave the climb, not kill
+				// it -- at most a fifth of the upward speed per solve.
+				imp.y = MAX(imp.y, -0.2f * vy * rb->get_mass());
+			}
 		}
 		rb->apply_central_impulse(imp);
 	}
@@ -548,6 +586,8 @@ void PhysXParticleFluid3D::_make_fluid() {
 	fluid = server->particle_fluid_create();
 	server->particle_fluid_set_space(fluid, get_world_3d()->get_space());
 	server->particle_fluid_set_capacity(fluid, particle_count);
+	const bool pbd_granular = _is_granular();
+	server->particle_fluid_set_granular(fluid, pbd_granular, 2.0f * Math::tan(Math::deg_to_rad(CLAMP(_granular_friction_deg(), 1.0f, 55.0f))));
 	_apply_params();
 
 	// Render the particles as a MultiMesh of small spheres.
@@ -599,10 +639,12 @@ void PhysXParticleFluid3D::_make_fluid() {
 	_apply_foam();
 
 	// GPU isosurface mesh path: PhysX marching-cubes a triangle mesh we draw as
-	// an ArrayMesh with an ordinary water material.
-	server->particle_fluid_set_surface_mesh(fluid, surface_mesh);
-	server->particle_fluid_set_surface_anisotropy(fluid, surface_anisotropy);
-	if (surface_mesh) {
+	// an ArrayMesh with an ordinary water material. Granular grains render as the
+	// sphere MultiMesh -- no surface.
+	const bool pbd_surface = surface_mesh && !pbd_granular;
+	server->particle_fluid_set_surface_mesh(fluid, pbd_surface);
+	server->particle_fluid_set_surface_anisotropy(fluid, surface_anisotropy && !pbd_granular);
+	if (pbd_surface) {
 		array_mesh = rs->mesh_create();
 		if (water_material.is_null()) {
 			Ref<StandardMaterial3D> m;
@@ -902,7 +944,7 @@ void PhysXParticleFluid3D::_update_render() {
 	}
 	RenderingServer *rs = RenderingServer::get_singleton();
 
-	if (surface_mesh) {
+	if (surface_mesh && !_is_granular()) {
 		// The isosurface mesh draws the fluid -- do not read back every particle
 		// position or rebuild the sphere buffer. (Foam is still updated below.)
 		rs->multimesh_set_visible_instances(multimesh, 0);
@@ -1139,7 +1181,13 @@ void PhysXParticleFluid3D::_notification(int p_what) {
 				if (spawn_on_ready) {
 					spawn();
 				}
+				// PBD is a physics actor (physics tick); the MPM compute solver is
+				// a visual effect and runs per rendered frame with its own
+				// substepping, like GPUParticles3D -- stepping it on the fixed
+				// physics tick means physics catch-up runs it several times per
+				// frame under load, which spirals.
 				set_physics_process_internal(true);
+				set_process_internal(true);
 			}
 		} break;
 		case NOTIFICATION_EXIT_WORLD: {
@@ -1157,22 +1205,45 @@ void PhysXParticleFluid3D::_notification(int p_what) {
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			if (editor) {
 				_editor_preview_step(get_process_delta_time());
+				break;
+			}
+			// Granular MPM is a pure visual effect at high particle counts, so it
+			// runs frame-rate driven (like GPUParticles3D) with its own
+			// substepping -- stepping it on the fixed physics tick means physics
+			// catch-up re-solves it several times per frame under load. The
+			// fluid MPM path stays physics-tick driven so its rigid coupling
+			// reaction stays in phase with the bodies it pushes.
+			if (_mpm_path() && _is_granular()) {
+				_mpm_accum += MIN(get_process_delta_time(), 1.0 / 20.0);
+				if (_mpm_accum >= 1.0 / 60.0) {
+					// Cap the solved step at ~2 physics ticks -- a stiff granular
+					// plasticity solve blows up if a hitch feeds it a big dt.
+					const double fdt = MIN(_mpm_accum, 1.0 / 30.0);
+					_mpm_accum = 0.0;
+					if (emitting) {
+						_mpm_emit_step(fdt);
+					}
+					if (spawned) {
+						_mpm_step(fdt);
+					}
+				}
 			}
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
+			const bool mpm_here = _mpm_path() && !_is_granular();
 			const double pdt = get_physics_process_delta_time();
 			if (emitting) {
-				if (_mpm_path()) {
+				if (mpm_here) {
 					_mpm_emit_step(pdt);
-				} else {
+				} else if (!_mpm_path()) {
 					_emit_step(pdt);
 				}
 			}
-			if (_mpm_path()) {
+			if (mpm_here) {
 				if (spawned) {
 					_mpm_step(pdt);
 				}
-			} else if (spawned || emitting) {
+			} else if (!_mpm_path() && (spawned || emitting)) {
 				_update_render();
 				_update_surface_mesh();
 			}

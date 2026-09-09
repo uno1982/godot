@@ -236,6 +236,7 @@ public:
 	RID particle_fluid_create();
 	void particle_fluid_set_space(RID p_fluid, RID p_space);
 	void particle_fluid_set_param(RID p_fluid, int p_param, real_t p_value);
+	void particle_fluid_set_granular(RID p_fluid, bool p_enabled, real_t p_friction);
 	void particle_fluid_set_capacity(RID p_fluid, int p_max);
 	void particle_fluid_set_particles(RID p_fluid, const Vector<Vector3> &p_positions, const Vector3 &p_initial_velocity);
 	void particle_fluid_emit(RID p_fluid, const Vector<Vector3> &p_positions, const Vector3 &p_velocity);

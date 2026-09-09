@@ -58,6 +58,15 @@ public:
 		SOLVER_MPM,
 	};
 
+protected:
+	// PhysXGranular3D overrides these to run the material as Drucker-Prager
+	// grains instead of a liquid. Everything else -- emission, colliders,
+	// domain, rendering, the RID lifecycle -- is shared.
+	virtual bool _is_granular() const { return false; }
+	virtual float _granular_friction_deg() const { return 35.0f; }
+	virtual float _granular_hardness() const { return 150000.0f; }
+	virtual float _granular_cohesion() const { return 0.0f; }
+
 private:
 	RID fluid; // GodotPhysXServer3D particle-fluid RID
 	RID multimesh;
@@ -81,13 +90,19 @@ private:
 	RID _mpm_query_shape; // box shape reused for the auto-collider overlap query
 	HashMap<ObjectID, Vector3> _mpm_prev_pos; // last frame's position, for velocity of non-rigid colliders
 
-	bool _mpm_configured = false;
-	bool _mpm_emit_mode = false;
 	uint32_t _mpm_surface_tick = 0; // isosurface is re-marched + read back every Nth step, not every step
+	double _mpm_accum = 0.0; // frame-delta accumulator so the MPM solve is capped at ~60 Hz
 
 	SolverBackend _resolved_solver() const;
+
+protected:
+	bool _mpm_configured = false;
+	bool _mpm_emit_mode = false;
+	bool spawned = false;
 	bool _mpm_path() const { return _resolved_solver() == SOLVER_MPM; }
 	void _mpm_configure(bool p_prefill = true);
+
+private:
 	void _mpm_step(double p_delta);
 	void _mpm_emit_step(double p_delta);
 	int _mpm_resolved_grid_res() const;
@@ -139,7 +154,6 @@ private:
 	float foam_size = 0.0; // froth clump scale; 0 = follow particle_size
 	float _effective_foam_size() const { return foam_size > 0.0f ? foam_size : particle_size; }
 
-	bool spawned = false;
 	double emit_accum = 0.0;
 
 	// Editor-only: a cheap CPU particle animation (spawn -> gravity -> recycle)

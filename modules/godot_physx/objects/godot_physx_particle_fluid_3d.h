@@ -98,6 +98,11 @@ private:
 	real_t gravity_scale = 1.0;
 	real_t particle_size = 0.1; // spacing between particles at rest, in meters
 
+	// Granular phase: solid grains (no fluid density constraint) that pile and
+	// hold a slope. Changing it recreates the particle system.
+	bool granular = false;
+	real_t granular_friction = 0.7; // PBD friction coefficient (~ tan of the repose angle)
+
 	bool dirty_material = true;
 
 	LocalVector<Vector4> read_scratch; // pos.xyz + inv-mass.w, one per active particle
@@ -148,6 +153,10 @@ public:
 	real_t get_param(Param p_param) const;
 	void set_capacity(uint32_t p_capacity);
 	uint32_t get_capacity() const { return capacity; }
+
+	// Granular grains instead of a fluid. Toggling rebuilds the particle system.
+	void set_granular(bool p_enabled, real_t p_friction);
+	bool is_granular() const { return granular; }
 
 	// Diffuse particles. Enabling/resizing rebuilds the buffer; the rest push live.
 	void set_foam_enabled(bool p_enabled);

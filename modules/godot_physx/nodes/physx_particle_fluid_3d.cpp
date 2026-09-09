@@ -775,7 +775,10 @@ void PhysXParticleFluid3D::spawn() {
 		return;
 	}
 
-	// Jittered grid filling spawn_region_size, centered on the node.
+	// Jittered grid filling spawn_region_size, centered on the node. y is the
+	// outer loop so a fill that runs out of particles before the region is full
+	// spreads across the whole footprint as a shallow bed -- matching the MPM
+	// prefill (_seed_block) instead of banking a slab against one wall.
 	const Vector3 half = spawn_region_size * 0.5;
 	const float spacing = MAX(particle_size, 0.001f);
 	const Vector3i counts(
@@ -790,9 +793,9 @@ void PhysXParticleFluid3D::spawn() {
 	int n = 0;
 	const int cap = positions.size();
 	const float jitter = spacing * 0.2;
-	for (int ix = 0; ix < counts.x && n < cap; ix++) {
-		for (int iy = 0; iy < counts.y && n < cap; iy++) {
-			for (int iz = 0; iz < counts.z && n < cap; iz++) {
+	for (int iy = 0; iy < counts.y && n < cap; iy++) {
+		for (int iz = 0; iz < counts.z && n < cap; iz++) {
+			for (int ix = 0; ix < counts.x && n < cap; ix++) {
 				Vector3 local(
 						-half.x + (ix + 0.5f) * spacing + Math::randf() * jitter,
 						-half.y + (iy + 0.5f) * spacing + Math::randf() * jitter,

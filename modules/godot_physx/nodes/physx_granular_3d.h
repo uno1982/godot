@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  register_types.cpp                                                    */
+/*  physx_granular_3d.h                                                   */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,56 +28,43 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#include "register_types.h"
+#pragma once
 
-#include "godot_physx_project_settings.h"
-#include "godot_physx_server_3d.h"
-#include "nodes/physx_chunk_emitter_3d.h"
-#include "nodes/physx_cloth_3d.h"
-#include "nodes/physx_granular_3d.h"
-#include "nodes/physx_particle_fluid_3d.h"
+#include "physx_particle_fluid_3d.h"
 
-#include "core/config/project_settings.h"
-#include "core/object/callable_mp.h"
-#include "core/object/class_db.h"
-#include "servers/physics_3d/physics_server_3d_wrap_mt.h"
+// A GPU granular volume -- sand, gravel, snow. Shares all of
+// PhysXParticleFluid3D's machinery (emission, mpm_colliders, domain, spawn
+// region, the MultiMesh render, the RID lifecycle) but runs the material as
+// Drucker-Prager elastoplastic grains instead of a liquid: it piles, holds a
+// slope and gets plowed. No isosurface -- always drawn as the sphere MultiMesh.
+//
+// The MPM (compute) solver is the one that holds a real angle of repose;
+// PhysX's PBD friction cannot pile, so `solver = Auto` always resolves to MPM
+// here. Pick PBD explicitly only for a pure pour / cascade where the grains
+// stay in motion.
+class PhysXGranular3D : public PhysXParticleFluid3D {
+	GDCLASS(PhysXGranular3D, PhysXParticleFluid3D);
 
-#ifdef TOOLS_ENABLED
-#include "editor/physx_editor_plugin.h"
-#include "editor/plugins/editor_plugin.h"
-#endif
+	float friction = 35.0f; // internal friction angle, degrees -> angle of repose
+	float hardness = 150000.0f; // Young's modulus (Pa); softer piles mush, stiffer can jitter
+	float cohesion = 0.0f; // 0 = dry sand; small values pack like wet sand / snow
 
-static PhysicsServer3D *create_physx_physics_server() {
-#ifdef THREADS_ENABLED
-	bool run_on_separate_thread = GLOBAL_GET("physics/3d/run_on_separate_thread");
-#else
-	bool run_on_separate_thread = false;
-#endif
+protected:
+	static void _bind_methods();
+	void _validate_property(PropertyInfo &p_property) const;
 
-	GodotPhysXServer3D *physics_server = memnew(GodotPhysXServer3D);
+	bool _is_granular() const override { return true; }
+	float _granular_friction_deg() const override { return friction; }
+	float _granular_hardness() const override { return hardness; }
+	float _granular_cohesion() const override { return cohesion; }
 
-	return memnew(PhysicsServer3DWrapMT(physics_server, run_on_separate_thread));
-}
+	void _reconfigure_if_live();
 
-void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
-	if (p_level == MODULE_INITIALIZATION_LEVEL_SERVERS) {
-		GodotPhysXProjectSettings::register_settings();
-		PhysicsServer3DManager::get_singleton()->register_server("PhysX", callable_mp_static(&create_physx_physics_server));
-	}
-
-	if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE) {
-		GDREGISTER_CLASS(PhysXParticleFluid3D);
-		GDREGISTER_CLASS(PhysXGranular3D);
-		GDREGISTER_CLASS(PhysXCloth3D);
-		GDREGISTER_CLASS(PhysXChunkEmitter3D);
-	}
-
-#ifdef TOOLS_ENABLED
-	if (p_level == MODULE_INITIALIZATION_LEVEL_EDITOR) {
-		EditorPlugins::add_by_type<PhysXEditorPlugin>();
-	}
-#endif
-}
-
-void uninitialize_godot_physx_module(ModuleInitializationLevel p_level) {
-}
+public:
+	void set_friction(float p_deg);
+	float get_friction() const { return friction; }
+	void set_hardness(float p_v);
+	float get_hardness() const { return hardness; }
+	void set_grain_cohesion(float p_v);
+	float get_grain_cohesion() const { return cohesion; }
+};

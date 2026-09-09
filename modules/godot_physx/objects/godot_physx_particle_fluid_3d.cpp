@@ -560,17 +560,25 @@ void GodotPhysXParticleFluid3D::_ensure_system() {
 	ERR_FAIL_NULL(scene);
 
 	px_material = physics->createPBDMaterial(
-			0.05f, // friction
+			granular ? CLAMP((PxReal)granular_friction, 0.0f, 2.0f) : 0.05f, // friction
 			0.0f, // damping
-			(PxReal)adhesion,
-			(PxReal)viscosity,
-			(PxReal)vorticity,
-			(PxReal)surface_tension,
-			(PxReal)cohesion,
+			granular ? 0.0f : (PxReal)adhesion,
+			granular ? 0.0f : (PxReal)viscosity,
+			granular ? 0.0f : (PxReal)vorticity,
+			granular ? 0.0f : (PxReal)surface_tension,
+			granular ? 0.0f : (PxReal)cohesion,
 			0.0f, // lift (deprecated)
 			0.0f); // drag (deprecated)
 	ERR_FAIL_NULL(px_material);
 	px_material->setGravityScale((PxReal)gravity_scale);
+	if (granular) {
+		// Grain-on-grain friction is a separate scale from the base coefficient;
+		// PBD particle friction is weak for piling, so crank it hard (the range
+		// is [0, inf)).
+		px_material->setParticleFrictionScale(8.0f);
+		px_material->setParticleAdhesionScale(0.0f);
+		px_material->setDamping(0.5f);
+	}
 
 	px_system = physics->createPBDParticleSystem(*cuda, 96);
 	ERR_FAIL_NULL_MSG(px_system, "PhysX: createPBDParticleSystem failed.");
@@ -586,12 +594,25 @@ void GodotPhysXParticleFluid3D::_ensure_system() {
 	px_system->setSolidRestOffset(rest_offset);
 	px_system->setFluidRestOffset(fluid_rest_offset);
 	px_system->setMaxLinearVelocity(rest_offset * 100.0f);
+	if (granular) {
+		// PBD friction only converges to a real angle of repose with many
+		// position iterations; the fluid default is far too few for a pile.
+		px_system->setSolverIterationCounts(16, 1);
+		px_system->setMaxDepenetrationVelocity(rest_offset * 20.0f);
+	}
 	// Without this, speculative contacts let dense bodies rest on the fluid
 	// surface instead of sinking through it (PhysX's PBF snippet also disables it).
-	px_system->setParticleFlag(PxParticleFlag::eENABLE_SPECULATIVE_CCD, false);
+	// Granular keeps CCD -- a solid pile benefits from it and there is no surface
+	// for a body to falsely rest on.
+	px_system->setParticleFlag(PxParticleFlag::eENABLE_SPECULATIVE_CCD, granular);
 
+	// Fluid phase gets the density/cohesion constraints; granular drops the fluid
+	// flag so the particles are solid grains that pile and hold a slope, keeping
+	// only self-collision.
 	fluid_phase = px_system->createPhase(px_material,
-			PxParticlePhaseFlags(PxParticlePhaseFlag::eParticlePhaseFluid | PxParticlePhaseFlag::eParticlePhaseSelfCollide));
+			granular
+					? PxParticlePhaseFlags(PxParticlePhaseFlag::eParticlePhaseSelfCollide)
+					: PxParticlePhaseFlags(PxParticlePhaseFlag::eParticlePhaseFluid | PxParticlePhaseFlag::eParticlePhaseSelfCollide));
 
 	// Our scene filter shader suppresses any pair whose layer/mask cross-check is
 	// zero; a particle system's filter data defaults to all-zero, so give it
@@ -606,11 +627,20 @@ void GodotPhysXParticleFluid3D::_apply_material() {
 	if (!px_material || !dirty_material) {
 		return;
 	}
-	px_material->setViscosity((PxReal)viscosity);
-	px_material->setSurfaceTension((PxReal)surface_tension);
-	px_material->setCohesion((PxReal)cohesion);
-	px_material->setAdhesion((PxReal)adhesion);
-	px_material->setVorticityConfinement((PxReal)vorticity);
+	if (granular) {
+		px_material->setFriction(CLAMP((PxReal)granular_friction, 0.0f, 2.0f));
+		px_material->setViscosity(0.0f);
+		px_material->setSurfaceTension(0.0f);
+		px_material->setCohesion(0.0f);
+		px_material->setAdhesion(0.0f);
+		px_material->setVorticityConfinement(0.0f);
+	} else {
+		px_material->setViscosity((PxReal)viscosity);
+		px_material->setSurfaceTension((PxReal)surface_tension);
+		px_material->setCohesion((PxReal)cohesion);
+		px_material->setAdhesion((PxReal)adhesion);
+		px_material->setVorticityConfinement((PxReal)vorticity);
+	}
 	px_material->setGravityScale((PxReal)gravity_scale);
 	dirty_material = false;
 }
@@ -673,6 +703,22 @@ real_t GodotPhysXParticleFluid3D::get_param(Param p_param) const {
 		default:
 			return 0.0;
 	}
+}
+
+void GodotPhysXParticleFluid3D::set_granular(bool p_enabled, real_t p_friction) {
+	granular_friction = p_friction;
+	if (granular == p_enabled) {
+		dirty_material = true;
+		_apply_material();
+		return;
+	}
+	granular = p_enabled;
+	// The phase (fluid vs granular) is baked into the particle system at
+	// creation; rebuild it. The node clears and re-seeds particles after this.
+	if (px_system) {
+		_destroy();
+	}
+	dirty_material = true;
 }
 
 void GodotPhysXParticleFluid3D::set_capacity(uint32_t p_capacity) {

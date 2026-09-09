@@ -48,10 +48,10 @@
 #include "servers/rendering/rendering_server.h"
 
 namespace {
-constexpr int FLOATS_PER_PARTICLE = 20; // 5 * vec4
+constexpr int FLOATS_PER_PARTICLE = 32; // 8 * vec4 (x/v/C x3/F x3)
 constexpr int FLOATS_PER_COLLIDER = 16; // 4 * vec4 (c0..c3)
 constexpr int MAX_COLLIDERS = 32; // analytic colliders per step (rigid bodies + expanded debris chunks)
-constexpr uint32_t PARAMS_BYTES = 112; // 7 * vec4, std140
+constexpr uint32_t PARAMS_BYTES = 128; // 8 * vec4, std140
 constexpr float IMP_FIXED = 1024.0f;
 constexpr uint32_t GROUP = 64;
 constexpr uint32_t TRI_BUDGET = 200000; // isosurface triangle cap
@@ -125,6 +125,12 @@ bool MPMFluidSolver::_compile_shaders() {
 }
 
 void MPMFluidSolver::_free_buffers() {
+	if (_submitted && rd != nullptr) {
+		rd->sync(); // don't free buffers with GPU work still in flight
+		_submitted = false;
+	}
+	_mm_cache = PackedFloat32Array();
+	_imp_cache.clear();
 	// Uniform sets first: RD auto-frees a uniform set when a buffer it references
 	// is freed, so freeing the buffers first leaves these RIDs dangling.
 	for (int i = 0; i < PASS_MAX; i++) {
@@ -201,18 +207,34 @@ LocalVector<float> MPMFluidSolver::_seed_block(int &r_count) const {
 
 	LocalVector<float> data;
 	data.resize((int64_t)MIN((int64_t)sx * sy * sz, (int64_t)settings.particle_target) * FLOATS_PER_PARTICLE);
+	memset(data.ptr(), 0, data.size() * sizeof(float)); // velocity / C / F start clean
 	int idx = 0;
 	const int cap = (int)(data.size() / FLOATS_PER_PARTICLE);
-	for (int zi = 0; zi < sz && idx < cap; zi++) {
-		for (int yi = 0; yi < sy && idx < cap; yi++) {
+	// y outermost: a fill that runs out of particles before the region is full
+	// then covers the whole footprint at a shallower depth (a low pool / a thin
+	// sand bed), instead of a partial slab banked against one side.
+	for (int yi = 0; yi < sy && idx < cap; yi++) {
+		for (int zi = 0; zi < sz && idx < cap; zi++) {
 			for (int xi = 0; xi < sx && idx < cap; xi++) {
 				Vector3 p = start + Vector3(xi, yi, zi) * spacing;
-				p += Vector3(Math::randf(), Math::randf(), Math::randf()) * spacing * 0.3f;
+				if (settings.granular) {
+					// Break the seed lattice: brick-stagger alternate rows/layers
+					// and jitter hard, so a granular pile has no regular planes to
+					// shear along (they read as visible stripes otherwise). The
+					// stagger is centred (+-) so the block's centre of mass does
+					// not drift to one corner.
+					p.x += (float((yi + zi) & 1) - 0.5f) * spacing * 0.5f;
+					p.z += (float(yi & 1) - 0.5f) * spacing * 0.5f;
+					p += Vector3(Math::randf() - 0.5f, Math::randf() - 0.5f, Math::randf() - 0.5f) * spacing;
+				} else {
+					p += Vector3(Math::randf(), Math::randf(), Math::randf()) * spacing * 0.3f;
+				}
 				float *o = &data[idx * FLOATS_PER_PARTICLE];
 				o[0] = p.x;
 				o[1] = p.y;
 				o[2] = p.z;
 				o[3] = settings.rest_density;
+				o[20] = o[25] = o[30] = 1.0f; // deformation gradient F = identity
 				idx++;
 			}
 		}
@@ -253,11 +275,24 @@ void MPMFluidSolver::_pack_params(double p_dt, int p_ncol, PackedByteArray &r_by
 	put_f(80, bmax.x);
 	put_f(84, bmax.y);
 	put_f(88, bmax.z);
-	put_f(92, 0.0f);
+	put_f(92, settings.granular ? 1.0f : 0.0f);
 	put_f(96, (float)p_ncol);
 	put_f(100, settings.collider_friction);
 	put_f(104, surf_iso_density);
 	put_f(108, settings.surface_kernel);
+
+	// gran: Drucker-Prager alpha (from the internal friction angle), cohesion,
+	// and the Lame parameters (from Young's modulus at a fixed Poisson 0.3).
+	const float sinp = Math::sin(Math::deg_to_rad(CLAMP(settings.granular_friction_deg, 1.0f, 55.0f)));
+	const float alpha = Math::sqrt(2.0f / 3.0f) * (2.0f * sinp) / (3.0f - sinp);
+	const float E = MAX(settings.granular_hardness, 1.0f);
+	const float nu = 0.3f;
+	const float mu = E / (2.0f * (1.0f + nu));
+	const float lambda = E * nu / ((1.0f + nu) * (1.0f - 2.0f * nu));
+	put_f(112, alpha);
+	put_f(116, MAX(settings.granular_cohesion, 0.0f));
+	put_f(120, mu);
+	put_f(124, lambda);
 }
 
 void MPMFluidSolver::_pack_colliders(const LocalVector<SphereCollider> &p_colliders, PackedByteArray &r_bytes) const {
@@ -347,6 +382,14 @@ void MPMFluidSolver::configure(const Settings &p_settings, const Transform3D &p_
 	settings.substeps = CLAMP(settings.substeps, 1, 40);
 	domain_xform = p_xform;
 
+	// Stiff granular material needs a tighter substep to stay under CFL; and it
+	// should grip a collider (near-zero tangential slip) so a resting object
+	// does not just shear the grains out from under itself.
+	if (settings.granular) {
+		settings.substeps = MAX(settings.substeps, 12);
+		settings.collider_friction = MAX(settings.collider_friction, 0.85f);
+	}
+
 	_free_buffers();
 	_compute_scales(); // sets grid_dims + node_count
 	write_head = 0;
@@ -403,6 +446,8 @@ void MPMFluidSolver::emit(const LocalVector<EmittedParticle> &p_new) {
 	if (!is_available() || p_new.is_empty() || capacity == 0) {
 		return;
 	}
+	// Don't buffer_update the particle store while a step is reading it on the GPU.
+	_reap_submitted();
 	const int n = MIN((int)p_new.size(), capacity);
 
 	// Build the packed particle records (only position + velocity; C and the
@@ -419,6 +464,7 @@ void MPMFluidSolver::emit(const LocalVector<EmittedParticle> &p_new) {
 		o[4] = p_new[i].velocity.x;
 		o[5] = p_new[i].velocity.y;
 		o[6] = p_new[i].velocity.z;
+		o[20] = o[25] = o[30] = 1.0f; // deformation gradient F = identity
 	}
 
 	const uint32_t stride = FLOATS_PER_PARTICLE * sizeof(float);
@@ -435,10 +481,13 @@ void MPMFluidSolver::set_domain_transform(const Transform3D &p_xform) {
 	domain_xform = p_xform;
 }
 
-void MPMFluidSolver::step(double p_delta, const LocalVector<SphereCollider> &p_colliders, LocalVector<Vector3> *r_impulses, bool p_want_surface) {
+void MPMFluidSolver::step(double p_delta, const LocalVector<SphereCollider> &p_colliders, LocalVector<Vector3> *r_impulses, bool p_want_surface, bool p_async) {
 	if (!is_available() || pcount == 0 || p_delta <= 0.0) {
 		return;
 	}
+
+	// Reap the previous frame's GPU work before starting this one.
+	_reap_submitted();
 
 	const int ncol = MIN((int)p_colliders.size(), MAX_COLLIDERS);
 	const double frame_dt = p_delta;
@@ -514,35 +563,52 @@ void MPMFluidSolver::step(double p_delta, const LocalVector<SphereCollider> &p_c
 	rd->compute_list_dispatch(cl, pg, 1, 1);
 	rd->compute_list_end();
 
-	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
 	rd->submit();
-	rd->sync();
-	last_step_usec = OS::get_singleton()->get_ticks_usec() - t0;
+	_submitted = true;
+	_submitted_ncol = ncol;
 
+	if (!p_async) {
+		// Sync now: the caller needs this step's reaction impulse in phase with
+		// the physics tick (fluid coupling). Costs the stall.
+		_reap_submitted();
+	}
+
+	// Hand back the reaped impulses -- this step's (sync) or the previous step's
+	// (async, still in flight).
 	if (r_impulses != nullptr) {
-		r_impulses->clear();
-		if (ncol > 0) {
-			Vector<uint8_t> raw = rd->buffer_get_data(buf_cimp, 0, ncol * 4 * sizeof(int32_t));
-			const int32_t *ci = (const int32_t *)raw.ptr();
-			for (int i = 0; i < ncol; i++) {
-				r_impulses->push_back(Vector3(ci[i * 4 + 0], ci[i * 4 + 1], ci[i * 4 + 2]) / IMP_FIXED);
-			}
+		*r_impulses = _imp_cache;
+	}
+}
+
+// Wait on the previously-submitted compute work (done by now -- a full frame has
+// passed) and cache the render buffer + collider impulses.
+void MPMFluidSolver::_reap_submitted() const {
+	if (!_submitted) {
+		return;
+	}
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	rd->sync();
+	last_step_usec = OS::get_singleton()->get_ticks_usec() - t0; // GPU wait for the last step's compute
+	_submitted = false;
+
+	Vector<uint8_t> mm = rd->buffer_get_data(buf_mm);
+	_mm_cache.resize(capacity * 12);
+	memcpy(_mm_cache.ptrw(), mm.ptr(), MIN((int)mm.size(), (int)(capacity * 12 * sizeof(float))));
+
+	_imp_cache.clear();
+	if (_submitted_ncol > 0) {
+		Vector<uint8_t> raw = rd->buffer_get_data(buf_cimp, 0, _submitted_ncol * 4 * sizeof(int32_t));
+		const int32_t *ci = (const int32_t *)raw.ptr();
+		for (int i = 0; i < _submitted_ncol; i++) {
+			_imp_cache.push_back(Vector3(ci[i * 4 + 0], ci[i * 4 + 1], ci[i * 4 + 2]) / IMP_FIXED);
 		}
 	}
 }
 
 PackedFloat32Array MPMFluidSolver::get_multimesh_buffer() const {
-	PackedFloat32Array out;
-	if (!is_available() || pcount == 0) {
-		return out;
-	}
-	// Full-capacity buffer: MultiMesh::set_buffer wants every instance slot. Slots
-	// past the live count hold stale data but the caller only makes `pcount`
-	// instances visible, so they are never drawn.
-	Vector<uint8_t> raw = rd->buffer_get_data(buf_mm);
-	out.resize(capacity * 12);
-	memcpy(out.ptrw(), raw.ptr(), MIN((int)raw.size(), (int)(capacity * 12 * sizeof(float))));
-	return out;
+	// Cached from the last reaped step -- no readback here. Full-capacity buffer
+	// (MultiMesh::set_buffer wants every slot); the caller only shows `pcount`.
+	return _mm_cache;
 }
 
 PackedVector3Array MPMFluidSolver::get_positions() const {
@@ -550,6 +616,7 @@ PackedVector3Array MPMFluidSolver::get_positions() const {
 	if (!is_available() || pcount == 0) {
 		return out;
 	}
+	_reap_submitted(); // no reading a buffer with a step still on the GPU
 	Vector<uint8_t> raw = rd->buffer_get_data(buf_particles);
 	const float *f = (const float *)raw.ptr();
 	out.resize(pcount);
@@ -566,6 +633,7 @@ int MPMFluidSolver::get_surface_mesh(PackedVector3Array &r_vertices, PackedVecto
 	if (!is_available() || buf_mcount.is_null()) {
 		return 0;
 	}
+	_reap_submitted();
 	Vector<uint8_t> cnt = rd->buffer_get_data(buf_mcount, 0, sizeof(uint32_t));
 	if (cnt.size() < (int)sizeof(uint32_t)) {
 		return 0;

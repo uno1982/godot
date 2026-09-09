@@ -813,6 +813,12 @@ void GodotPhysXServer3D::particle_fluid_set_param(RID p_fluid, int p_param, real
 	fluid->set_param((GodotPhysXParticleFluid3D::Param)p_param, p_value);
 }
 
+void GodotPhysXServer3D::particle_fluid_set_granular(RID p_fluid, bool p_enabled, real_t p_friction) {
+	GodotPhysXParticleFluid3D *fluid = fluid_owner.get_or_null(p_fluid);
+	ERR_FAIL_NULL(fluid);
+	fluid->set_granular(p_enabled, p_friction);
+}
+
 void GodotPhysXServer3D::particle_fluid_set_capacity(RID p_fluid, int p_max) {
 	GodotPhysXParticleFluid3D *fluid = fluid_owner.get_or_null(p_fluid);
 	ERR_FAIL_NULL(fluid);

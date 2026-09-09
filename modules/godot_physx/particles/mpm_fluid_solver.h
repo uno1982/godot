@@ -64,6 +64,11 @@ public:
 		float surface_iso = 0.5f; // isosurface level as a fraction of the native packed kernel density
 		float surface_kernel = 0.06f; // isosurface SPH kernel radius, world metres (from particle_size)
 		float surface_boost = 1.0f; // per-particle mass multiplier in the surface scatter -- inflates the mesh
+		// Granular (Drucker-Prager sand / snow) instead of a fluid EOS.
+		bool granular = false;
+		float granular_hardness = 1.5e5f; // Young's modulus (Pa); softer = more stable, mushier
+		float granular_friction_deg = 35.0f; // internal friction angle -> angle of repose
+		float granular_cohesion = 0.0f; // 0 = dry sand; small values -> wet sand / packing snow
 		Vector3 gravity = Vector3(0, -9.8f, 0);
 		Vector3 domain = Vector3(3, 3, 3); // MPM sim box / boundary, centred on the solver transform
 		Vector3 spawn_region = Vector3(1, 1, 1); // prefill fills this, centred on the transform (clamped to the domain)
@@ -119,11 +124,14 @@ public:
 	// space, N*s) so the caller can push its rigid bodies.
 	// `p_want_surface` also runs the density-smoothing + GPU-march passes so
 	// get_surface_mesh() has fresh geometry this frame.
-	void step(double p_delta, const LocalVector<SphereCollider> &p_colliders, LocalVector<Vector3> *r_impulses, bool p_want_surface = false);
+	// `p_async`: submit the compute work and return, reaping it next step (visuals
+	// + reaction one frame late, GPU overlapped). Set false to sync before
+	// returning -- the fluid coupling needs the reaction impulse in phase.
+	void step(double p_delta, const LocalVector<SphereCollider> &p_colliders, LocalVector<Vector3> *r_impulses, bool p_want_surface = false, bool p_async = true);
 
 	int get_particle_count() const { return pcount; } // live particles
 	int get_capacity() const { return capacity; } // buffer / MultiMesh size
-	double get_last_step_msec() const { return last_step_usec / 1000.0; } // GPU submit+sync of the last step()
+	double get_last_step_msec() const { return last_step_usec / 1000.0; } // GPU wait for the last step (async: usually near 0)
 
 	// 12 floats / particle: MultiMesh TRANSFORM_3D rows, ready for
 	// RenderingServer::multimesh_set_buffer(). Reads back the GPU render buffer.
@@ -161,7 +169,16 @@ private:
 	RID buf_mnorms;
 	RID buf_mcount;
 
-	uint64_t last_step_usec = 0;
+	mutable uint64_t last_step_usec = 0;
+	// Async render readback: a step submits its compute work and returns; the
+	// next step reaps it (a full frame later, so the sync never stalls) and
+	// caches the MultiMesh buffer + collider impulses. Visuals + reaction run one
+	// frame behind, which is imperceptible and keeps the GPU overlapped.
+	mutable bool _submitted = false;
+	mutable int _submitted_ncol = 0;
+	mutable PackedFloat32Array _mm_cache;
+	mutable LocalVector<Vector3> _imp_cache;
+	void _reap_submitted() const;
 	int pcount = 0; // live particles (== capacity when prefilled)
 	int capacity = 0; // particle-buffer slots
 	int write_head = 0; // next slot emit() overwrites once full

@@ -60,9 +60,9 @@ void main() {
 		}
 
 		// Hard boundary: remove the into-surface velocity, damp the tangential
-		// slip toward the collider. No outward velocity is injected -- the EOS
-		// pressure keeps the fluid out, and G2P clamps stragglers positionally.
-		// (Injecting a depenetration velocity here jets fluid up the walls.)
+		// slip toward the collider. No depenetration velocity is injected -- it
+		// jets a fluid up walls and catapults an object off a granular bed;
+		// straggler push-out is positional, in G2P.
 		vec3 rel_t = rel - min(vn, 0.0) * nh;
 		vec3 nvel = cv + rel_t * clamp(1.0 - CFRIC, 0.0, 1.0);
 		vec3 dv = nvel - vel;

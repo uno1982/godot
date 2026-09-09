@@ -22,6 +22,9 @@ struct Particle {
 	vec4 c0;  // affine velocity matrix C, column 0 (w unused)
 	vec4 c1;
 	vec4 c2;
+	vec4 f0;  // deformation gradient F, column 0 -- granular mode only (identity otherwise)
+	vec4 f1;
+	vec4 f2;
 };
 
 // Analytic collider: a moving velocity boundary condition for the grid.
@@ -41,9 +44,10 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 origin_dx;   // xyz grid origin (world), w cell size
 	ivec4 res_count;  // xyz grid resolution (nodes), w particle count
 	vec4 fluid;       // x rest_density, y stiffness, z dynamic_viscosity, w particle_mass
-	vec4 bmin;        // xyz domain min (world)
-	vec4 bmax;        // xyz domain max (world)
-	vec4 extra;       // x collider count, y collider friction, zw unused
+	vec4 bmin;        // xyz domain min (world), w = surface mass boost
+	vec4 bmax;        // xyz domain max (world), w = granular flag (0 fluid / 1 granular)
+	vec4 extra;       // x collider count, y collider friction, z surface iso density, w surface kernel
+	vec4 gran;        // granular: x = Drucker-Prager alpha (friction), y = cohesion, z = shear modulus mu, w = Lame lambda
 };
 
 layout(set = 0, binding = 1, std430) restrict buffer Particles { Particle particles[]; };
@@ -66,6 +70,11 @@ layout(set = 0, binding = 7, std430) restrict buffer SurfaceField { int surf_i[]
 #define PMASS    (fluid.w)
 #define NCOL     (int(extra.x))
 #define CFRIC    (extra.y)
+#define GRANULAR (bmax.w > 0.5)
+#define DP_ALPHA (gran.x)
+#define DP_COH   (gran.y)
+#define GMU      (gran.z)
+#define GLAMBDA  (gran.w)
 
 int node_index(ivec3 c) {
 	return (c.z * RES.y + c.y) * RES.x + c.x;
@@ -92,6 +101,74 @@ void grid_local(vec3 x, out ivec3 base, out vec3 fx) {
 	vec3 gp = (x - ORIGIN) / DX;
 	base = ivec3(gp - 0.5);
 	fx = gp - vec3(base);
+}
+
+// --- granular: 3x3 SVD + Drucker-Prager return mapping ---
+
+// Cyclic Jacobi eigendecomposition of a symmetric 3x3. Eigenvectors are the
+// columns of V; eigenvalues in d. MPM deformation gradients stay near identity,
+// so a handful of sweeps converges.
+void sym_eigen(mat3 A, out mat3 V, out vec3 d) {
+	V = mat3(1.0);
+	for (int s = 0; s < 6; s++) {
+		for (int p = 0; p < 3; p++) {
+			int q = (p + 1) % 3;
+			float apq = A[q][p];
+			if (abs(apq) < 1e-12) {
+				continue;
+			}
+			float th = (A[q][q] - A[p][p]) / (2.0 * apq);
+			float t = sign(th) / (abs(th) + sqrt(th * th + 1.0));
+			float c = inversesqrt(t * t + 1.0);
+			float sn = t * c;
+			mat3 J = mat3(1.0);
+			J[p][p] = c;
+			J[q][q] = c;
+			J[q][p] = sn;
+			J[p][q] = -sn;
+			A = transpose(J) * A * J;
+			V = V * J;
+		}
+	}
+	d = vec3(A[0][0], A[1][1], A[2][2]);
+}
+
+// F = U * diag(sig) * transpose(V), sig >= 0. U and V are rotations for a
+// well-conditioned F (true for sand).
+void svd3(mat3 F, out mat3 U, out vec3 sig, out mat3 V) {
+	mat3 S = transpose(F) * F;
+	vec3 d;
+	sym_eigen(S, V, d);
+	sig = sqrt(max(d, vec3(0.0)));
+	vec3 inv = vec3(
+			sig.x > 1e-8 ? 1.0 / sig.x : 0.0,
+			sig.y > 1e-8 ? 1.0 / sig.y : 0.0,
+			sig.z > 1e-8 ? 1.0 / sig.z : 0.0);
+	U = F * V * mat3(inv.x, 0, 0, 0, inv.y, 0, 0, 0, inv.z);
+}
+
+// Project the trial elastic singular values onto the Drucker-Prager yield
+// surface (Klar et al. 2016). Sand carries no tension and yields in shear past a
+// friction cone; `coh` gives a little cohesion (wet sand / snow).
+vec3 dp_project(vec3 sig, float mu, float lambda, float alpha, float coh) {
+	vec3 eps = log(max(sig, vec3(1e-4)));
+	float tr = eps.x + eps.y + eps.z;
+	vec3 eps_hat = eps - vec3(tr / 3.0);
+	float ehn = length(eps_hat);
+	if (ehn <= 1e-9) {
+		// no shear: keep compression, drop any tension (grains carry no pull)
+		return min(sig, vec3(1.0));
+	}
+	if (tr >= 0.0) {
+		// net expansion -> on the cone tip: no deviatoric strain, no tension
+		return min(exp(eps - eps_hat), vec3(1.0));
+	}
+	float dg = ehn + (3.0 * lambda + 2.0 * mu) / (2.0 * mu) * tr * alpha - coh;
+	if (dg <= 0.0) {
+		return sig; // inside the friction cone: purely elastic
+	}
+	// project radially back onto the cone
+	return exp(eps - dg * eps_hat / ehn);
 }
 
 // --- analytic collider SDF (shared by the coupling pass and G2P clamp) ---

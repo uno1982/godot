@@ -37,7 +37,9 @@ void main() {
 		}
 	}
 
-	new_v *= 0.996; // gentle global damping
+	// Gentle global damping. Granular material creeps at an unconfined free
+	// surface (continuum MPM sand always does); a touch more damping settles it.
+	new_v *= GRANULAR ? 0.992 : 0.996;
 
 	// safety clamp: nothing in a plausible fluid moves faster than this, and it
 	// stops a bad grid velocity (coupling spike, coarse-grid aliasing) from

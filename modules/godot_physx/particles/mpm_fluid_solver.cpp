@@ -162,7 +162,11 @@ void MPMFluidSolver::_compute_scales() {
 			CLAMP((int)Math::round(settings.domain.z / dx), 4, 256));
 	node_count = grid_dims.x * grid_dims.y * grid_dims.z;
 	const float spacing = dx * 0.5f;
-	pmass = 1000.0f * spacing * spacing * spacing;
+	// Particle mass from the medium density. For granular this is the "weight"
+	// knob: the collider coupling exchanges momentum in proportion to it (light
+	// snow shoves aside far easier than heavy sand), while the Drucker-Prager
+	// stress stays calibrated by hardness/friction independent of it.
+	pmass = MAX(settings.rest_density, 1.0f) * spacing * spacing * spacing;
 	_recompute_surface_iso();
 }
 
@@ -194,7 +198,7 @@ void MPMFluidSolver::_recompute_surface_iso() {
 LocalVector<float> MPMFluidSolver::_seed_block(int &r_count) const {
 	const float spacing = dx * 0.5f;
 
-	// Fill spawn_region, centred on the node, clamped to fit inside the domain
+	// Fill spawn_region, centered on the node, clamped to fit inside the domain
 	// (leave a 2-cell margin off the boundary), capped at particle_target.
 	const Vector3 margin = Vector3(dx, dx, dx) * 2.0f;
 	const Vector3 region = settings.spawn_region.clamp(Vector3(spacing, spacing, spacing), settings.domain - margin * 2.0f);
@@ -221,7 +225,7 @@ LocalVector<float> MPMFluidSolver::_seed_block(int &r_count) const {
 					// Break the seed lattice: brick-stagger alternate rows/layers
 					// and jitter hard, so a granular pile has no regular planes to
 					// shear along (they read as visible stripes otherwise). The
-					// stagger is centred (+-) so the block's centre of mass does
+					// stagger is centered (+-) so the block's center of mass does
 					// not drift to one corner.
 					p.x += (float((yi + zi) & 1) - 0.5f) * spacing * 0.5f;
 					p.z += (float(yi & 1) - 0.5f) * spacing * 0.5f;
@@ -303,7 +307,7 @@ void MPMFluidSolver::_pack_colliders(const LocalVector<SphereCollider> &p_collid
 	for (int i = 0; i < n; i++) {
 		const Collider &c = p_colliders[i];
 		uint8_t *o = b + i * FLOATS_PER_COLLIDER * 4;
-		// c0: centre, shape
+		// c0: center, shape
 		encode_float(c.position.x, o + 0);
 		encode_float(c.position.y, o + 4);
 		encode_float(c.position.z, o + 8);

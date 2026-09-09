@@ -66,6 +66,7 @@ protected:
 	virtual float _granular_friction_deg() const { return 35.0f; }
 	virtual float _granular_hardness() const { return 150000.0f; }
 	virtual float _granular_cohesion() const { return 0.0f; }
+	virtual float _granular_density() const { return 1000.0f; }
 
 private:
 	RID fluid; // GodotPhysXServer3D particle-fluid RID

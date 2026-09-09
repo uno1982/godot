@@ -48,6 +48,7 @@ class PhysXGranular3D : public PhysXParticleFluid3D {
 	float friction = 35.0f; // internal friction angle, degrees -> angle of repose
 	float hardness = 150000.0f; // Young's modulus (Pa); softer piles mush, stiffer can jitter
 	float cohesion = 0.0f; // 0 = dry sand; small values pack like wet sand / snow
+	float density = 900.0f; // grain "weight" (kg/m^3) -- how hard a body ploughs through (snow ~300, sand ~1500)
 
 protected:
 	static void _bind_methods();
@@ -57,6 +58,7 @@ protected:
 	float _granular_friction_deg() const override { return friction; }
 	float _granular_hardness() const override { return hardness; }
 	float _granular_cohesion() const override { return cohesion; }
+	float _granular_density() const override { return density; }
 
 	void _reconfigure_if_live();
 
@@ -67,4 +69,6 @@ public:
 	float get_hardness() const { return hardness; }
 	void set_grain_cohesion(float p_v);
 	float get_grain_cohesion() const { return cohesion; }
+	void set_density(float p_v);
+	float get_density() const { return density; }
 };

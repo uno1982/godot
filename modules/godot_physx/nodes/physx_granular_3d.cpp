@@ -55,6 +55,11 @@ void PhysXGranular3D::set_grain_cohesion(float p_v) {
 	_reconfigure_if_live();
 }
 
+void PhysXGranular3D::set_density(float p_v) {
+	density = CLAMP(p_v, 50.0f, 4000.0f);
+	_reconfigure_if_live();
+}
+
 // Hide the fluid-only inspector properties -- this node is always grains.
 void PhysXGranular3D::_validate_property(PropertyInfo &p_property) const {
 	const StringName &n = p_property.name;
@@ -73,9 +78,12 @@ void PhysXGranular3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_hardness"), &PhysXGranular3D::get_hardness);
 	ClassDB::bind_method(D_METHOD("set_grain_cohesion", "cohesion"), &PhysXGranular3D::set_grain_cohesion);
 	ClassDB::bind_method(D_METHOD("get_grain_cohesion"), &PhysXGranular3D::get_grain_cohesion);
+	ClassDB::bind_method(D_METHOD("set_density", "density"), &PhysXGranular3D::set_density);
+	ClassDB::bind_method(D_METHOD("get_density"), &PhysXGranular3D::get_density);
 
 	ADD_GROUP("Granular", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "friction", PROPERTY_HINT_RANGE, "1,55,0.5,degrees"), "set_friction", "get_friction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "hardness", PROPERTY_HINT_RANGE, "100,200000,1,or_greater,suffix:Pa"), "set_hardness", "get_hardness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "grain_cohesion", PROPERTY_HINT_RANGE, "0,0.2,0.001,or_greater"), "set_grain_cohesion", "get_grain_cohesion");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "density", PROPERTY_HINT_RANGE, "50,4000,10,suffix:kg/m³"), "set_density", "get_density");
 }

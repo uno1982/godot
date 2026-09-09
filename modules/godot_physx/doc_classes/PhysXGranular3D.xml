@@ -11,6 +11,9 @@
 	<tutorials>
 	</tutorials>
 	<members>
+		<member name="density" type="float" setter="set_density" getter="get_density" default="900.0">
+			Bulk density of the medium in kg/m³ -- the "weight" of the grains. It scales how hard a body has to work to plough through: light powder snow is around [code]300[/code], dry sand around [code]1500[/code], wet or packed sand higher. It does not change the angle of repose (that is [member friction]) or how fast a pile settles.
+		</member>
 		<member name="friction" type="float" setter="set_friction" getter="get_friction" default="35.0">
 			Internal friction angle in degrees -- the steepest slope a pile holds. The continuum discretisation loses a few degrees to free-surface creep, so set this a little above the angle of repose you actually want (dry sand is ~34, gravel ~45).
 		</member>

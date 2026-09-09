@@ -44,14 +44,13 @@
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/3d/physics/rigid_body_3d.h"
 #include "scene/3d/physics/static_body_3d.h"
-#include "scene/resources/3d/world_3d.h"
 #include "scene/main/viewport.h"
 #include "scene/resources/3d/box_shape_3d.h"
 #include "scene/resources/3d/capsule_shape_3d.h"
 #include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/3d/sphere_shape_3d.h"
-#include "scene/resources/3d/world_boundary_shape_3d.h"
 #include "scene/resources/3d/world_3d.h"
+#include "scene/resources/3d/world_boundary_shape_3d.h"
 #include "scene/resources/material.h"
 #include "servers/rendering/rendering_server.h"
 
@@ -88,7 +87,7 @@ void PhysXParticleFluid3D::_mpm_surface_params(float &r_iso, float &r_kernel, fl
 	// covers a pinned grid that is finer than particle_size wants.
 	const float spacing = MAX(mpm_domain_size.x / MAX(_mpm_resolved_grid_res(), 1), 0.001f) * 0.5f;
 	const float rel = particle_size / spacing;
-	r_kernel = CLAMP(particle_size, spacing * 2.0f, spacing * 6.0f); // scatter radius (metres)
+	r_kernel = CLAMP(particle_size, spacing * 2.0f, spacing * 6.0f); // scatter radius (meters)
 	r_boost = CLAMP(rel * rel * rel, 1.0f, 24.0f);
 	r_iso = 0.5f; // fraction of the native packed kernel density (the solver resolves it)
 
@@ -97,7 +96,7 @@ void PhysXParticleFluid3D::_mpm_surface_params(float &r_iso, float &r_kernel, fl
 		// has no particle cohesion to draw it into a thread the way the PBD path
 		// does), so with the normal iso level it reconstructs as disconnected
 		// drips. Lower the threshold for the emitter case: fewer accumulated
-		// neighbours are needed to cross the surface, so the falling column
+		// neighbors are needed to cross the surface, so the falling column
 		// fuses -- with no change to the scatter-loop cost, and the dense pool
 		// (well above any threshold) barely moves.
 		r_iso = 0.18f;
@@ -133,6 +132,7 @@ void PhysXParticleFluid3D::_mpm_configure(bool p_prefill) {
 		s.granular_hardness = _granular_hardness();
 		s.granular_friction_deg = _granular_friction_deg();
 		s.granular_cohesion = _granular_cohesion();
+		s.rest_density = _granular_density(); // grain "weight" -- scales the collider coupling
 	}
 
 	// The MPM grid and the fluid particle spacing are coupled: too few particles
@@ -312,7 +312,7 @@ void PhysXParticleFluid3D::_mpm_step(double p_delta) {
 				if (n == nullptr) {
 					continue;
 				}
-				// Skip true statics (walls / floor -- list those once); keep
+				// Skip immovable bodies (walls / floor -- list those once); keep
 				// AnimatableBody3D (moving platforms) and every dynamic body.
 				if (Object::cast_to<StaticBody3D>(n) != nullptr && Object::cast_to<AnimatableBody3D>(n) == nullptr) {
 					continue;

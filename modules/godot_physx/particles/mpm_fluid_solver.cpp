@@ -489,6 +489,12 @@ void MPMFluidSolver::step(double p_delta, const LocalVector<SphereCollider> &p_c
 	// Reap the previous frame's GPU work before starting this one.
 	_reap_submitted();
 
+	// MPM_BENCH forces the sync path so get_last_step_msec() reports the real GPU
+	// cost of this step instead of ~0 (async overlap).
+	if (unlikely(OS::get_singleton()->has_environment("MPM_BENCH"))) {
+		p_async = false;
+	}
+
 	const int ncol = MIN((int)p_colliders.size(), MAX_COLLIDERS);
 	const double frame_dt = p_delta;
 	const double dt = frame_dt / (double)settings.substeps;
@@ -511,6 +517,38 @@ void MPMFluidSolver::step(double p_delta, const LocalVector<SphereCollider> &p_c
 	const uint32_t ng = groups_for(node_count);
 	const uint32_t pg = groups_for(pcount);
 	const int cells = (grid_dims.x - 1) * (grid_dims.y - 1) * (grid_dims.z - 1);
+
+	// MPM_PROFILE: time each pass in isolation (inflated by per-rep submit
+	// overhead -- read the relative costs, not the absolutes), then skip the
+	// real step this frame.
+	if (unlikely(OS::get_singleton()->has_environment("MPM_PROFILE"))) {
+		struct P {
+			const char *name;
+			int pass;
+			uint32_t groups;
+		};
+		const P plist[] = {
+			{ "clear ", PASS_CLEAR, ng }, { "p2g_mass", PASS_P2G_MASS, pg }, { "p2g_mom ", PASS_P2G_MOM, pg },
+			{ "grid  ", PASS_GRID, ng }, { "couple", PASS_COUPLE, ng }, { "g2p   ", PASS_G2P, pg }
+		};
+		const int REP = 40;
+		for (const P &pp : plist) {
+			const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+			for (int r = 0; r < REP; r++) {
+				RD::ComputeListID pcl = rd->compute_list_begin();
+				rd->compute_list_bind_compute_pipeline(pcl, pipeline[pp.pass]);
+				rd->compute_list_bind_uniform_set(pcl, uset[pp.pass], 0);
+				rd->compute_list_dispatch(pcl, pp.groups, 1, 1);
+				rd->compute_list_end();
+				rd->submit();
+				rd->sync();
+			}
+			const double us = double(OS::get_singleton()->get_ticks_usec() - t0) / REP;
+			print_line(vformat("[mpm-prof] %s  %.3f ms  (x%d subs -> %.3f ms/step)", pp.name, us / 1000.0, settings.substeps, us * settings.substeps / 1000.0));
+		}
+		_submitted = false;
+		return;
+	}
 
 	RD::ComputeListID cl = rd->compute_list_begin();
 	for (int s = 0; s < settings.substeps; s++) {

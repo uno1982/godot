@@ -75,6 +75,7 @@ struct GodotPhysXFluidIsosurface : public PxParticleSystemCallback {
 	LocalVector<PxVec4> host_positions; // scratch for outlier clamping
 	float clamp_reach = 3.5f; // max meters a particle may sit from the fluid's median before it is pinned
 	uint32_t frame = 0; // isosurface is re-extracted every other solve to halve the cost
+	bool surface_clip_warned = false;
 	// Extractions are kicked async on the stream and their results read one
 	// 30 Hz tick later, so the GPU is never stalled waiting on marching cubes.
 	bool surface_pending = false;
@@ -100,13 +101,19 @@ struct GodotPhysXFluidIsosurface : public PxParticleSystemCallback {
 		PxPhysicsGpu *gpu = PxGetPhysicsGpu();
 		ERR_FAIL_NULL(gpu);
 
-		smoothing = gpu->createSmoothedPositionGenerator(cuda, p_max_particles, 0.5f);
+		// Moderately higher smoothing strength (default 0.5): the isosurface
+		// follows a neighbour-averaged position field so a disturbed pool's edge
+		// particles do not boil the surface. Too high and a thin spreading sheet
+		// of fluid gets averaged away instead of pooling out.
+		smoothing = gpu->createSmoothedPositionGenerator(cuda, p_max_particles, 0.65f);
 		dev_smoothed = PX_EXT_DEVICE_MEMORY_ALLOC(PxVec4, *cuda, p_max_particles);
 		smoothing->setResultBufferDevice(dev_smoothed);
 
 		// min 1.0 keeps every ellipsoid at least a grid cell wide (smaller ones
-		// flicker); max 1.6 is well below PhysX's default 2.0 to limit needling.
-		anisotropy = gpu->createAnisotropyGenerator(cuda, p_max_particles, 5.0f, 1.0f, 1.6f);
+		// flicker); max 1.4 is well below PhysX's default 2.0 -- a lone particle
+		// at a stirred pool's rim otherwise stretches into a needle and the
+		// surface crawls with tendrils.
+		anisotropy = gpu->createAnisotropyGenerator(cuda, p_max_particles, 5.0f, 1.0f, 1.4f);
 		dev_aniso1 = PX_EXT_DEVICE_MEMORY_ALLOC(PxVec4, *cuda, p_max_particles);
 		dev_aniso2 = PX_EXT_DEVICE_MEMORY_ALLOC(PxVec4, *cuda, p_max_particles);
 		dev_aniso3 = PX_EXT_DEVICE_MEMORY_ALLOC(PxVec4, *cuda, p_max_particles);
@@ -125,16 +132,29 @@ struct GodotPhysXFluidIsosurface : public PxParticleSystemCallback {
 		sgp.subgridSizeZ = 16;
 		sgp.haloSize = 0;
 		sgp.maxNumSubgrids = 2048;
-		// Grid cell ~= 1.5x the particle diameter. Finer than this multiplies the
-		// marching-cubes cost (and can crater the frame rate for a fluid spread
-		// over a wide area) with little visible gain once mesh smoothing runs.
+		// Grid cell ~= 1.75x the particle diameter. Finer multiplies the
+		// marching-cubes cost (and the subgrid / triangle budget) for a wide
+		// spread of fluid with little visible gain once mesh smoothing runs.
 		sgp.gridSpacing = 3.5f * rest_offset;
 
 		PxIsosurfaceParams ip;
-		ip.particleCenterToIsosurfaceDistance = 2.4f * rest_offset;
+		// Well past the default 2x radius: a thin spreading pool is barely one
+		// particle deep at its rim, so a tight iso distance breaks it into
+		// wriggling isolated blobs. A wide reach fuses that rim into one
+		// connected sheet (the bulk just renders a touch fat, which reads as
+		// water anyway).
+		ip.particleCenterToIsosurfaceDistance = 3.4f * rest_offset;
+		// One Gaussian pass over the density field -- no GROW (it inflates the
+		// falling stream into a slab and halves the frame rate) and no SHRINK
+		// (it erodes thin sheets). The blur lifts the speckled rim of a stirred
+		// pool above the iso level as one continuous surface instead of a mat of
+		// wriggling tendrils; mesh smoothing then relaxes the remaining wobble.
+		// Costs ~15 fps on a wide pool, which is the price of a calm edge.
 		ip.clearFilteringPasses();
-		ip.numMeshSmoothingPasses = 6;
-		ip.numMeshNormalSmoothingPasses = 4;
+		ip.gridSmoothingRadius = sgp.gridSpacing;
+		ip.addGridFilteringPass(PxIsosurfaceGridFilteringType::eSMOOTH);
+		ip.numMeshSmoothingPasses = 9;
+		ip.numMeshNormalSmoothingPasses = 5;
 
 		extractor = gpu->createSparseGridIsosurfaceExtractor(cuda, sgp, ip, p_max_particles, max_vertices, max_triangles);
 		if (extractor) {
@@ -288,6 +308,10 @@ struct GodotPhysXFluidIsosurface : public PxParticleSystemCallback {
 	void publish_surface() {
 		uint32_t nv = MIN(extractor->getNumVertices(), max_vertices);
 		uint32_t nt = MIN(extractor->getNumTriangles(), max_triangles);
+		if (!surface_clip_warned && (extractor->getNumVertices() > max_vertices || extractor->getNumTriangles() > max_triangles)) {
+			surface_clip_warned = true;
+			WARN_PRINT("PhysXParticleFluid3D: isosurface mesh exceeded the buffer budget and was clipped -- part of the fluid will not be drawn. Reduce spawn_region_size / particle_count or coarsen the surface.");
+		}
 		for (uint32_t i = 0; i < nt * 3; i++) {
 			if (host_indices[i] >= nv) {
 				nt = 0;

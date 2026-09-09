@@ -69,6 +69,24 @@ env.Append(LIBPATH=[physx_lib])
 if env["platform"] == "windows":
     env.Append(LINKFLAGS=[x + ".lib" for x in physx_libs])
 
+# MLS-MPM compute-fluid shaders (cross-vendor fallback for the PhysX GPU path).
+for _glsl in (
+    "mpm_clear.glsl",
+    "mpm_p2g_mass.glsl",
+    "mpm_p2g_mom.glsl",
+    "mpm_grid.glsl",
+    "mpm_couple.glsl",
+    "mpm_g2p.glsl",
+    "mpm_surface.glsl",
+    "mpm_march.glsl",
+    "mpm_render.glsl",
+):
+    env_physx.GLSL_HEADER(os.path.join("particles", _glsl))
+env_physx.Depends(
+    Glob("particles/*.glsl.gen.h"),
+    [os.path.join("particles", "mpm_fluid_inc.glsl"), "#glsl_builders.py"],
+)
+
 # Godot source files
 module_obj = []
 env_physx.add_source_files(module_obj, "*.cpp")
@@ -76,6 +94,7 @@ env_physx.add_source_files(module_obj, "cloth/*.cpp")
 env_physx.add_source_files(module_obj, "joints/*.cpp")
 env_physx.add_source_files(module_obj, "nodes/*.cpp")
 env_physx.add_source_files(module_obj, "objects/*.cpp")
+env_physx.add_source_files(module_obj, "particles/*.cpp")
 env_physx.add_source_files(module_obj, "shapes/*.cpp")
 env_physx.add_source_files(module_obj, "spaces/*.cpp")
 

@@ -144,6 +144,18 @@ public:
 	void set_chunk_mesh(const Ref<Mesh> &p_v);
 	Ref<Mesh> get_chunk_mesh() const { return chunk_mesh; }
 
+	// Live state of the active chunks, for other systems that want to couple
+	// against the debris (e.g. the MPM fluid). All in world space.
+	struct ChunkBody {
+		Transform3D xform;
+		Vector3 velocity;
+		Vector3 half_extents; // box: half size; sphere: x = radius
+		bool sphere = false;
+		int index = -1; // pass back to apply_chunk_impulse()
+	};
+	void get_active_chunk_bodies(LocalVector<ChunkBody> &r_out) const;
+	void apply_chunk_impulse(int p_index, const Vector3 &p_impulse);
+
 	void set_emitting(bool p_v);
 	bool is_emitting() const { return emitting; }
 	void set_emission_rate(float p_v);

@@ -87,13 +87,50 @@ void PhysXChunkEmitter3D::_free_chunk(uint32_t p_index) {
 	chunks.remove_at(p_index);
 }
 
-void PhysXChunkEmitter3D::_sync_transforms() {
+void PhysXChunkEmitter3D::get_active_chunk_bodies(LocalVector<ChunkBody> &r_out) const {
+	r_out.clear();
 	if (chunks.is_empty()) {
+		return;
+	}
+	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
+	const bool is_sphere = chunk_shape == SHAPE_SPHERE;
+	r_out.reserve(chunks.size());
+	for (uint32_t i = 0; i < chunks.size(); i++) {
+		PhysicsDirectBodyState3D *state = ps->body_get_direct_state(chunks[i].body);
+		if (state == nullptr) {
+			continue;
+		}
+		ChunkBody cb;
+		cb.xform = state->get_transform();
+		cb.velocity = state->get_linear_velocity();
+		const float h = chunks[i].size * 0.5f;
+		cb.half_extents = Vector3(h, h, h);
+		cb.sphere = is_sphere;
+		cb.index = (int)i;
+		r_out.push_back(cb);
+	}
+}
+
+void PhysXChunkEmitter3D::apply_chunk_impulse(int p_index, const Vector3 &p_impulse) {
+	if (p_index < 0 || p_index >= (int)chunks.size()) {
+		return;
+	}
+	PhysicsServer3D::get_singleton()->body_apply_central_impulse(chunks[p_index].body, p_impulse);
+}
+
+void PhysXChunkEmitter3D::_sync_transforms() {
+	if (multimesh.is_null()) {
 		return;
 	}
 	RenderingServer *rs = RenderingServer::get_singleton();
 	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
+	// Always push the count first: when the last chunk is recycled (lifetime or
+	// max_active) this is what actually hides the stale instances -- otherwise
+	// they stay frozen on screen until the next spawn.
 	rs->multimesh_set_visible_instances(multimesh, chunks.size());
+	if (chunks.is_empty()) {
+		return;
+	}
 
 	const Transform3D to_local = get_global_transform().affine_inverse();
 	AABB aabb;
@@ -227,16 +264,15 @@ void PhysXChunkEmitter3D::_notification(int p_what) {
 					_free_chunk(0);
 				}
 			}
-			if (chunks.is_empty()) {
-				break;
-			}
-			const double now = Time::get_singleton()->get_ticks_msec() / 1000.0;
-			for (int i = (int)chunks.size() - 1; i >= 0; i--) {
-				if (now - chunks[i].spawn_time > lifetime) {
-					_free_chunk(i);
+			if (!chunks.is_empty()) {
+				const double now = Time::get_singleton()->get_ticks_msec() / 1000.0;
+				for (int i = (int)chunks.size() - 1; i >= 0; i--) {
+					if (now - chunks[i].spawn_time > lifetime) {
+						_free_chunk(i);
+					}
 				}
+				_sync_transforms();
 			}
-			_sync_transforms();
 		} break;
 	}
 }

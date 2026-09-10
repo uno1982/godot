@@ -42,8 +42,10 @@
 
 #include "core/io/marshalls.h"
 #include "core/math/math_funcs.h"
+#include "core/object/callable_mp.h"
 #include "core/os/os.h"
 #include "servers/display/display_server.h"
+#include "servers/rendering/rendering_device.h"
 #include "servers/rendering/rendering_device_binds.h"
 #include "servers/rendering/rendering_server.h"
 
@@ -61,42 +63,17 @@ uint32_t groups_for(int p_count) {
 }
 } // namespace
 
-MPMFluidSolver::MPMFluidSolver() {
-	if (!DisplayServer::can_create_rendering_device()) {
-		return;
-	}
-	rd = RenderingServer::get_singleton()->create_local_rendering_device();
+/* ===================================================================== */
+/*  MPMFluidSolverGPU -- everything that touches the RenderingDevice.      */
+/*  Every method here runs on the render thread (posted via                */
+/*  RenderingServer::call_on_render_thread) except the destructor, which   */
+/*  runs wherever the last Ref is dropped.                                 */
+/* ===================================================================== */
+
+void MPMFluidSolverGPU::rt_compile(Ref<MPMFluidSolverGPU> p_self) {
 	if (rd == nullptr) {
 		return;
 	}
-	if (!_compile_shaders()) {
-		memdelete(rd);
-		rd = nullptr;
-	}
-}
-
-MPMFluidSolver::~MPMFluidSolver() {
-	if (rd == nullptr) {
-		return;
-	}
-	_free_buffers(); // uniform sets + buffers
-	for (int i = 0; i < PASS_MAX; i++) {
-		if (pipeline[i].is_valid()) {
-			rd->free_rid(pipeline[i]);
-			pipeline[i] = RID();
-		}
-	}
-	for (int i = 0; i < PASS_MAX; i++) {
-		if (shader[i].is_valid()) {
-			rd->free_rid(shader[i]);
-			shader[i] = RID();
-		}
-	}
-	memdelete(rd);
-	rd = nullptr;
-}
-
-bool MPMFluidSolver::_compile_shaders() {
 	const char *src[PASS_MAX] = {
 		mpm_clear_shader_glsl,
 		mpm_p2g_mass_shader_glsl,
@@ -111,26 +88,23 @@ bool MPMFluidSolver::_compile_shaders() {
 	for (int i = 0; i < PASS_MAX; i++) {
 		Ref<RDShaderFile> sf;
 		sf.instantiate();
-		Error err = sf->parse_versions_from_text(src[i]);
-		if (err != OK) {
+		if (sf->parse_versions_from_text(src[i]) != OK) {
 			ERR_PRINT(vformat("MPMFluidSolver: compute shader %d failed to compile.", i));
-			return false;
+			return;
 		}
 		shader[i] = rd->shader_create_from_spirv(sf->get_spirv_stages());
-		ERR_FAIL_COND_V(shader[i].is_null(), false);
+		ERR_FAIL_COND(shader[i].is_null());
 		pipeline[i] = rd->compute_pipeline_create(shader[i]);
-		ERR_FAIL_COND_V(pipeline[i].is_null(), false);
+		ERR_FAIL_COND(pipeline[i].is_null());
 	}
-	return true;
+	_shaders_ok = true;
 }
 
-void MPMFluidSolver::_free_buffers() {
-	if (_submitted && rd != nullptr) {
-		rd->sync(); // don't free buffers with GPU work still in flight
-		_submitted = false;
+void MPMFluidSolverGPU::_rt_free_buffers() {
+	if (uset_mesh.is_valid()) {
+		rd->free_rid(uset_mesh);
+		uset_mesh = RID();
 	}
-	_mm_cache = PackedFloat32Array();
-	_imp_cache.clear();
 	// Uniform sets first: RD auto-frees a uniform set when a buffer it references
 	// is freed, so freeing the buffers first leaves these RIDs dangling.
 	for (int i = 0; i < PASS_MAX; i++) {
@@ -138,10 +112,6 @@ void MPMFluidSolver::_free_buffers() {
 			rd->free_rid(uset[i]);
 			uset[i] = RID();
 		}
-	}
-	if (uset_mesh.is_valid()) {
-		rd->free_rid(uset_mesh);
-		uset_mesh = RID();
 	}
 	RID *bufs[] = { &buf_params, &buf_particles, &buf_grid_i, &buf_grid_v, &buf_colliders, &buf_cimp, &buf_mm, &buf_surf, &buf_mverts, &buf_mnorms, &buf_mcount };
 	for (RID *b : bufs) {
@@ -152,30 +122,464 @@ void MPMFluidSolver::_free_buffers() {
 	}
 }
 
+void MPMFluidSolverGPU::_rt_rebuild_uniform_sets() {
+	RID by_binding[8] = { buf_params, buf_particles, buf_grid_i, buf_grid_v, buf_colliders, buf_cimp, buf_mm, buf_surf };
+	for (int p = 0; p < PASS_MAX; p++) {
+		if (uset[p].is_valid()) {
+			rd->free_rid(uset[p]);
+			uset[p] = RID();
+		}
+		// Every pass includes mpm_fluid_inc.glsl, which declares all eight
+		// bindings -- shader reflection puts them all in the set layout whether
+		// or not a given pass references them, so provide all eight.
+		Vector<RD::Uniform> uniforms;
+		for (int bnd = 0; bnd < 8; bnd++) {
+			RD::Uniform u;
+			u.uniform_type = (bnd == 0) ? RD::UNIFORM_TYPE_UNIFORM_BUFFER : RD::UNIFORM_TYPE_STORAGE_BUFFER;
+			u.binding = bnd;
+			u.append_id(by_binding[bnd]);
+			uniforms.push_back(u);
+		}
+		uset[p] = rd->uniform_set_create(uniforms, shader[p], 0);
+		ERR_FAIL_COND(uset[p].is_null());
+	}
+
+	if (buf_mverts.is_valid()) {
+		Vector<RD::Uniform> m;
+		const RID mesh_bufs[3] = { buf_mverts, buf_mnorms, buf_mcount };
+		for (int b = 0; b < 3; b++) {
+			RD::Uniform u;
+			u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+			u.binding = b;
+			u.append_id(mesh_bufs[b]);
+			m.push_back(u);
+		}
+		uset_mesh = rd->uniform_set_create(m, shader[PASS_MARCH], 1);
+		ERR_FAIL_COND(uset_mesh.is_null());
+	}
+}
+
+void MPMFluidSolverGPU::rt_build(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p_params, PackedByteArray p_particles, int p_capacity, int p_node_count, int p_tri_budget) {
+	if (rd == nullptr || !_shaders_ok) {
+		return;
+	}
+	if (local && _submitted) {
+		rd->sync(); // don't free buffers with GPU work still in flight
+		_submitted = false;
+	}
+	built.set_to(false);
+	_rt_free_buffers();
+
+	capacity = p_capacity;
+	node_count = p_node_count;
+	tri_budget = p_tri_budget;
+
+	{
+		MutexLock lock(cache_mtx);
+		mm_cache = PackedFloat32Array();
+		imp_cache.clear();
+		surf_verts_cache = PackedVector3Array();
+		surf_norms_cache = PackedVector3Array();
+		surf_tris_cache = 0;
+	}
+
+	buf_params = rd->uniform_buffer_create(PARAMS_BYTES, p_params);
+	buf_particles = rd->storage_buffer_create(p_particles.size(), p_particles);
+	buf_grid_i = rd->storage_buffer_create(node_count * 4 * sizeof(int32_t));
+	buf_grid_v = rd->storage_buffer_create(node_count * 4 * sizeof(float));
+
+	PackedByteArray czero;
+	czero.resize(MAX_COLLIDERS * FLOATS_PER_COLLIDER * 4);
+	memset(czero.ptrw(), 0, czero.size());
+	buf_colliders = rd->storage_buffer_create(czero.size(), czero);
+	buf_cimp = rd->storage_buffer_create(MAX_COLLIDERS * 4 * sizeof(int32_t));
+
+	{
+		PackedByteArray mm_zero;
+		mm_zero.resize(capacity * 12 * sizeof(float));
+		memset(mm_zero.ptrw(), 0, mm_zero.size());
+		buf_mm = rd->storage_buffer_create(mm_zero.size(), mm_zero);
+	}
+	buf_surf = rd->storage_buffer_create(node_count * sizeof(float));
+
+	buf_mverts = rd->storage_buffer_create(tri_budget * 3 * 4 * sizeof(float)); // vec4 / vertex
+	buf_mnorms = rd->storage_buffer_create(tri_budget * 3 * 4 * sizeof(float));
+	{
+		PackedByteArray mc;
+		mc.resize(2 * sizeof(uint32_t));
+		encode_uint32(0, mc.ptrw()); // tri_count
+		encode_uint32(tri_budget, mc.ptrw() + 4); // tri_budget
+		buf_mcount = rd->storage_buffer_create(mc.size(), mc);
+	}
+
+	_rt_rebuild_uniform_sets();
+	built.set_to(true);
+}
+
+void MPMFluidSolverGPU::rt_step(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p_params, PackedByteArray p_colliders, int p_ncol, int p_pcount, int p_node_count, Vector3i p_grid_dims, int p_substeps, bool p_want_surface, bool p_bench) {
+	if (rd == nullptr || !built.is_set() || p_pcount == 0) {
+		return;
+	}
+
+	// Read back last frame's GPU timing capture (bench only).
+	if (p_bench) {
+		const uint32_t n = rd->get_captured_timestamps_count();
+		uint64_t a = 0, b = 0;
+		for (uint32_t i = 0; i < n; i++) {
+			const String nm = rd->get_captured_timestamp_name(i);
+			if (nm == "mpm_a") {
+				a = rd->get_captured_timestamp_gpu_time(i);
+			} else if (nm == "mpm_b") {
+				b = rd->get_captured_timestamp_gpu_time(i);
+			}
+		}
+		if (b > a) {
+			MutexLock lock(cache_mtx);
+			last_step_usec = (b - a) / 1000; // ns -> us
+		}
+	}
+
+	rd->buffer_update(buf_params, 0, PARAMS_BYTES, p_params.ptr());
+	if (p_ncol > 0 && p_colliders.size() > 0) {
+		rd->buffer_update(buf_colliders, 0, p_colliders.size(), p_colliders.ptr());
+	}
+	rd->buffer_clear(buf_cimp, 0, MAX_COLLIDERS * 4 * sizeof(int32_t));
+	if (p_want_surface) {
+		rd->buffer_clear(buf_mcount, 0, sizeof(uint32_t)); // reset tri_count, keep tri_budget
+		rd->buffer_clear(buf_surf, 0, node_count * sizeof(int32_t)); // reset the density scatter
+	}
+
+	const uint32_t ng = groups_for(node_count);
+	const uint32_t pg = groups_for(p_pcount);
+	const int cells = (p_grid_dims.x - 1) * (p_grid_dims.y - 1) * (p_grid_dims.z - 1);
+
+	if (p_bench) {
+		rd->capture_timestamp("mpm_a");
+	}
+
+	RD::ComputeListID cl = rd->compute_list_begin();
+	for (int s = 0; s < p_substeps; s++) {
+		rd->compute_list_bind_compute_pipeline(cl, pipeline[PASS_CLEAR]);
+		rd->compute_list_bind_uniform_set(cl, uset[PASS_CLEAR], 0);
+		rd->compute_list_dispatch(cl, ng, 1, 1);
+		rd->compute_list_add_barrier(cl);
+
+		rd->compute_list_bind_compute_pipeline(cl, pipeline[PASS_P2G_MASS]);
+		rd->compute_list_bind_uniform_set(cl, uset[PASS_P2G_MASS], 0);
+		rd->compute_list_dispatch(cl, pg, 1, 1);
+		rd->compute_list_add_barrier(cl);
+
+		rd->compute_list_bind_compute_pipeline(cl, pipeline[PASS_P2G_MOM]);
+		rd->compute_list_bind_uniform_set(cl, uset[PASS_P2G_MOM], 0);
+		rd->compute_list_dispatch(cl, pg, 1, 1);
+		rd->compute_list_add_barrier(cl);
+
+		rd->compute_list_bind_compute_pipeline(cl, pipeline[PASS_GRID]);
+		rd->compute_list_bind_uniform_set(cl, uset[PASS_GRID], 0);
+		rd->compute_list_dispatch(cl, ng, 1, 1);
+		rd->compute_list_add_barrier(cl);
+
+		if (p_ncol > 0) {
+			rd->compute_list_bind_compute_pipeline(cl, pipeline[PASS_COUPLE]);
+			rd->compute_list_bind_uniform_set(cl, uset[PASS_COUPLE], 0);
+			rd->compute_list_dispatch(cl, ng, 1, 1);
+			rd->compute_list_add_barrier(cl);
+		}
+
+		rd->compute_list_bind_compute_pipeline(cl, pipeline[PASS_G2P]);
+		rd->compute_list_bind_uniform_set(cl, uset[PASS_G2P], 0);
+		rd->compute_list_dispatch(cl, pg, 1, 1);
+		rd->compute_list_add_barrier(cl);
+	}
+	if (p_want_surface) {
+		rd->compute_list_bind_compute_pipeline(cl, pipeline[PASS_SURFACE]);
+		rd->compute_list_bind_uniform_set(cl, uset[PASS_SURFACE], 0);
+		rd->compute_list_dispatch(cl, pg, 1, 1);
+		rd->compute_list_add_barrier(cl);
+
+		rd->compute_list_bind_compute_pipeline(cl, pipeline[PASS_MARCH]);
+		rd->compute_list_bind_uniform_set(cl, uset[PASS_MARCH], 0);
+		rd->compute_list_bind_uniform_set(cl, uset_mesh, 1);
+		rd->compute_list_dispatch(cl, groups_for(cells), 1, 1);
+		rd->compute_list_add_barrier(cl);
+	}
+	rd->compute_list_bind_compute_pipeline(cl, pipeline[PASS_RENDER]);
+	rd->compute_list_bind_uniform_set(cl, uset[PASS_RENDER], 0);
+	rd->compute_list_dispatch(cl, pg, 1, 1);
+	rd->compute_list_end();
+
+	if (p_bench) {
+		rd->capture_timestamp("mpm_b");
+	}
+
+	_submitted_ncol = p_ncol;
+	_submitted_surface = p_want_surface;
+
+	if (local) {
+		// We own the device: run it now and pull results straight back.
+		rd->submit();
+		_submitted = true;
+		_local_reap();
+		return;
+	}
+
+	// Shared device: async readback. The callbacks land a few frames later on the
+	// render thread and refresh the caches; each binds a Ref to us so we survive
+	// the wait.
+	rd->buffer_get_data_async(buf_mm, callable_mp(this, &MPMFluidSolverGPU::rt_on_mm).bind(p_self), 0, capacity * 12 * sizeof(float));
+	if (p_ncol > 0) {
+		rd->buffer_get_data_async(buf_cimp, callable_mp(this, &MPMFluidSolverGPU::rt_on_impulses).bind(p_self, p_ncol), 0, p_ncol * 4 * sizeof(int32_t));
+	}
+	if (p_want_surface) {
+		rd->buffer_get_data_async(buf_mcount, callable_mp(this, &MPMFluidSolverGPU::rt_on_surf_count).bind(p_self), 0, sizeof(uint32_t));
+		rd->buffer_get_data_async(buf_mverts, callable_mp(this, &MPMFluidSolverGPU::rt_on_surf_verts).bind(p_self), 0, tri_budget * 3 * 4 * sizeof(float));
+		rd->buffer_get_data_async(buf_mnorms, callable_mp(this, &MPMFluidSolverGPU::rt_on_surf_norms).bind(p_self), 0, tri_budget * 3 * 4 * sizeof(float));
+	}
+}
+
+// Local device only: block on the pending submit, then pull the render buffer,
+// collider impulses and (when it ran) the isosurface geometry into the caches.
+void MPMFluidSolverGPU::_local_reap() {
+	if (!_submitted) {
+		return;
+	}
+	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
+	rd->sync();
+	last_step_usec = OS::get_singleton()->get_ticks_usec() - t0;
+	_submitted = false;
+
+	MutexLock lock(cache_mtx);
+
+	Vector<uint8_t> mm = rd->buffer_get_data(buf_mm, 0, capacity * 12 * sizeof(float));
+	mm_cache.resize(capacity * 12);
+	if (mm.size() > 0) {
+		memcpy(mm_cache.ptrw(), mm.ptr(), MIN((int)mm.size(), (int)(capacity * 12 * sizeof(float))));
+	}
+
+	imp_cache.clear();
+	if (_submitted_ncol > 0) {
+		Vector<uint8_t> raw = rd->buffer_get_data(buf_cimp, 0, _submitted_ncol * 4 * sizeof(int32_t));
+		const int32_t *ci = (const int32_t *)raw.ptr();
+		for (int i = 0; i < _submitted_ncol; i++) {
+			imp_cache.push_back(Vector3(ci[i * 4 + 0], ci[i * 4 + 1], ci[i * 4 + 2]) / IMP_FIXED);
+		}
+	}
+
+	if (_submitted_surface) {
+		Vector<uint8_t> cnt = rd->buffer_get_data(buf_mcount, 0, sizeof(uint32_t));
+		const uint32_t tris = (cnt.size() >= (int)sizeof(uint32_t)) ? MIN(decode_uint32(cnt.ptr()), (uint32_t)tri_budget) : 0;
+		surf_tris_cache = (int)tris;
+		if (tris > 0) {
+			const uint32_t verts = tris * 3;
+			Vector<uint8_t> vraw = rd->buffer_get_data(buf_mverts, 0, verts * 4 * sizeof(float));
+			Vector<uint8_t> nraw = rd->buffer_get_data(buf_mnorms, 0, verts * 4 * sizeof(float));
+			const float *vf = (const float *)vraw.ptr();
+			const float *nf = (const float *)nraw.ptr();
+			surf_verts_cache.resize(verts);
+			surf_norms_cache.resize(verts);
+			for (uint32_t i = 0; i < verts; i++) {
+				surf_verts_cache.write[i] = Vector3(vf[i * 4 + 0], vf[i * 4 + 1], vf[i * 4 + 2]);
+				surf_norms_cache.write[i] = Vector3(nf[i * 4 + 0], nf[i * 4 + 1], nf[i * 4 + 2]);
+			}
+		}
+	}
+}
+
+void MPMFluidSolverGPU::rt_emit(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p_blob, int p_head_bytes, int p_first_bytes) {
+	if (rd == nullptr || !built.is_set() || p_blob.is_empty()) {
+		return;
+	}
+	if (local && _submitted) {
+		_local_reap(); // don't write the particle store while a step is reading it
+	}
+	rd->buffer_update(buf_particles, p_head_bytes, p_first_bytes, p_blob.ptr());
+	const int rest = p_blob.size() - p_first_bytes;
+	if (rest > 0) {
+		rd->buffer_update(buf_particles, 0, rest, p_blob.ptr() + p_first_bytes);
+	}
+}
+
+void MPMFluidSolverGPU::rt_read_positions(Ref<MPMFluidSolverGPU> p_self, int p_count) {
+	if (rd == nullptr || !built.is_set() || buf_particles.is_null()) {
+		pos_ready.set();
+		return;
+	}
+	if (local && _submitted) {
+		_local_reap();
+	}
+	Vector<uint8_t> raw = rd->buffer_get_data(buf_particles, 0, p_count * FLOATS_PER_PARTICLE * sizeof(float));
+	const float *f = (const float *)raw.ptr();
+	PackedVector3Array out;
+	out.resize(p_count);
+	for (int i = 0; i < p_count; i++) {
+		const float *o = f + i * FLOATS_PER_PARTICLE;
+		out.write[i] = Vector3(o[0], o[1], o[2]);
+	}
+	{
+		MutexLock lock(cache_mtx);
+		pos_cache = out;
+	}
+	pos_ready.set();
+}
+
+void MPMFluidSolverGPU::rt_on_mm(const PackedByteArray &p_data, Ref<MPMFluidSolverGPU> p_self) {
+	MutexLock lock(cache_mtx);
+	mm_cache.resize(capacity * 12);
+	const int n = MIN(p_data.size(), (int)(capacity * 12 * sizeof(float)));
+	if (n > 0) {
+		memcpy(mm_cache.ptrw(), p_data.ptr(), n);
+	}
+}
+
+void MPMFluidSolverGPU::rt_on_impulses(const PackedByteArray &p_data, Ref<MPMFluidSolverGPU> p_self, int p_ncol) {
+	const int32_t *ci = (const int32_t *)p_data.ptr();
+	const int have = p_data.size() / (int)sizeof(int32_t);
+	MutexLock lock(cache_mtx);
+	imp_cache.clear();
+	for (int i = 0; i < p_ncol && i * 4 + 2 < have; i++) {
+		imp_cache.push_back(Vector3(ci[i * 4 + 0], ci[i * 4 + 1], ci[i * 4 + 2]) / IMP_FIXED);
+	}
+}
+
+void MPMFluidSolverGPU::rt_on_surf_count(const PackedByteArray &p_data, Ref<MPMFluidSolverGPU> p_self) {
+	if (p_data.size() < (int)sizeof(uint32_t)) {
+		return;
+	}
+	MutexLock lock(cache_mtx);
+	surf_tris_cache = (int)MIN(decode_uint32(p_data.ptr()), (uint32_t)tri_budget);
+}
+
+void MPMFluidSolverGPU::rt_on_surf_verts(const PackedByteArray &p_data, Ref<MPMFluidSolverGPU> p_self) {
+	const float *vf = (const float *)p_data.ptr();
+	const int verts = p_data.size() / (4 * (int)sizeof(float));
+	PackedVector3Array out;
+	out.resize(verts);
+	for (int i = 0; i < verts; i++) {
+		out.write[i] = Vector3(vf[i * 4 + 0], vf[i * 4 + 1], vf[i * 4 + 2]);
+	}
+	MutexLock lock(cache_mtx);
+	surf_verts_cache = out;
+}
+
+void MPMFluidSolverGPU::rt_on_surf_norms(const PackedByteArray &p_data, Ref<MPMFluidSolverGPU> p_self) {
+	const float *nf = (const float *)p_data.ptr();
+	const int verts = p_data.size() / (4 * (int)sizeof(float));
+	PackedVector3Array out;
+	out.resize(verts);
+	for (int i = 0; i < verts; i++) {
+		out.write[i] = Vector3(nf[i * 4 + 0], nf[i * 4 + 1], nf[i * 4 + 2]);
+	}
+	MutexLock lock(cache_mtx);
+	surf_norms_cache = out;
+}
+
+// Free the pipelines + buffers on the render thread. MPMFluidSolver's destructor
+// posts this and then RS::sync()s, so the RIDs are gone before the last Ref
+// drops; the object destructor is then a no-op.
+void MPMFluidSolverGPU::rt_free(Ref<MPMFluidSolverGPU> p_self) {
+	if (rd == nullptr) {
+		return;
+	}
+	if (local && _submitted) {
+		rd->sync();
+		_submitted = false;
+	}
+	built.set_to(false);
+	_rt_free_buffers();
+	for (int i = 0; i < PASS_MAX; i++) {
+		if (pipeline[i].is_valid()) {
+			rd->free_rid(pipeline[i]);
+			pipeline[i] = RID();
+		}
+		if (shader[i].is_valid()) {
+			rd->free_rid(shader[i]);
+			shader[i] = RID();
+		}
+	}
+	_shaders_ok = false;
+}
+
+MPMFluidSolverGPU::~MPMFluidSolverGPU() {
+#ifdef DEV_ENABLED
+	// rt_free() should have run first. If a stale async callback kept us alive
+	// past it, everything is already null and there is nothing to do.
+	for (int i = 0; i < PASS_MAX; i++) {
+		DEV_ASSERT(shader[i].is_null() && pipeline[i].is_null());
+	}
+#endif
+}
+
+/* ===================================================================== */
+/*  MPMFluidSolver -- CPU-side front. Preps payloads, posts render work.   */
+/* ===================================================================== */
+
+MPMFluidSolver::MPMFluidSolver() {
+	RenderingServer *rs = RenderingServer::get_singleton();
+	if (rs == nullptr) {
+		return;
+	}
+	gpu.instantiate();
+	gpu->rd = rs->get_rendering_device();
+	if (gpu->rd == nullptr) {
+		// Headless: no main device. Spin up a private local one and drive it
+		// synchronously on this thread (the old path -- fine for automated tests,
+		// where nothing is being rendered anyway).
+		if (!DisplayServer::can_create_rendering_device()) {
+			gpu.unref();
+			return;
+		}
+		gpu->rd = rs->create_local_rendering_device();
+		if (gpu->rd == nullptr) {
+			gpu.unref();
+			return;
+		}
+		gpu->local = true;
+	}
+	_dispatch(callable_mp(gpu.ptr(), &MPMFluidSolverGPU::rt_compile).bind(gpu));
+}
+
+MPMFluidSolver::~MPMFluidSolver() {
+	if (gpu.is_valid() && gpu->rd != nullptr) {
+		if (gpu->local) {
+			gpu->rt_free(gpu);
+			memdelete(gpu->rd); // we own the local device
+			gpu->rd = nullptr;
+		} else {
+			RenderingServer *rs = RenderingServer::get_singleton();
+			rs->call_on_render_thread(callable_mp(gpu.ptr(), &MPMFluidSolverGPU::rt_free).bind(gpu));
+			rs->sync(); // wait for the render thread to run rt_free before we drop our Ref
+		}
+	}
+	// Any in-flight async readback still holds a bound Ref; when it finally fires
+	// it finds every RID null and the object destructor no-ops.
+	gpu.unref();
+}
+
+void MPMFluidSolver::_dispatch(const Callable &p_call) const {
+	if (gpu.is_null()) {
+		return;
+	}
+	if (gpu->local) {
+		p_call.call(); // run now, on this thread, on the device we own
+	} else {
+		RenderingServer::get_singleton()->call_on_render_thread(p_call);
+	}
+}
+
 void MPMFluidSolver::_compute_scales() {
 	dx = settings.domain.x / (float)settings.grid_res;
-	// Uniform cell size; the grid gets as many cells per axis as the domain needs
-	// so a non-cube domain (e.g. a tall tank) is covered.
 	grid_dims = Vector3i(
 			settings.grid_res,
 			CLAMP((int)Math::round(settings.domain.y / dx), 4, 256),
 			CLAMP((int)Math::round(settings.domain.z / dx), 4, 256));
 	node_count = grid_dims.x * grid_dims.y * grid_dims.z;
 	const float spacing = dx * 0.5f;
-	// Particle mass from the medium density. For granular this is the "weight"
-	// knob: the collider coupling exchanges momentum in proportion to it (light
-	// snow shoves aside far easier than heavy sand), while the Drucker-Prager
-	// stress stays calibrated by hardness/friction independent of it.
 	pmass = MAX(settings.rest_density, 1.0f) * spacing * spacing * spacing;
 	_recompute_surface_iso();
 }
 
-// The poly6 kernel is heavily h-dependent (norm ~ 1/h^9), so the absolute
-// density a well-packed fluid reads with a given kernel radius varies a lot.
-// Evaluate that packed reference here and take the iso as a fraction of it, so
-// the surface stays at a consistent "fullness" as particle_size changes.
 void MPMFluidSolver::_recompute_surface_iso() {
-	const float sp = MAX(dx * 0.5f, 1e-4f); // particle spacing
+	const float sp = MAX(dx * 0.5f, 1e-4f);
 	const float h = MAX(settings.surface_kernel, dx);
 	const float h2 = h * h;
 	const float norm = (315.0f / (64.0f * 3.14159265f * Math::pow(h, 9.0f))) * pmass;
@@ -198,8 +602,6 @@ void MPMFluidSolver::_recompute_surface_iso() {
 LocalVector<float> MPMFluidSolver::_seed_block(int &r_count) const {
 	const float spacing = dx * 0.5f;
 
-	// Fill spawn_region, centered on the node, clamped to fit inside the domain
-	// (leave a 2-cell margin off the boundary), capped at particle_target.
 	const Vector3 margin = Vector3(dx, dx, dx) * 2.0f;
 	const Vector3 region = settings.spawn_region.clamp(Vector3(spacing, spacing, spacing), settings.domain - margin * 2.0f);
 	const int sx = MAX(1, (int)(region.x / spacing));
@@ -211,22 +613,14 @@ LocalVector<float> MPMFluidSolver::_seed_block(int &r_count) const {
 
 	LocalVector<float> data;
 	data.resize((int64_t)MIN((int64_t)sx * sy * sz, (int64_t)settings.particle_target) * FLOATS_PER_PARTICLE);
-	memset(data.ptr(), 0, data.size() * sizeof(float)); // velocity / C / F start clean
+	memset(data.ptr(), 0, data.size() * sizeof(float));
 	int idx = 0;
 	const int cap = (int)(data.size() / FLOATS_PER_PARTICLE);
-	// y outermost: a fill that runs out of particles before the region is full
-	// then covers the whole footprint at a shallower depth (a low pool / a thin
-	// sand bed), instead of a partial slab banked against one side.
 	for (int yi = 0; yi < sy && idx < cap; yi++) {
 		for (int zi = 0; zi < sz && idx < cap; zi++) {
 			for (int xi = 0; xi < sx && idx < cap; xi++) {
 				Vector3 p = start + Vector3(xi, yi, zi) * spacing;
 				if (settings.granular) {
-					// Break the seed lattice: brick-stagger alternate rows/layers
-					// and jitter hard, so a granular pile has no regular planes to
-					// shear along (they read as visible stripes otherwise). The
-					// stagger is centered (+-) so the block's center of mass does
-					// not drift to one corner.
 					p.x += (float((yi + zi) & 1) - 0.5f) * spacing * 0.5f;
 					p.z += (float(yi & 1) - 0.5f) * spacing * 0.5f;
 					p += Vector3(Math::randf() - 0.5f, Math::randf() - 0.5f, Math::randf() - 0.5f) * spacing;
@@ -275,7 +669,7 @@ void MPMFluidSolver::_pack_params(double p_dt, int p_ncol, PackedByteArray &r_by
 	put_f(64, bmin.x);
 	put_f(68, bmin.y);
 	put_f(72, bmin.z);
-	put_f(76, settings.surface_boost); // per-particle mass multiplier for the isosurface scatter
+	put_f(76, settings.surface_boost);
 	put_f(80, bmax.x);
 	put_f(84, bmax.y);
 	put_f(88, bmax.z);
@@ -285,8 +679,6 @@ void MPMFluidSolver::_pack_params(double p_dt, int p_ncol, PackedByteArray &r_by
 	put_f(104, surf_iso_density);
 	put_f(108, settings.surface_kernel);
 
-	// gran: Drucker-Prager alpha (from the internal friction angle), cohesion,
-	// and the Lame parameters (from Young's modulus at a fixed Poisson 0.3).
 	const float sinp = Math::sin(Math::deg_to_rad(CLAMP(settings.granular_friction_deg, 1.0f, 55.0f)));
 	const float alpha = Math::sqrt(2.0f / 3.0f) * (2.0f * sinp) / (3.0f - sinp);
 	const float E = MAX(settings.granular_hardness, 1.0f);
@@ -307,12 +699,10 @@ void MPMFluidSolver::_pack_colliders(const LocalVector<SphereCollider> &p_collid
 	for (int i = 0; i < n; i++) {
 		const Collider &c = p_colliders[i];
 		uint8_t *o = b + i * FLOATS_PER_COLLIDER * 4;
-		// c0: center, shape
 		encode_float(c.position.x, o + 0);
 		encode_float(c.position.y, o + 4);
 		encode_float(c.position.z, o + 8);
 		encode_float((float)c.shape, o + 12);
-		// c1: shape params
 		Vector3 ext = c.extents;
 		if (c.shape == COLLIDER_PLANE) {
 			ext = ext.normalized();
@@ -321,12 +711,10 @@ void MPMFluidSolver::_pack_colliders(const LocalVector<SphereCollider> &p_collid
 		encode_float(ext.y, o + 20);
 		encode_float(ext.z, o + 24);
 		encode_float(0.0f, o + 28);
-		// c2: velocity
 		encode_float(c.velocity.x, o + 32);
 		encode_float(c.velocity.y, o + 36);
 		encode_float(c.velocity.z, o + 40);
 		encode_float(0.0f, o + 44);
-		// c3: orientation quaternion (identity for sphere / plane)
 		const Quaternion q = c.rotation.normalized();
 		encode_float(q.x, o + 48);
 		encode_float(q.y, o + 52);
@@ -335,50 +723,8 @@ void MPMFluidSolver::_pack_colliders(const LocalVector<SphereCollider> &p_collid
 	}
 }
 
-void MPMFluidSolver::_rebuild_uniform_sets() {
-	RID by_binding[8] = { buf_params, buf_particles, buf_grid_i, buf_grid_v, buf_colliders, buf_cimp, buf_mm, buf_surf };
-	for (int p = 0; p < PASS_MAX; p++) {
-		if (uset[p].is_valid()) {
-			rd->free_rid(uset[p]);
-			uset[p] = RID();
-		}
-		// Every pass includes mpm_fluid_inc.glsl, which declares all eight
-		// bindings -- shader reflection puts them all in the set layout whether
-		// or not a given pass references them, so provide all eight.
-		Vector<RD::Uniform> uniforms;
-		for (int bnd = 0; bnd < 8; bnd++) {
-			RD::Uniform u;
-			u.uniform_type = (bnd == 0) ? RD::UNIFORM_TYPE_UNIFORM_BUFFER : RD::UNIFORM_TYPE_STORAGE_BUFFER;
-			u.binding = bnd;
-			u.append_id(by_binding[bnd]);
-			uniforms.push_back(u);
-		}
-		uset[p] = rd->uniform_set_create(uniforms, shader[p], 0);
-		ERR_FAIL_COND(uset[p].is_null());
-	}
-
-	// The march pass also binds set 1: the mesh output buffers.
-	if (uset_mesh.is_valid()) {
-		rd->free_rid(uset_mesh);
-		uset_mesh = RID();
-	}
-	if (buf_mverts.is_valid()) {
-		Vector<RD::Uniform> m;
-		const RID mesh_bufs[3] = { buf_mverts, buf_mnorms, buf_mcount };
-		for (int b = 0; b < 3; b++) {
-			RD::Uniform u;
-			u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
-			u.binding = b;
-			u.append_id(mesh_bufs[b]);
-			m.push_back(u);
-		}
-		uset_mesh = rd->uniform_set_create(m, shader[PASS_MARCH], 1);
-		ERR_FAIL_COND(uset_mesh.is_null());
-	}
-}
-
 void MPMFluidSolver::configure(const Settings &p_settings, const Transform3D &p_xform, bool p_prefill) {
-	if (rd == nullptr) {
+	if (gpu.is_null()) {
 		return;
 	}
 	settings = p_settings;
@@ -386,76 +732,44 @@ void MPMFluidSolver::configure(const Settings &p_settings, const Transform3D &p_
 	settings.substeps = CLAMP(settings.substeps, 1, 40);
 	domain_xform = p_xform;
 
-	// Stiff granular material needs a tighter substep to stay under CFL; and it
-	// should grip a collider (near-zero tangential slip) so a resting object
-	// does not just shear the grains out from under itself.
 	if (settings.granular) {
 		settings.substeps = MAX(settings.substeps, 12);
 		settings.collider_friction = MAX(settings.collider_friction, 0.85f);
 	}
 
-	_free_buffers();
-	_compute_scales(); // sets grid_dims + node_count
+	_compute_scales();
 	write_head = 0;
 
-	LocalVector<float> pdata;
+	PackedByteArray job_particles;
 	if (p_prefill) {
 		int seeded = 0;
-		pdata = _seed_block(seeded);
+		LocalVector<float> pdata = _seed_block(seeded);
 		capacity = seeded;
 		pcount = seeded;
+		job_particles.resize(pdata.size() * sizeof(float));
+		if (pdata.size() > 0) {
+			memcpy(job_particles.ptrw(), pdata.ptr(), pdata.size() * sizeof(float));
+		}
 	} else {
 		capacity = MAX(settings.particle_target, 1);
-		pdata.resize((int64_t)capacity * FLOATS_PER_PARTICLE);
-		memset(pdata.ptr(), 0, pdata.size() * sizeof(float)); // parked at the origin, PCOUNT keeps them out of the sim
 		pcount = 0;
+		job_particles.resize((int64_t)capacity * FLOATS_PER_PARTICLE * sizeof(float));
+		memset(job_particles.ptrw(), 0, job_particles.size());
 	}
 
 	PackedByteArray params;
 	_pack_params(1.0 / 60.0 / settings.substeps, 0, params);
-	buf_params = rd->uniform_buffer_create(PARAMS_BYTES, params);
 
-	buf_particles = rd->storage_buffer_create(pdata.size() * sizeof(float), Span<uint8_t>((const uint8_t *)pdata.ptr(), pdata.size() * sizeof(float)));
-	buf_grid_i = rd->storage_buffer_create(node_count * 4 * sizeof(int32_t));
-	buf_grid_v = rd->storage_buffer_create(node_count * 4 * sizeof(float));
-
-	PackedByteArray cdata;
-	_pack_colliders(LocalVector<SphereCollider>(), cdata);
-	buf_colliders = rd->storage_buffer_create(cdata.size(), cdata);
-	buf_cimp = rd->storage_buffer_create(MAX_COLLIDERS * 4 * sizeof(int32_t));
-	{
-		PackedByteArray mm_zero;
-		mm_zero.resize(capacity * 12 * sizeof(float));
-		memset(mm_zero.ptrw(), 0, mm_zero.size());
-		buf_mm = rd->storage_buffer_create(mm_zero.size(), mm_zero);
-	}
-	buf_surf = rd->storage_buffer_create(node_count * sizeof(float));
-
-	// Isosurface mesh output (set 1 of the march pass).
-	buf_mverts = rd->storage_buffer_create(TRI_BUDGET * 3 * 4 * sizeof(float)); // vec4 / vertex
-	buf_mnorms = rd->storage_buffer_create(TRI_BUDGET * 3 * 4 * sizeof(float));
-	{
-		PackedByteArray mc;
-		mc.resize(2 * sizeof(uint32_t));
-		encode_uint32(0, mc.ptrw()); // tri_count
-		encode_uint32(TRI_BUDGET, mc.ptrw() + 4); // tri_budget
-		buf_mcount = rd->storage_buffer_create(mc.size(), mc);
-	}
-
-	_rebuild_uniform_sets();
-	built = true;
+	gpu->built.set_to(false);
+	_dispatch(callable_mp(gpu.ptr(), &MPMFluidSolverGPU::rt_build).bind(gpu, params, job_particles, capacity, node_count, (int)TRI_BUDGET));
 }
 
 void MPMFluidSolver::emit(const LocalVector<EmittedParticle> &p_new) {
 	if (!is_available() || p_new.is_empty() || capacity == 0) {
 		return;
 	}
-	// Don't buffer_update the particle store while a step is reading it on the GPU.
-	_reap_submitted();
 	const int n = MIN((int)p_new.size(), capacity);
 
-	// Build the packed particle records (only position + velocity; C and the
-	// density slot start at zero / rest).
 	LocalVector<float> blob;
 	blob.resize((int64_t)n * FLOATS_PER_PARTICLE);
 	memset(blob.ptr(), 0, blob.size() * sizeof(float));
@@ -468,15 +782,17 @@ void MPMFluidSolver::emit(const LocalVector<EmittedParticle> &p_new) {
 		o[4] = p_new[i].velocity.x;
 		o[5] = p_new[i].velocity.y;
 		o[6] = p_new[i].velocity.z;
-		o[20] = o[25] = o[30] = 1.0f; // deformation gradient F = identity
+		o[20] = o[25] = o[30] = 1.0f;
 	}
 
-	const uint32_t stride = FLOATS_PER_PARTICLE * sizeof(float);
+	const int stride = FLOATS_PER_PARTICLE * (int)sizeof(float);
 	const int first = MIN(n, capacity - write_head); // fits before wrapping
-	rd->buffer_update(buf_particles, write_head * stride, first * stride, blob.ptr());
-	if (first < n) {
-		rd->buffer_update(buf_particles, 0, (n - first) * stride, blob.ptr() + first * FLOATS_PER_PARTICLE);
-	}
+
+	PackedByteArray bytes;
+	bytes.resize(n * stride);
+	memcpy(bytes.ptrw(), blob.ptr(), bytes.size());
+	_dispatch(callable_mp(gpu.ptr(), &MPMFluidSolverGPU::rt_emit).bind(gpu, bytes, write_head * stride, first * stride));
+
 	write_head = (write_head + n) % capacity;
 	pcount = MIN(pcount + n, capacity);
 }
@@ -489,168 +805,48 @@ void MPMFluidSolver::step(double p_delta, const LocalVector<SphereCollider> &p_c
 	if (!is_available() || pcount == 0 || p_delta <= 0.0) {
 		return;
 	}
-
-	// Reap the previous frame's GPU work before starting this one.
-	_reap_submitted();
-
-	// MPM_BENCH forces the sync path so get_last_step_msec() reports the real GPU
-	// cost of this step instead of ~0 (async overlap).
-	if (unlikely(OS::get_singleton()->has_environment("MPM_BENCH"))) {
-		p_async = false;
+	if (unlikely(OS::get_singleton()->has_environment("MPM_PROFILE"))) {
+		WARN_PRINT_ONCE("MPM_PROFILE: per-pass timing is unavailable on the shared RenderingDevice (needs submit/sync).");
+		return;
 	}
 
 	const int ncol = MIN((int)p_colliders.size(), MAX_COLLIDERS);
-	const double frame_dt = p_delta;
-	const double dt = frame_dt / (double)settings.substeps;
+	const bool bench = OS::get_singleton()->has_environment("MPM_BENCH");
 
 	PackedByteArray params;
-	_pack_params(dt, ncol, params);
-	rd->buffer_update(buf_params, 0, PARAMS_BYTES, params.ptr());
-
+	_pack_params(p_delta / (double)settings.substeps, ncol, params);
+	PackedByteArray cdata;
 	if (ncol > 0) {
-		PackedByteArray cdata;
 		_pack_colliders(p_colliders, cdata);
-		rd->buffer_update(buf_colliders, 0, cdata.size(), cdata.ptr());
-	}
-	rd->buffer_clear(buf_cimp, 0, MAX_COLLIDERS * 4 * sizeof(int32_t));
-	if (p_want_surface) {
-		rd->buffer_clear(buf_mcount, 0, sizeof(uint32_t)); // reset tri_count, keep tri_budget
-		rd->buffer_clear(buf_surf, 0, node_count * sizeof(int32_t)); // reset the density scatter
 	}
 
-	const uint32_t ng = groups_for(node_count);
-	const uint32_t pg = groups_for(pcount);
-	const int cells = (grid_dims.x - 1) * (grid_dims.y - 1) * (grid_dims.z - 1);
-
-	// MPM_PROFILE: time each pass in isolation (inflated by per-rep submit
-	// overhead -- read the relative costs, not the absolutes), then skip the
-	// real step this frame.
-	if (unlikely(OS::get_singleton()->has_environment("MPM_PROFILE"))) {
-		struct P {
-			const char *name;
-			int pass;
-			uint32_t groups;
-		};
-		const P plist[] = {
-			{ "clear ", PASS_CLEAR, ng }, { "p2g_mass", PASS_P2G_MASS, pg }, { "p2g_mom ", PASS_P2G_MOM, pg },
-			{ "grid  ", PASS_GRID, ng }, { "couple", PASS_COUPLE, ng }, { "g2p   ", PASS_G2P, pg }
-		};
-		const int REP = 40;
-		for (const P &pp : plist) {
-			const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
-			for (int r = 0; r < REP; r++) {
-				RD::ComputeListID pcl = rd->compute_list_begin();
-				rd->compute_list_bind_compute_pipeline(pcl, pipeline[pp.pass]);
-				rd->compute_list_bind_uniform_set(pcl, uset[pp.pass], 0);
-				rd->compute_list_dispatch(pcl, pp.groups, 1, 1);
-				rd->compute_list_end();
-				rd->submit();
-				rd->sync();
-			}
-			const double us = double(OS::get_singleton()->get_ticks_usec() - t0) / REP;
-			print_line(vformat("[mpm-prof] %s  %.3f ms  (x%d subs -> %.3f ms/step)", pp.name, us / 1000.0, settings.substeps, us * settings.substeps / 1000.0));
-		}
-		_submitted = false;
-		return;
-	}
-
-	RD::ComputeListID cl = rd->compute_list_begin();
-	for (int s = 0; s < settings.substeps; s++) {
-		rd->compute_list_bind_compute_pipeline(cl, pipeline[PASS_CLEAR]);
-		rd->compute_list_bind_uniform_set(cl, uset[PASS_CLEAR], 0);
-		rd->compute_list_dispatch(cl, ng, 1, 1);
-		rd->compute_list_add_barrier(cl);
-
-		rd->compute_list_bind_compute_pipeline(cl, pipeline[PASS_P2G_MASS]);
-		rd->compute_list_bind_uniform_set(cl, uset[PASS_P2G_MASS], 0);
-		rd->compute_list_dispatch(cl, pg, 1, 1);
-		rd->compute_list_add_barrier(cl);
-
-		rd->compute_list_bind_compute_pipeline(cl, pipeline[PASS_P2G_MOM]);
-		rd->compute_list_bind_uniform_set(cl, uset[PASS_P2G_MOM], 0);
-		rd->compute_list_dispatch(cl, pg, 1, 1);
-		rd->compute_list_add_barrier(cl);
-
-		rd->compute_list_bind_compute_pipeline(cl, pipeline[PASS_GRID]);
-		rd->compute_list_bind_uniform_set(cl, uset[PASS_GRID], 0);
-		rd->compute_list_dispatch(cl, ng, 1, 1);
-		rd->compute_list_add_barrier(cl);
-
-		if (ncol > 0) {
-			rd->compute_list_bind_compute_pipeline(cl, pipeline[PASS_COUPLE]);
-			rd->compute_list_bind_uniform_set(cl, uset[PASS_COUPLE], 0);
-			rd->compute_list_dispatch(cl, ng, 1, 1);
-			rd->compute_list_add_barrier(cl);
-		}
-
-		rd->compute_list_bind_compute_pipeline(cl, pipeline[PASS_G2P]);
-		rd->compute_list_bind_uniform_set(cl, uset[PASS_G2P], 0);
-		rd->compute_list_dispatch(cl, pg, 1, 1);
-		rd->compute_list_add_barrier(cl);
-	}
-	if (p_want_surface) {
-		rd->compute_list_bind_compute_pipeline(cl, pipeline[PASS_SURFACE]);
-		rd->compute_list_bind_uniform_set(cl, uset[PASS_SURFACE], 0);
-		rd->compute_list_dispatch(cl, pg, 1, 1); // one thread per particle (SPH scatter)
-		rd->compute_list_add_barrier(cl);
-
-		rd->compute_list_bind_compute_pipeline(cl, pipeline[PASS_MARCH]);
-		rd->compute_list_bind_uniform_set(cl, uset[PASS_MARCH], 0);
-		rd->compute_list_bind_uniform_set(cl, uset_mesh, 1);
-		rd->compute_list_dispatch(cl, groups_for(cells), 1, 1);
-		rd->compute_list_add_barrier(cl);
-	}
-	rd->compute_list_bind_compute_pipeline(cl, pipeline[PASS_RENDER]);
-	rd->compute_list_bind_uniform_set(cl, uset[PASS_RENDER], 0);
-	rd->compute_list_dispatch(cl, pg, 1, 1);
-	rd->compute_list_end();
-
-	rd->submit();
-	_submitted = true;
-	_submitted_ncol = ncol;
-
-	if (!p_async) {
-		// Sync now: the caller needs this step's reaction impulse in phase with
-		// the physics tick (fluid coupling). Costs the stall.
-		_reap_submitted();
-	}
-
-	// Hand back the reaped impulses -- this step's (sync) or the previous step's
-	// (async, still in flight).
+	// Hand back the reaped impulses and consume them: each readback carries one
+	// step's accumulated reaction and must be applied exactly once. Frames where
+	// no readback has landed yet apply nothing (rather than re-applying a stale
+	// batch, which double-counts momentum and diverges a buoyancy spring).
 	if (r_impulses != nullptr) {
-		*r_impulses = _imp_cache;
+		MutexLock lock(gpu->cache_mtx);
+		*r_impulses = gpu->imp_cache;
+		gpu->imp_cache.clear();
 	}
+
+	_dispatch(callable_mp(gpu.ptr(), &MPMFluidSolverGPU::rt_step).bind(gpu, params, cdata, ncol, pcount, node_count, grid_dims, settings.substeps, p_want_surface, bench));
 }
 
-// Wait on the previously-submitted compute work (done by now -- a full frame has
-// passed) and cache the render buffer + collider impulses.
-void MPMFluidSolver::_reap_submitted() const {
-	if (!_submitted) {
-		return;
+double MPMFluidSolver::get_last_step_msec() const {
+	if (gpu.is_null()) {
+		return 0.0;
 	}
-	const uint64_t t0 = OS::get_singleton()->get_ticks_usec();
-	rd->sync();
-	last_step_usec = OS::get_singleton()->get_ticks_usec() - t0; // GPU wait for the last step's compute
-	_submitted = false;
-
-	Vector<uint8_t> mm = rd->buffer_get_data(buf_mm);
-	_mm_cache.resize(capacity * 12);
-	memcpy(_mm_cache.ptrw(), mm.ptr(), MIN((int)mm.size(), (int)(capacity * 12 * sizeof(float))));
-
-	_imp_cache.clear();
-	if (_submitted_ncol > 0) {
-		Vector<uint8_t> raw = rd->buffer_get_data(buf_cimp, 0, _submitted_ncol * 4 * sizeof(int32_t));
-		const int32_t *ci = (const int32_t *)raw.ptr();
-		for (int i = 0; i < _submitted_ncol; i++) {
-			_imp_cache.push_back(Vector3(ci[i * 4 + 0], ci[i * 4 + 1], ci[i * 4 + 2]) / IMP_FIXED);
-		}
-	}
+	MutexLock lock(gpu->cache_mtx);
+	return gpu->last_step_usec / 1000.0;
 }
 
 PackedFloat32Array MPMFluidSolver::get_multimesh_buffer() const {
-	// Cached from the last reaped step -- no readback here. Full-capacity buffer
-	// (MultiMesh::set_buffer wants every slot); the caller only shows `pcount`.
-	return _mm_cache;
+	if (gpu.is_null()) {
+		return PackedFloat32Array();
+	}
+	MutexLock lock(gpu->cache_mtx);
+	return gpu->mm_cache;
 }
 
 PackedVector3Array MPMFluidSolver::get_positions() const {
@@ -658,42 +854,30 @@ PackedVector3Array MPMFluidSolver::get_positions() const {
 	if (!is_available() || pcount == 0) {
 		return out;
 	}
-	_reap_submitted(); // no reading a buffer with a step still on the GPU
-	Vector<uint8_t> raw = rd->buffer_get_data(buf_particles);
-	const float *f = (const float *)raw.ptr();
-	out.resize(pcount);
-	for (int i = 0; i < pcount; i++) {
-		const float *o = f + i * FLOATS_PER_PARTICLE;
-		out.write[i] = Vector3(o[0], o[1], o[2]);
+	gpu->pos_ready.clear();
+	_dispatch(callable_mp(gpu.ptr(), &MPMFluidSolverGPU::rt_read_positions).bind(gpu, pcount));
+	if (!gpu->local) {
+		RenderingServer::get_singleton()->sync(); // wait for the render thread to fill pos_cache
 	}
-	return out;
+	MutexLock lock(gpu->cache_mtx);
+	return gpu->pos_cache;
 }
 
 int MPMFluidSolver::get_surface_mesh(PackedVector3Array &r_vertices, PackedVector3Array &r_normals) const {
 	r_vertices.clear();
 	r_normals.clear();
-	if (!is_available() || buf_mcount.is_null()) {
+	if (gpu.is_null()) {
 		return 0;
 	}
-	_reap_submitted();
-	Vector<uint8_t> cnt = rd->buffer_get_data(buf_mcount, 0, sizeof(uint32_t));
-	if (cnt.size() < (int)sizeof(uint32_t)) {
+	MutexLock lock(gpu->cache_mtx);
+	const int tris = gpu->surf_tris_cache;
+	const int verts = tris * 3;
+	if (tris <= 0 || gpu->surf_verts_cache.size() < verts || gpu->surf_norms_cache.size() < verts) {
 		return 0;
 	}
-	const uint32_t tris = MIN(decode_uint32(cnt.ptr()), TRI_BUDGET);
-	if (tris == 0) {
-		return 0;
-	}
-	const uint32_t verts = tris * 3;
-	Vector<uint8_t> vraw = rd->buffer_get_data(buf_mverts, 0, verts * 4 * sizeof(float));
-	Vector<uint8_t> nraw = rd->buffer_get_data(buf_mnorms, 0, verts * 4 * sizeof(float));
-	const float *vf = (const float *)vraw.ptr();
-	const float *nf = (const float *)nraw.ptr();
 	r_vertices.resize(verts);
 	r_normals.resize(verts);
-	for (uint32_t i = 0; i < verts; i++) {
-		r_vertices.write[i] = Vector3(vf[i * 4 + 0], vf[i * 4 + 1], vf[i * 4 + 2]);
-		r_normals.write[i] = Vector3(nf[i * 4 + 0], nf[i * 4 + 1], nf[i * 4 + 2]);
-	}
-	return (int)tris;
+	memcpy(r_vertices.ptrw(), gpu->surf_verts_cache.ptr(), verts * sizeof(Vector3));
+	memcpy(r_normals.ptrw(), gpu->surf_norms_cache.ptr(), verts * sizeof(Vector3));
+	return tris;
 }

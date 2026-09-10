@@ -85,10 +85,26 @@ _mpm_glsl = (
     "mpm_march.glsl",
     "mpm_render.glsl",
 )
+_mpm_bs_glsl = (
+    "mpm_bs_clear.glsl",
+    "mpm_bs_binsert.glsl",
+    "mpm_bs_bdispatch.glsl",
+    "mpm_bs_clearnodes.glsl",
+    "mpm_bs_p2g_mass.glsl",
+    "mpm_bs_p2g_mom.glsl",
+    "mpm_bs_grid.glsl",
+    "mpm_bs_couple.glsl",
+    "mpm_bs_g2p.glsl",
+    "mpm_bs_render.glsl",
+)
 _mpm_glsl_dep = [os.path.join("particles", "mpm_fluid_inc.glsl"), "#glsl_builders.py"]
+_mpm_bs_glsl_dep = [os.path.join("particles", "mpm_block_inc.glsl"), "#glsl_builders.py"]
 for _glsl in _mpm_glsl:
     env_physx.GLSL_HEADER(os.path.join("particles", _glsl))
     env_physx.Depends(os.path.join("particles", _glsl + ".gen.h"), _mpm_glsl_dep)
+for _glsl in _mpm_bs_glsl:
+    env_physx.GLSL_HEADER(os.path.join("particles", _glsl))
+    env_physx.Depends(os.path.join("particles", _glsl + ".gen.h"), _mpm_bs_glsl_dep)
 
 # Godot source files
 module_obj = []

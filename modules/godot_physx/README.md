@@ -288,10 +288,12 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   (a PhysX capsule/sphere can't be an ellipsoid), again matching Jolt. Changing
   a body's scale at runtime re-cooks its shapes.
 - **`PhysicalBone3D`** (physics-driven skeleton bones / ragdolls) simulates —
-  bodies, joints and the per-step transform sync all work — but the joint
-  softness / bias / relaxation parameters and `omit_force_integration` are not
-  mapped, so joint stiffness can't be tuned and the animated-to-simulated blend
-  is approximate. `SkeletonModifier3D` spring bones (`SpringBoneSimulator3D`,
+  bodies, joints, `omit_force_integration` (Custom Integrator bones / active
+  ragdolls) and the per-step transform sync all work. The Bullet-era joint
+  softness / bias / relaxation / ERP parameters are ignored (as they are on
+  Jolt), so joint stiffness itself can't be dialed in; PhysX's `PxD6` cone
+  defaults sit a little softer than Jolt's. `SkeletonModifier3D` spring bones
+  (`SpringBoneSimulator3D`,
   for hair and clothing) are engine-side and unaffected — they work identically
   on any backend.
 - **Cylinder shapes** are approximated by a 16-sided convex prism.

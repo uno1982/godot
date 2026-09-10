@@ -101,6 +101,19 @@ private:
 	Callable body_state_callback;
 	GodotPhysXDirectBodyState3D *direct_state = nullptr;
 
+	// The node integrates its own forces: suppress the built-in gravity/damping
+	// integration and invoke fi_callback once per step instead (Custom Integrator
+	// bodies, active ragdolls).
+	bool omit_force_integration = false;
+	Callable fi_callback;
+	Variant fi_userdata;
+
+	// PhysicsServer3D::BodyDampMode -- COMBINE adds an overriding area's damp on
+	// top of this body's own, REPLACE overrides it. Stored so the value round
+	// trips; only consulted by the area-override path.
+	PhysicsServer3D::BodyDampMode linear_damp_mode = PhysicsServer3D::BODY_DAMP_MODE_COMBINE;
+	PhysicsServer3D::BodyDampMode angular_damp_mode = PhysicsServer3D::BODY_DAMP_MODE_COMBINE;
+
 	int max_contacts_reported = 0;
 	LocalVector<Contact> contacts;
 
@@ -178,6 +191,15 @@ public:
 	const Contact &get_contact(int p_idx) const { return contacts[p_idx]; }
 
 	void set_state_sync_callback(const Callable &p_callable) { body_state_callback = p_callable; }
+
+	void set_omit_force_integration(bool p_enable);
+	bool is_omitting_force_integration() const { return omit_force_integration; }
+	void set_force_integration_callback(const Callable &p_callable, const Variant &p_udata);
+	// Called by the space before simulate() while omit_force_integration is set.
+	void call_force_integration();
+
+	PhysicsServer3D::BodyDampMode get_linear_damp_mode() const { return linear_damp_mode; }
+	PhysicsServer3D::BodyDampMode get_angular_damp_mode() const { return angular_damp_mode; }
 
 	// Called by the space after fetchResults(): pull the simulated pose/velocity
 	// back onto this wrapper.

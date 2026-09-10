@@ -21,7 +21,7 @@ void main() {
 
 	ivec3 base_bc = base >> 2;
 	int bs[8];
-	resolve_blocks(base_bc, bs);
+	resolve_blocks(base_bc, (base + 2) >> 2, bs);
 
 	vec3 new_v = vec3(0.0);
 	mat3 new_C = mat3(0.0);

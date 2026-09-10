@@ -165,12 +165,25 @@ int block_lookup(ivec3 bc) {
 }
 
 // Resolve the 8 corner blocks of a particle's stencil (base .. base+2) into pool
-// slots. bs[dz*4 + dy*2 + dx]. Redundant when the stencil fits in one block.
-void resolve_blocks(ivec3 base_bc, out int bs[8]) {
+// slots. bs[dz*4 + dy*2 + dx]. The stencil crosses a block boundary on an axis
+// only when top_bc != base_bc there, so most particles span 1-2 distinct blocks;
+// dedup the hash lookups down to that count instead of always probing 8.
+void resolve_blocks(ivec3 base_bc, ivec3 top_bc, out int bs[8]) {
+	bvec3 split = notEqual(top_bc, base_bc);
+	int cache[8];
+	bool have[8] = bool[8](false, false, false, false, false, false, false, false);
 	for (int dz = 0; dz < 2; dz++) {
 		for (int dy = 0; dy < 2; dy++) {
 			for (int dx = 0; dx < 2; dx++) {
-				bs[dz * 4 + dy * 2 + dx] = block_lookup(base_bc + ivec3(dx, dy, dz));
+				int ix = split.x ? dx : 0;
+				int iy = split.y ? dy : 0;
+				int iz = split.z ? dz : 0;
+				int key = iz * 4 + iy * 2 + ix;
+				if (!have[key]) {
+					cache[key] = block_lookup(base_bc + ivec3(ix, iy, iz));
+					have[key] = true;
+				}
+				bs[dz * 4 + dy * 2 + dx] = cache[key];
 			}
 		}
 	}

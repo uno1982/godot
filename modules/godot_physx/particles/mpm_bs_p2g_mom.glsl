@@ -25,7 +25,7 @@ void main() {
 
 	ivec3 base_bc = base >> 2;
 	int bs[8];
-	resolve_blocks(base_bc, bs);
+	resolve_blocks(base_bc, (base + 2) >> 2, bs);
 
 	float mass_here = 0.0;
 	for (int i = 0; i < 3; i++) {

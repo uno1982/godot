@@ -144,11 +144,15 @@ void PhysXParticleFluid3D::_mpm_configure(bool p_prefill) {
 	_mpm_surface_params(s.surface_iso, s.surface_kernel, s.surface_boost);
 
 	mpm->configure(s, get_global_transform(), p_prefill);
-	_mpm_configured = mpm->is_available();
+	// The GPU build runs on the render thread; is_available() only flips true a
+	// frame or two later. Capacity is known synchronously, so treat "configure
+	// requested" as configured and let the per-step is_available() guards handle
+	// the warm-up.
+	_mpm_configured = mpm->has_device() && mpm->get_capacity() > 0;
 
 	// Size the MultiMesh to the buffer capacity (prefill: the seeded slab count;
 	// emit: particle_count).
-	if (multimesh.is_valid() && mpm->is_available()) {
+	if (multimesh.is_valid() && mpm->get_capacity() > 0) {
 		RenderingServer *rs = RenderingServer::get_singleton();
 		rs->multimesh_allocate_data(multimesh, mpm->get_capacity(), RSE::MULTIMESH_TRANSFORM_3D);
 		rs->multimesh_set_mesh(multimesh, particle_mesh->get_rid());

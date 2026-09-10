@@ -612,10 +612,28 @@ int GodotPhysXServer3D::body_get_max_contacts_reported(RID p_body) const {
 	return body->get_max_contacts_reported();
 }
 
+void GodotPhysXServer3D::body_set_omit_force_integration(RID p_body, bool p_omit) {
+	GodotPhysXBody3D *body = body_owner.get_or_null(p_body);
+	ERR_FAIL_NULL(body);
+	body->set_omit_force_integration(p_omit);
+}
+
+bool GodotPhysXServer3D::body_is_omitting_force_integration(RID p_body) const {
+	GodotPhysXBody3D *body = body_owner.get_or_null(p_body);
+	ERR_FAIL_NULL_V(body, false);
+	return body->is_omitting_force_integration();
+}
+
 void GodotPhysXServer3D::body_set_state_sync_callback(RID p_body, const Callable &p_callable) {
 	GodotPhysXBody3D *body = body_owner.get_or_null(p_body);
 	ERR_FAIL_NULL(body);
 	body->set_state_sync_callback(p_callable);
+}
+
+void GodotPhysXServer3D::body_set_force_integration_callback(RID p_body, const Callable &p_callable, const Variant &p_udata) {
+	GodotPhysXBody3D *body = body_owner.get_or_null(p_body);
+	ERR_FAIL_NULL(body);
+	body->set_force_integration_callback(p_callable, p_udata);
 }
 
 PhysicsDirectBodyState3D *GodotPhysXServer3D::body_get_direct_state(RID p_body) {
@@ -683,7 +701,10 @@ void GodotPhysXServer3D::joint_make_pin(RID p_joint, RID p_body_A, const Vector3
 	joint->make_pin(body_owner.get_or_null(p_body_A), p_local_A, body_owner.get_or_null(p_body_B), p_local_B);
 }
 
-void GodotPhysXServer3D::pin_joint_set_param(RID p_joint, PinJointParam p_param, real_t p_value) {}
+void GodotPhysXServer3D::pin_joint_set_param(RID p_joint, PinJointParam p_param, real_t p_value) {
+	// Bullet-era bias / damping / impulse clamp -- unsupported here, as in Jolt.
+	WARN_PRINT_ONCE("PhysX: pin joint parameters are not supported and will be ignored.");
+}
 real_t GodotPhysXServer3D::pin_joint_get_param(RID p_joint, PinJointParam p_param) const {
 	return 0.0;
 }

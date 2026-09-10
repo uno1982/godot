@@ -303,6 +303,12 @@ void GodotPhysXSpace3D::step(real_t p_step) {
 		body->clear_contacts();
 	}
 
+	// Bodies that integrate their own forces run their callback before the solve,
+	// in place of the built-in gravity/damping/area integration.
+	for (GodotPhysXBody3D *body : force_integrators) {
+		body->call_force_integration();
+	}
+
 	_apply_area_overrides();
 
 	px_scene->simulate((PxReal)p_step);
@@ -374,6 +380,9 @@ void GodotPhysXSpace3D::_apply_area_overrides() {
 			GodotPhysXBody3D *body = E.key;
 			if (body->get_mode() != PhysicsServer3D::BODY_MODE_RIGID && body->get_mode() != PhysicsServer3D::BODY_MODE_RIGID_LINEAR) {
 				continue;
+			}
+			if (body->is_omitting_force_integration()) {
+				continue; // the node's own callback is the only force source
 			}
 			affected[body].push_back(area);
 		}

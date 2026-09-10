@@ -393,7 +393,9 @@ void GodotPhysXJoint3D::set_hinge_param(PhysicsServer3D::HingeJointParam p_param
 			hinge_motor_max_impulse = p_value;
 			break;
 		default:
-			break; // bias / softness / relaxation not mapped
+			// Bullet-era bias / softness / relaxation -- unsupported here, as in Jolt.
+			WARN_PRINT_ONCE("PhysX: this hinge joint parameter is not supported and will be ignored.");
+			break;
 	}
 	_apply_params();
 }
@@ -439,6 +441,9 @@ void GodotPhysXJoint3D::set_slider_param(PhysicsServer3D::SliderJointParam p_par
 		slider_lower = p_value;
 	} else if (p_param == PhysicsServer3D::SLIDER_JOINT_LINEAR_LIMIT_UPPER) {
 		slider_upper = p_value;
+	} else {
+		// Bullet-era softness / restitution / damping -- unsupported here, as in Jolt.
+		WARN_PRINT_ONCE("PhysX: this slider joint parameter is not supported and will be ignored.");
 	}
 	_apply_params();
 }
@@ -460,6 +465,9 @@ void GodotPhysXJoint3D::set_cone_twist_param(PhysicsServer3D::ConeTwistJointPara
 		cone_swing = CLAMP(p_value, (real_t)0.01, (real_t)Math::PI);
 	} else if (p_param == PhysicsServer3D::CONE_TWIST_JOINT_TWIST_SPAN) {
 		cone_twist = CLAMP(p_value, (real_t)0.01, (real_t)Math::PI);
+	} else {
+		// Bullet-era bias / softness / relaxation -- unsupported here, as in Jolt.
+		WARN_PRINT_ONCE("PhysX: this cone-twist joint parameter is not supported and will be ignored.");
 	}
 	_apply_params();
 }
@@ -522,7 +530,9 @@ void GodotPhysXJoint3D::set_6dof_param(Vector3::Axis p_axis, PhysicsServer3D::G6
 			ax.ang_spring_eq = p_value;
 			break;
 		default:
-			break; // softness / restitution / ERP not mapped
+			// Bullet-era softness / restitution / ERP / damping -- unsupported here, as in Jolt.
+			WARN_PRINT_ONCE("PhysX: this Generic6DOF joint parameter is not supported and will be ignored.");
+			break;
 	}
 	_apply_params();
 }

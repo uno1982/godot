@@ -160,7 +160,7 @@ void GodotPhysXBody3D::_build_actor() {
 			// volume isn't ~1 m^3 (it only looked right for unit-sized shapes,
 			// where mass and density are numerically the same).
 			PxRigidBodyExt::setMassAndUpdateInertia(*dyn, mass > 0.0 ? (PxReal)mass : 1.0f);
-			dyn->setActorFlag(PxActorFlag::eDISABLE_GRAVITY, gravity_scale == 0.0);
+			dyn->setActorFlag(PxActorFlag::eDISABLE_GRAVITY, gravity_scale == 0.0 || omit_force_integration);
 			dyn->setSleepThreshold((PxReal)space->get_sleep_energy_threshold());
 			dyn->setWakeCounter((PxReal)space->get_time_before_sleep());
 			if (!can_sleep || !GodotPhysXProjectSettings::allow_sleep) {
@@ -200,6 +200,9 @@ void GodotPhysXBody3D::set_space(GodotPhysXSpace3D *p_space) {
 		space->register_body(this);
 		if (reports_contacts()) {
 			space->set_body_contact_reporting(this, true);
+		}
+		if (omit_force_integration) {
+			space->set_body_force_integrator(this, true);
 		}
 		_build_actor();
 	}
@@ -302,8 +305,14 @@ void GodotPhysXBody3D::set_param(PhysicsServer3D::BodyParameter p_param, const V
 		case PhysicsServer3D::BODY_PARAM_ANGULAR_DAMP:
 			angular_damp = p_value;
 			break;
+		case PhysicsServer3D::BODY_PARAM_LINEAR_DAMP_MODE:
+			linear_damp_mode = (PhysicsServer3D::BodyDampMode)(int)p_value;
+			break;
+		case PhysicsServer3D::BODY_PARAM_ANGULAR_DAMP_MODE:
+			angular_damp_mode = (PhysicsServer3D::BodyDampMode)(int)p_value;
+			break;
 		default:
-			// Damp modes, inertia and center-of-mass overrides not handled yet.
+			// Inertia and center-of-mass overrides not handled yet.
 			break;
 	}
 
@@ -342,6 +351,10 @@ Variant GodotPhysXBody3D::get_param(PhysicsServer3D::BodyParameter p_param) cons
 			return linear_damp;
 		case PhysicsServer3D::BODY_PARAM_ANGULAR_DAMP:
 			return angular_damp;
+		case PhysicsServer3D::BODY_PARAM_LINEAR_DAMP_MODE:
+			return linear_damp_mode;
+		case PhysicsServer3D::BODY_PARAM_ANGULAR_DAMP_MODE:
+			return angular_damp_mode;
 		default:
 			return 0.0;
 	}
@@ -444,8 +457,48 @@ void GodotPhysXBody3D::_apply_damping() {
 		return;
 	}
 	if (PxRigidBody *rb = px_actor->is<PxRigidBody>()) {
-		rb->setLinearDamping((PxReal)MAX(linear_damp, 0.0));
-		rb->setAngularDamping((PxReal)MAX(angular_damp, 0.0));
+		// A body integrating its own forces must not also be damped by the solver.
+		const bool omit = omit_force_integration;
+		rb->setLinearDamping((PxReal)(omit ? 0.0 : MAX(linear_damp, 0.0)));
+		rb->setAngularDamping((PxReal)(omit ? 0.0 : MAX(angular_damp, 0.0)));
+	}
+}
+
+void GodotPhysXBody3D::set_omit_force_integration(bool p_enable) {
+	if (omit_force_integration == p_enable) {
+		return;
+	}
+	omit_force_integration = p_enable;
+	if (px_actor) {
+		if (PxRigidDynamic *dyn = px_actor->is<PxRigidDynamic>()) {
+			dyn->setActorFlag(PxActorFlag::eDISABLE_GRAVITY, gravity_scale == 0.0 || p_enable);
+		}
+		_apply_damping();
+	}
+	if (space) {
+		space->set_body_force_integrator(this, p_enable);
+	}
+}
+
+void GodotPhysXBody3D::set_force_integration_callback(const Callable &p_callable, const Variant &p_udata) {
+	fi_callback = p_callable;
+	fi_userdata = p_udata;
+}
+
+void GodotPhysXBody3D::call_force_integration() {
+	if (!omit_force_integration || !fi_callback.is_valid()) {
+		return;
+	}
+	GodotPhysXDirectBodyState3D *state = get_direct_state();
+	Variant s = state;
+	Variant ret;
+	Callable::CallError ce;
+	if (fi_userdata.get_type() != Variant::NIL) {
+		const Variant *args[2] = { &s, &fi_userdata };
+		fi_callback.callp(args, 2, ret, ce);
+	} else {
+		const Variant *args[1] = { &s };
+		fi_callback.callp(args, 1, ret, ce);
 	}
 }
 

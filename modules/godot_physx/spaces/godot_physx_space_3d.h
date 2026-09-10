@@ -80,6 +80,7 @@ class GodotPhysXSpace3D {
 	HashSet<GodotPhysXCloth3D *> cloths;
 	HashSet<GodotPhysXSoftBody3D *> soft_bodies;
 	LocalVector<GodotPhysXBody3D *> sync_bodies; // to notify in the next call_queries()
+	HashSet<GodotPhysXBody3D *> force_integrators; // bodies driving their own _integrate_forces
 
 public:
 	void set_self(const RID &p_self) { self = p_self; }
@@ -110,6 +111,15 @@ public:
 		awake_bodies.erase(p_body);
 		contact_reporters.erase(p_body);
 		sync_bodies.erase(p_body);
+		force_integrators.erase(p_body);
+	}
+
+	void set_body_force_integrator(GodotPhysXBody3D *p_body, bool p_enabled) {
+		if (p_enabled) {
+			force_integrators.insert(p_body);
+		} else {
+			force_integrators.erase(p_body);
+		}
 	}
 
 	void set_body_contact_reporting(GodotPhysXBody3D *p_body, bool p_enabled) {

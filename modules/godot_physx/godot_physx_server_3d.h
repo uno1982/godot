@@ -188,7 +188,11 @@ public:
 	virtual void body_set_max_contacts_reported(RID p_body, int p_contacts) override;
 	virtual int body_get_max_contacts_reported(RID p_body) const override;
 
+	virtual void body_set_omit_force_integration(RID p_body, bool p_omit) override;
+	virtual bool body_is_omitting_force_integration(RID p_body) const override;
+
 	virtual void body_set_state_sync_callback(RID p_body, const Callable &p_callable) override;
+	virtual void body_set_force_integration_callback(RID p_body, const Callable &p_callable, const Variant &p_udata = Variant()) override;
 	virtual PhysicsDirectBodyState3D *body_get_direct_state(RID p_body) override;
 
 	virtual bool body_test_motion(RID p_body, const MotionParameters &p_parameters, MotionResult *r_result = nullptr) override;

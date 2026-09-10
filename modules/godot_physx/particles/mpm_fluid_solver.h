@@ -77,6 +77,18 @@ public:
 		PASS_SURFACE,
 		PASS_MARCH,
 		PASS_RENDER,
+		// Block-sparse fluid path (mpm_bs_*.glsl). Fluid only; granular uses the
+		// dense passes above.
+		PASS_BS_CLEAR,
+		PASS_BS_BINSERT,
+		PASS_BS_BDISPATCH,
+		PASS_BS_CLEARNODES,
+		PASS_BS_P2G_MASS,
+		PASS_BS_P2G_MOM,
+		PASS_BS_GRID,
+		PASS_BS_COUPLE,
+		PASS_BS_G2P,
+		PASS_BS_RENDER,
 		PASS_MAX };
 
 	RenderingDevice *rd = nullptr;
@@ -102,9 +114,16 @@ public:
 	RID buf_mverts;
 	RID buf_mnorms;
 	RID buf_mcount;
+	RID buf_bhash; // block-sparse: block keys (open addressing)
+	RID buf_bhash_val; // hash slot -> block-pool slot
+	RID buf_bkey; // block key per block-pool slot
+	RID buf_bcounts; // [0] active blocks, [1..3] indirect dispatch (needs DISPATCH_INDIRECT usage)
 
+	bool block_sparse = false; // this build uses the mpm_bs_* passes (fluid, boundless-capable)
 	int capacity = 0;
-	int node_count = 0;
+	int node_count = 0; // dense: grid cells. block-sparse: cells in the M-b1 box (BC reference)
+	int max_blocks = 0; // block-sparse: block-pool capacity
+	int hash_slots = 0; // block-sparse: hash table size (pow2)
 	int tri_budget = 0;
 
 	// Readback caches. cache_mtx guards all of them.
@@ -122,7 +141,7 @@ public:
 	// Every call binds a Ref to this object (p_self) so it outlives work in
 	// flight; args are individually Variant-marshalled (no struct payloads).
 	void rt_compile(Ref<MPMFluidSolverGPU> p_self);
-	void rt_build(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p_params, PackedByteArray p_particles, int p_capacity, int p_node_count, int p_tri_budget);
+	void rt_build(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p_params, PackedByteArray p_particles, int p_capacity, int p_node_count, int p_tri_budget, bool p_block_sparse, int p_max_blocks, int p_hash_slots);
 	void rt_step(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p_params, PackedByteArray p_colliders, int p_ncol, int p_pcount, int p_node_count, Vector3i p_grid_dims, int p_substeps, bool p_want_surface, bool p_bench);
 	void rt_emit(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p_blob, int p_head_bytes, int p_first_bytes);
 	void rt_read_positions(Ref<MPMFluidSolverGPU> p_self, int p_count);
@@ -255,6 +274,8 @@ private:
 	int capacity = 0; // particle-buffer slots
 	int write_head = 0; // next slot emit() overwrites once full
 	int node_count = 0;
+	int max_blocks = 0; // block-sparse fluid path
+	int hash_slots = 0;
 	Vector3i grid_dims; // per-axis cell count (domain can be non-cube; dx is uniform)
 	float dx = 0.0f;
 	float pmass = 0.0f;

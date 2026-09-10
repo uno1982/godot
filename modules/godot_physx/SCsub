@@ -70,7 +70,11 @@ if env["platform"] == "windows":
     env.Append(LINKFLAGS=[x + ".lib" for x in physx_libs])
 
 # MLS-MPM compute-fluid shaders (cross-vendor fallback for the PhysX GPU path).
-for _glsl in (
+# Every pass #include's mpm_fluid_inc.glsl, which GLSL_HEADER does not see, so
+# bind the dependency to each .gen.h target *by name* (a Glob here only catches
+# headers that already exist -- editing the include would then not regenerate a
+# fresh checkout, and, worse, an incremental build silently runs stale shaders).
+_mpm_glsl = (
     "mpm_clear.glsl",
     "mpm_p2g_mass.glsl",
     "mpm_p2g_mom.glsl",
@@ -80,12 +84,11 @@ for _glsl in (
     "mpm_surface.glsl",
     "mpm_march.glsl",
     "mpm_render.glsl",
-):
-    env_physx.GLSL_HEADER(os.path.join("particles", _glsl))
-env_physx.Depends(
-    Glob("particles/*.glsl.gen.h"),
-    [os.path.join("particles", "mpm_fluid_inc.glsl"), "#glsl_builders.py"],
 )
+_mpm_glsl_dep = [os.path.join("particles", "mpm_fluid_inc.glsl"), "#glsl_builders.py"]
+for _glsl in _mpm_glsl:
+    env_physx.GLSL_HEADER(os.path.join("particles", _glsl))
+    env_physx.Depends(os.path.join("particles", _glsl + ".gen.h"), _mpm_glsl_dep)
 
 # Godot source files
 module_obj = []

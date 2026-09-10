@@ -120,6 +120,9 @@ uint hash_u32(uint k) {
 
 // Register a block, claiming a pool slot on first sight. Idempotent.
 void block_touch(ivec3 bc) {
+	if (bcounts[0] >= MAXB) {
+		return; // pool full -- stop inserting (over-spread degrades locally, not a probe-walk cliff)
+	}
 	uint key = pack_block(bc);
 	uint h = hash_u32(key) & HMASK;
 	for (uint t = 0u; t < PROBE_MAX; t++) {

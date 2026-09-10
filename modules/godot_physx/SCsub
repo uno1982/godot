@@ -95,6 +95,8 @@ _mpm_bs_glsl = (
     "mpm_bs_grid.glsl",
     "mpm_bs_couple.glsl",
     "mpm_bs_g2p.glsl",
+    "mpm_bs_surface.glsl",
+    "mpm_bs_march.glsl",
     "mpm_bs_render.glsl",
 )
 _mpm_glsl_dep = [os.path.join("particles", "mpm_fluid_inc.glsl"), "#glsl_builders.py"]

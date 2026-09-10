@@ -63,15 +63,21 @@ void main() {
 		}
 	}
 
-	// M-b1 keeps the domain box.
-	vec3 lo = bmin.xyz + DX * 1.5;
-	vec3 hi = bmax.xyz - DX * 1.5;
-	if (x.x < lo.x) { x.x = lo.x; new_v.x *= -0.2; }
-	if (x.y < lo.y) { x.y = lo.y; new_v.y *= -0.2; }
-	if (x.z < lo.z) { x.z = lo.z; new_v.z *= -0.2; }
-	if (x.x > hi.x) { x.x = hi.x; new_v.x *= -0.2; }
-	if (x.y > hi.y) { x.y = hi.y; new_v.y *= -0.2; }
-	if (x.z > hi.z) { x.z = hi.z; new_v.z *= -0.2; }
+	// Boundless: implicit floor at the anchor (matches the grid BC), no walls.
+	float floor_y = ORIGIN.y + DX * 1.5;
+	if (x.y < floor_y) { x.y = floor_y; new_v.y *= -0.2; }
+
+	// Sanitise a diverged particle and keep it inside the packed-key range
+	// (+-500 blocks = +-2000 cells) so a runaway can't wrap a key onto occupied
+	// space far away.
+	vec3 far = vec3(1950.0) * DX;
+	if (!all(equal(x, x)) || any(greaterThan(abs(x - ORIGIN), far))) {
+		x = clamp(x, ORIGIN - far, ORIGIN + far);
+		if (!all(equal(x, x))) {
+			x = ORIGIN;
+		}
+		new_v = vec3(0.0);
+	}
 
 	particles[id].x_d = vec4(x, p.x_d.w);
 	particles[id].v = vec4(new_v, 0.0);

@@ -271,6 +271,7 @@ private:
 
 	Settings settings;
 	Transform3D domain_xform;
+	Vector3 grid_anchor; // block-sparse: cell-key origin, frozen at configure() (boundless)
 
 	int pcount = 0; // live particles (== capacity when prefilled)
 	int capacity = 0; // particle-buffer slots

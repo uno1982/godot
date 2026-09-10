@@ -148,9 +148,19 @@ but PhysX PBD does not produce accurate density-based buoyancy (a light body
 does not cleanly float, a dense one does not cleanly sink through). Use
 `get_submersion()` to apply your own buoyant force where that matters.
 
-GPU-only: the node is inert unless the active physics engine is PhysX, the build
-has GPU support, and a CUDA device is present. See the class reference for
-details.
+`solver` picks the backend: `PBD (CUDA)` is the above; `MPM (compute)` is a
+cross-vendor MLS-MPM fluid on plain `RenderingDevice` compute (no CUDA);
+`Auto` uses PBD when a CUDA device is present, else MPM. The MPM path runs on
+the engine's main render device and reads back asynchronously, so visuals and
+the collider reaction land a few frames later. Static and kinematic colliders
+couple cleanly; a **dynamic `RigidBody3D` in MPM fluid has soft buoyancy** and
+may sink slowly or over-bounce — feed it through `mpm_colliders` for the splash
+and drive real buoyancy from `get_submersion()`. `PhysXGranular3D` (MPM
+sand/snow) is unaffected.
+
+GPU-only: the node is inert unless the active physics engine is PhysX and the
+build has GPU/compute support (`PBD` additionally needs a CUDA device). See the
+class reference for details.
 
 ### Editor
 

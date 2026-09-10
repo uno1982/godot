@@ -6,7 +6,7 @@
 	<description>
 		Fills a box-shaped region with fluid particles that are simulated on the GPU and collide with the rigid bodies in the same space. The particles are drawn as a [MultiMesh] of small spheres; [member GeometryInstance3D.material_override] applies to them.
 		Particles can also be streamed in over time by enabling [member emitting], which turns the node into a faucet or hose: particles spawn near the node origin at [member emission_rate] per second with [member emission_velocity] (in node-local space) and, once [member particle_count] is reached, the oldest particles are recycled.
-		Two solvers back the node, chosen by [member solver]. The [b]PBD[/b] solver is PhysX 5's position-based fluid and needs a usable CUDA device; it supports foam ([member foam_enabled]) and the anisotropic surface ([member surface_anisotropy]). The [b]MPM[/b] solver is a material-point-method fluid that runs on any GPU through plain compute shaders, for machines without CUDA; it is confined to [member mpm_domain_size], couples with the bodies listed in [member mpm_colliders] (or, with [member mpm_auto_colliders], every nearby body), and has its own tuning under the [b]MPM[/b] group. On [code]Auto[/code] the node picks PBD when CUDA is available and MPM otherwise.
+		Two solvers back the node, chosen by [member solver]. The [b]PBD[/b] solver is PhysX 5's position-based fluid and needs a usable CUDA device; it supports foam ([member foam_enabled]) and the anisotropic surface ([member surface_anisotropy]). The [b]MPM[/b] solver is a material-point-method fluid that runs on any GPU through plain compute shaders, for machines without CUDA; its grid is block-sparse and boundless (it follows the fluid — [member mpm_domain_size] no longer confines it), it couples with the bodies listed in [member mpm_colliders] (or, with [member mpm_auto_colliders], every nearby body), and it has its own tuning under the [b]MPM[/b] group. On [code]Auto[/code] the node picks PBD when CUDA is available and MPM otherwise.
 		For sand, gravel or snow instead of a liquid, use [PhysXGranular3D] -- it shares this node's machinery but simulates the material as grains that pile and hold a slope.
 		This node only does anything when [member ProjectSettings.physics/3d/physics_engine] is set to [code]PhysX[/code]. If it resolves to the PBD solver without a CUDA device it is inert and emits a warning.
 	</description>
@@ -98,10 +98,10 @@
 			MPM solver only. [PhysicsBody3D] (or [CollisionShape3D]) nodes the fluid collides with, resolved to an analytic sphere, box, capsule or plane from each node's first shape. [RigidBody3D] entries also receive the fluid's reaction force. A [PhysXChunkEmitter3D] here is expanded into one collider per active chunk. Up to 32 colliders total, shared with [member mpm_auto_colliders] and chunk expansion. The PBD solver ignores this and collides with the whole space.
 		</member>
 		<member name="mpm_domain_size" type="Vector3" setter="set_mpm_domain_size" getter="get_mpm_domain_size" default="Vector3(3, 3, 3)">
-			MPM solver only. Size of the simulation box, centered on the node, that the fluid is confined to. Fluid that reaches an edge is clamped. Make it large enough to contain the whole pour and pool. This is the sim bound only — [method spawn] still fills [member spawn_region_size].
+			MPM solver only. The MPM fluid is [b]boundless[/b] — its grid follows the fluid, so this no longer confines it. It still sets: the box [method spawn] fills (with [member spawn_region_size]), the volume [member mpm_auto_colliders] scans for nearby bodies, and — through its Y — the height of the implicit floor (a flat plane at the domain's bottom, so a floorless scene does not fall forever). Add a [WorldBoundaryShape3D] to [member mpm_colliders], or lower the domain, for a true drop off a ledge. On [PhysXGranular3D] this is still a real containment box.
 		</member>
 		<member name="mpm_grid_resolution" type="int" setter="set_mpm_grid_resolution" getter="get_mpm_grid_resolution" default="0">
-			MPM solver only. Number of background grid cells along the domain's X axis (other axes follow at the same cell size). [code]0[/code] derives it from [member particle_size] at roughly two cells per particle, which is what lets a modest [member particle_count] fill a real volume — raise [member particle_size] for a coarser grid and fatter particles. Set a fixed value to override.
+			[PhysXGranular3D] only (hidden on the fluid). Number of dense grid cells along the box's X axis. [code]0[/code] derives it from [member particle_size] at roughly two cells per grain. The MPM fluid grid is block-sparse with a fixed cell size of [code]2 * particle_size[/code], so it ignores this.
 		</member>
 		<member name="mpm_stiffness" type="float" setter="set_mpm_stiffness" getter="get_mpm_stiffness" default="6000.0">
 			MPM solver only. Pressure stiffness of the weakly-compressible fluid. Higher values resist compression harder (less springy, more incompressible) but need more [member mpm_substeps] to stay stable.
@@ -149,7 +149,7 @@
 			PhysX 5's position-based fluid. Requires CUDA. Supports foam and the anisotropic surface.
 		</constant>
 		<constant name="SOLVER_MPM" value="2" enum="SolverBackend">
-			Material-point-method fluid on plain GPU compute, for machines without CUDA. Confined to [member mpm_domain_size]; couples through [member mpm_colliders] / [member mpm_auto_colliders].
+			Material-point-method fluid on plain GPU compute, for machines without CUDA. Block-sparse boundless grid; couples through [member mpm_colliders] / [member mpm_auto_colliders].
 		</constant>
 	</constants>
 </class>

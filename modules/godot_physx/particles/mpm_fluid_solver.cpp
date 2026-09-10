@@ -715,9 +715,14 @@ void MPMFluidSolver::_compute_scales() {
 	// grid is boundless so there is no box to cap against; overflow degrades
 	// gracefully via the probe cap.
 	if (!settings.granular) {
-		const int64_t want = (int64_t)MAX(settings.particle_target, 1) / 6 + 512;
-		max_blocks = (int)CLAMP(want, (int64_t)512, (int64_t)(1 << 21));
-		hash_slots = (int)next_pow2((uint32_t)MAX(max_blocks * 4, 256));
+		// A compact pool of N particles occupies ~N/512 full 4^3 blocks; a
+		// spread-out sheet or a churned splash reaches several times that, and a
+		// low particle count still spreads over real area -- so keep a generous
+		// floor. block_touch bails cleanly once the pool is full, so over-spread
+		// degrades locally instead of collapsing the whole grid.
+		const int64_t want = (int64_t)MAX(settings.particle_target, 1) / 4 + 4096;
+		max_blocks = (int)CLAMP(want, (int64_t)4096, (int64_t)(1 << 21));
+		hash_slots = (int)next_pow2((uint32_t)MAX(max_blocks * 3, 1024));
 	} else {
 		max_blocks = 0;
 		hash_slots = 0;
@@ -894,6 +899,12 @@ void MPMFluidSolver::configure(const Settings &p_settings, const Transform3D &p_
 	if (settings.granular) {
 		settings.substeps = MAX(settings.substeps, 12);
 		settings.collider_friction = MAX(settings.collider_friction, 0.85f);
+	} else {
+		// MLS-MPM fluid needs >= 3 substeps to stay stable (the grid-density EOS
+		// wants a small enough dt). The old dense box hid a too-low value by
+		// clamping runaway particles; the boundless grid does not, so a coupled
+		// fluid at 2 substeps sprays across the scene. Floor it.
+		settings.substeps = MAX(settings.substeps, 3);
 	}
 
 	_compute_scales();

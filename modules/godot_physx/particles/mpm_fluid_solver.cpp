@@ -47,9 +47,11 @@
 #include "mpm_bs_couple.glsl.gen.h"
 #include "mpm_bs_g2p.glsl.gen.h"
 #include "mpm_bs_grid.glsl.gen.h"
+#include "mpm_bs_march.glsl.gen.h"
 #include "mpm_bs_p2g_mass.glsl.gen.h"
 #include "mpm_bs_p2g_mom.glsl.gen.h"
 #include "mpm_bs_render.glsl.gen.h"
+#include "mpm_bs_surface.glsl.gen.h"
 
 #include "core/io/marshalls.h"
 #include "core/math/math_funcs.h"
@@ -115,6 +117,8 @@ void MPMFluidSolverGPU::rt_compile(Ref<MPMFluidSolverGPU> p_self) {
 		mpm_bs_grid_shader_glsl,
 		mpm_bs_couple_shader_glsl,
 		mpm_bs_g2p_shader_glsl,
+		mpm_bs_surface_shader_glsl,
+		mpm_bs_march_shader_glsl,
 		mpm_bs_render_shader_glsl,
 	};
 	for (int i = 0; i < PASS_MAX; i++) {
@@ -181,7 +185,7 @@ void MPMFluidSolverGPU::_rt_rebuild_uniform_sets() {
 		ERR_FAIL_COND(uset[p].is_null());
 	}
 
-	if (!block_sparse && buf_mverts.is_valid()) {
+	if (buf_mverts.is_valid()) {
 		Vector<RD::Uniform> m;
 		const RID mesh_bufs[3] = { buf_mverts, buf_mnorms, buf_mcount };
 		for (int b = 0; b < 3; b++) {
@@ -191,7 +195,7 @@ void MPMFluidSolverGPU::_rt_rebuild_uniform_sets() {
 			u.append_id(mesh_bufs[b]);
 			m.push_back(u);
 		}
-		uset_mesh = rd->uniform_set_create(m, shader[PASS_MARCH], 1);
+		uset_mesh = rd->uniform_set_create(m, shader[block_sparse ? PASS_BS_MARCH : PASS_MARCH], 1);
 		ERR_FAIL_COND(uset_mesh.is_null());
 	}
 }
@@ -244,13 +248,18 @@ void MPMFluidSolverGPU::rt_build(Ref<MPMFluidSolverGPU> p_self, PackedByteArray 
 		const int cells = max_blocks * BCELLS;
 		buf_grid_i = rd->storage_buffer_create(cells * 4 * sizeof(int32_t));
 		buf_grid_v = rd->storage_buffer_create(cells * 4 * sizeof(float));
-		buf_surf = rd->storage_buffer_create(cells * sizeof(int32_t)); // M-b3 isosurface (unused in M-b1)
+		buf_surf = rd->storage_buffer_create(cells * sizeof(int32_t)); // block-indexed density scatter (isosurface)
 		buf_bhash = rd->storage_buffer_create(hash_slots * sizeof(uint32_t));
 		buf_bhash_val = rd->storage_buffer_create(hash_slots * sizeof(uint32_t));
 		buf_bkey = rd->storage_buffer_create(max_blocks * sizeof(uint32_t));
 		buf_bcounts = rd->storage_buffer_create(8 * sizeof(uint32_t), Span<uint8_t>(), RD::STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT);
-		// Dense-only mesh buffers left null; the block-sparse uniform sets don't
-		// reference them and rt_step skips the surface passes.
+		buf_mverts = rd->storage_buffer_create(tri_budget * 3 * 4 * sizeof(float));
+		buf_mnorms = rd->storage_buffer_create(tri_budget * 3 * 4 * sizeof(float));
+		PackedByteArray mc;
+		mc.resize(2 * sizeof(uint32_t));
+		encode_uint32(0, mc.ptrw());
+		encode_uint32(tri_budget, mc.ptrw() + 4);
+		buf_mcount = rd->storage_buffer_create(mc.size(), mc);
 	} else {
 		buf_grid_i = rd->storage_buffer_create(node_count * 4 * sizeof(int32_t));
 		buf_grid_v = rd->storage_buffer_create(node_count * 4 * sizeof(float));
@@ -296,9 +305,10 @@ void MPMFluidSolverGPU::rt_step(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p
 		rd->buffer_update(buf_colliders, 0, p_colliders.size(), p_colliders.ptr());
 	}
 	rd->buffer_clear(buf_cimp, 0, MAX_COLLIDERS * 4 * sizeof(int32_t));
-	if (p_want_surface && !block_sparse) {
+	if (p_want_surface) {
 		rd->buffer_clear(buf_mcount, 0, sizeof(uint32_t)); // reset tri_count, keep tri_budget
-		rd->buffer_clear(buf_surf, 0, node_count * sizeof(int32_t)); // reset the density scatter
+		const uint32_t surf_bytes = block_sparse ? (uint32_t)(max_blocks * BCELLS * sizeof(int32_t)) : (uint32_t)(node_count * sizeof(int32_t));
+		rd->buffer_clear(buf_surf, 0, surf_bytes); // reset the density scatter
 	}
 
 	const uint32_t ng = groups_for(node_count);
@@ -338,6 +348,14 @@ void MPMFluidSolverGPU::rt_step(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p
 			}
 			pass(PASS_BS_G2P, pg);
 		}
+		if (p_want_surface) {
+			pass(PASS_BS_SURFACE, pg);
+			rd->compute_list_bind_compute_pipeline(cl, pipeline[PASS_BS_MARCH]);
+			rd->compute_list_bind_uniform_set(cl, uset[PASS_BS_MARCH], 0);
+			rd->compute_list_bind_uniform_set(cl, uset_mesh, 1);
+			rd->compute_list_dispatch_indirect(cl, buf_bcounts, 4); // one wg / active block
+			rd->compute_list_add_barrier(cl);
+		}
 		rd->compute_list_bind_compute_pipeline(cl, pipeline[PASS_BS_RENDER]);
 		rd->compute_list_bind_uniform_set(cl, uset[PASS_BS_RENDER], 0);
 		rd->compute_list_dispatch(cl, pg, 1, 1);
@@ -347,7 +365,7 @@ void MPMFluidSolverGPU::rt_step(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p
 			rd->capture_timestamp("mpm_b");
 		}
 		_submitted_ncol = p_ncol;
-		_submitted_surface = false;
+		_submitted_surface = p_want_surface;
 		if (local) {
 			rd->submit();
 			_submitted = true;
@@ -357,6 +375,13 @@ void MPMFluidSolverGPU::rt_step(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p
 		rd->buffer_get_data_async(buf_mm, callable_mp(this, &MPMFluidSolverGPU::rt_on_mm).bind(p_self), 0, capacity * 12 * sizeof(float));
 		if (p_ncol > 0) {
 			rd->buffer_get_data_async(buf_cimp, callable_mp(this, &MPMFluidSolverGPU::rt_on_impulses).bind(p_self, p_ncol), 0, p_ncol * 4 * sizeof(int32_t));
+		}
+		if (p_want_surface) {
+			const uint32_t est_tris = MIN((uint32_t)tri_budget, (uint32_t)(_last_surf_tris * 3 / 2) + 8192u);
+			const uint32_t vbytes = est_tris * 3u * 4u * sizeof(float);
+			rd->buffer_get_data_async(buf_mcount, callable_mp(this, &MPMFluidSolverGPU::rt_on_surf_count).bind(p_self), 0, sizeof(uint32_t));
+			rd->buffer_get_data_async(buf_mverts, callable_mp(this, &MPMFluidSolverGPU::rt_on_surf_verts).bind(p_self), 0, vbytes);
+			rd->buffer_get_data_async(buf_mnorms, callable_mp(this, &MPMFluidSolverGPU::rt_on_surf_norms).bind(p_self), 0, vbytes);
 		}
 		return;
 	}

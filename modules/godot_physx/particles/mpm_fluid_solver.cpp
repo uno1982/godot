@@ -710,15 +710,13 @@ void MPMFluidSolver::_compute_scales() {
 			CLAMP((int)Math::round(settings.domain.z / dx), 4, 256));
 	node_count = grid_dims.x * grid_dims.y * grid_dims.z;
 
-	// Block-sparse fluid path: a 4^3-block pool. Size it from the particle target
-	// (a stream + pool of N particles at dx/2 spacing occupies ~N/8 cells ->
-	// ~N/8/64 full blocks, x a few for the partially-filled surface + halo
-	// blocks), capped at the box block count so a tall/large domain never
-	// over-allocates. Overflow degrades gracefully via the probe cap.
+	// Block-sparse fluid path: a 4^3-block pool, sized from the particle target
+	// (~N/6/64 full blocks + partial surface/halo blocks -> N/6 is generous). The
+	// grid is boundless so there is no box to cap against; overflow degrades
+	// gracefully via the probe cap.
 	if (!settings.granular) {
-		const int64_t box_blocks = (int64_t)((grid_dims.x + 3) / 4) * ((grid_dims.y + 3) / 4) * ((grid_dims.z + 3) / 4);
 		const int64_t want = (int64_t)MAX(settings.particle_target, 1) / 6 + 512;
-		max_blocks = (int)CLAMP(MIN(want, box_blocks + 64), (int64_t)512, (int64_t)(1 << 21));
+		max_blocks = (int)CLAMP(want, (int64_t)512, (int64_t)(1 << 21));
 		hash_slots = (int)next_pow2((uint32_t)MAX(max_blocks * 4, 256));
 	} else {
 		max_blocks = 0;
@@ -799,6 +797,9 @@ void MPMFluidSolver::_pack_params(double p_dt, int p_ncol, PackedByteArray &r_by
 	const Vector3 center = domain_xform.origin;
 	const Vector3 bmin = center - settings.domain * 0.5f;
 	const Vector3 bmax = center + settings.domain * 0.5f;
+	// Dense/granular: ORIGIN is the live domain-min corner (the box BC needs it).
+	// Block-sparse: ORIGIN is the anchor frozen at configure() (boundless keys).
+	const Vector3 origin = settings.granular ? bmin : grid_anchor;
 	auto put_f = [&](uint32_t off, float v) { encode_float(v, b + off); };
 	auto put_i = [&](uint32_t off, int32_t v) { encode_uint32((uint32_t)v, b + off); };
 
@@ -806,9 +807,9 @@ void MPMFluidSolver::_pack_params(double p_dt, int p_ncol, PackedByteArray &r_by
 	put_f(4, settings.gravity.y);
 	put_f(8, settings.gravity.z);
 	put_f(12, (float)p_dt);
-	put_f(16, bmin.x);
-	put_f(20, bmin.y);
-	put_f(24, bmin.z);
+	put_f(16, origin.x);
+	put_f(20, origin.y);
+	put_f(24, origin.z);
 	put_f(28, dx);
 	put_i(32, grid_dims.x);
 	put_i(36, grid_dims.y);
@@ -896,6 +897,9 @@ void MPMFluidSolver::configure(const Settings &p_settings, const Transform3D &p_
 	}
 
 	_compute_scales();
+	// Block-sparse: freeze the cell-key origin at configure so keys are stable
+	// even if the emitter node moves; the boundless grid tracks the fluid.
+	grid_anchor = (domain_xform.origin - settings.domain * 0.5f).snappedf(dx);
 	write_head = 0;
 
 	PackedByteArray job_particles;

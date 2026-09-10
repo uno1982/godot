@@ -6,7 +6,9 @@
 layout(local_size_x = BCELLS) in;
 
 // Indirect: one workgroup per active block, one thread per cell. Normalise
-// momentum, apply gravity, box boundary (M-b1 keeps the box; M-b2 drops it).
+// momentum, apply gravity. Boundless -- no side walls or ceiling; only an
+// implicit floor a couple of cells above the anchor keeps a floor-less scene
+// from falling forever (demos add explicit floor/wall colliders).
 void main() {
 	uint bslot = gl_WorkGroupID.x;
 	if (bslot >= bcounts[0]) {
@@ -28,13 +30,9 @@ void main() {
 	ivec3 lc = ivec3(int(lin) & 3, (int(lin) >> 2) & 3, int(lin) >> 4);
 	ivec3 c = bc * BLK + lc;
 
-	const int BW = 2;
-	if (c.x < BW && vel.x < 0.0) { vel.x = 0.0; }
-	if (c.y < BW && vel.y < 0.0) { vel.y = 0.0; }
-	if (c.z < BW && vel.z < 0.0) { vel.z = 0.0; }
-	if (c.x >= RES.x - BW && vel.x > 0.0) { vel.x = 0.0; }
-	if (c.y >= RES.y - BW && vel.y > 0.0) { vel.y = 0.0; }
-	if (c.z >= RES.z - BW && vel.z > 0.0) { vel.z = 0.0; }
+	if (c.y < 2 && vel.y < 0.0) {
+		vel.y = 0.0; // implicit floor at the anchor
+	}
 
 	grid_v[idx] = vec4(vel, m);
 }

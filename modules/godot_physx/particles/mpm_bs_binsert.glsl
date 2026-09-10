@@ -16,6 +16,9 @@ void main() {
 	vec3 fx;
 	grid_local(x, base, fx);
 	ivec3 base_bc = base >> 2;
+	if (any(lessThan(base_bc, ivec3(-500))) || any(greaterThan(base_bc, ivec3(499)))) {
+		return; // outside the packed-key range (G2P far clamp keeps this from happening)
+	}
 
 	for (int dz = 0; dz < 2; dz++) {
 		for (int dy = 0; dy < 2; dy++) {

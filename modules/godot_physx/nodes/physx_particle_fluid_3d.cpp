@@ -85,7 +85,9 @@ void PhysXParticleFluid3D::_mpm_surface_params(float &r_iso, float &r_kernel, fl
 	// With the auto grid the particle spacing tracks particle_size, so the SPH
 	// scatter mostly just needs a kernel a few cells wide; a small residual boost
 	// covers a pinned grid that is finer than particle_size wants.
-	const float spacing = MAX(mpm_domain_size.x / MAX(_mpm_resolved_grid_res(), 1), 0.001f) * 0.5f;
+	const float spacing = _is_granular()
+			? MAX(mpm_domain_size.x / MAX(_mpm_resolved_grid_res(), 1), 0.001f) * 0.5f
+			: MAX(particle_size, 0.001f); // fluid: dx = 2 * particle_size, so spacing = particle_size
 	const float rel = particle_size / spacing;
 	r_kernel = CLAMP(particle_size, spacing * 2.0f, spacing * 6.0f); // scatter radius (meters)
 	r_boost = CLAMP(rel * rel * rel, 1.0f, 24.0f);
@@ -136,11 +138,15 @@ void PhysXParticleFluid3D::_mpm_configure(bool p_prefill) {
 	}
 
 	// The MPM grid and the fluid particle spacing are coupled: too few particles
-	// per cell and the sim is noisy. particle_size sets the particle spacing (as
-	// on the PBD path), so grid_res follows from it -- ~2 cells per particle --
-	// unless the user pinned it. This is what lets a modest particle_count fill a
-	// volume: bigger particle_size => coarser grid => fatter particles.
+	// per cell and the sim is noisy. particle_size sets the particle spacing.
+	// Granular runs a dense box grid, so it takes a resolution (cells across the
+	// box). The fluid path is block-sparse and boundless -- there is no box, so
+	// the cell size is just 2x particle_size and mpm_grid_resolution / the x,z of
+	// mpm_domain_size don't affect the grid.
 	s.grid_res = _mpm_resolved_grid_res();
+	if (!s.granular) {
+		s.cell_size = MAX(particle_size * 2.0f, 0.001f);
+	}
 	_mpm_surface_params(s.surface_iso, s.surface_kernel, s.surface_boost);
 
 	mpm->configure(s, get_global_transform(), p_prefill);
@@ -1175,6 +1181,16 @@ void PhysXParticleFluid3D::_commit_iso_mesh(RID p_mesh, PackedVector3Array &vert
 		rs->mesh_surface_set_material(p_mesh, 0, p_material->get_rid());
 	}
 	rs->mesh_set_custom_aabb(p_mesh, local_aabb.grow(p_feature_size * 4.0f));
+}
+
+void PhysXParticleFluid3D::_validate_property(PropertyInfo &p_property) const {
+	// The MPM fluid path is block-sparse and boundless: the grid cell size is
+	// 2 x particle_size and there is no box, so mpm_grid_resolution has no effect.
+	// PhysXGranular3D's dense box grid still uses it (this runs for that subclass
+	// too, via the validate chain, so gate on _is_granular()).
+	if (p_property.name == SNAME("mpm_grid_resolution") && !_is_granular()) {
+		p_property.usage = PROPERTY_USAGE_NO_EDITOR;
+	}
 }
 
 void PhysXParticleFluid3D::_notification(int p_what) {

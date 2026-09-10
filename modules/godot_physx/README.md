@@ -152,11 +152,21 @@ does not cleanly float, a dense one does not cleanly sink through). Use
 cross-vendor MLS-MPM fluid on plain `RenderingDevice` compute (no CUDA);
 `Auto` uses PBD when a CUDA device is present, else MPM. The MPM path runs on
 the engine's main render device and reads back asynchronously, so visuals and
-the collider reaction land a few frames later. Static and kinematic colliders
-couple cleanly; a **dynamic `RigidBody3D` in MPM fluid has soft buoyancy** and
-may sink slowly or over-bounce — feed it through `mpm_colliders` for the splash
-and drive real buoyancy from `get_submersion()`. `PhysXGranular3D` (MPM
-sand/snow) is unaffected.
+the collider reaction land a few frames later.
+
+The MPM fluid grid is **block-sparse and boundless** — it allocates only the
+4³-cell blocks the fluid touches and follows the fluid as it flows, so
+`mpm_domain_size` no longer confines it (it's now just the `spawn()` box, the
+`mpm_auto_colliders` scan volume, and — via its Y — the implicit floor height).
+Fluid runs off ledges and spreads freely; add a `WorldBoundaryShape3D` to
+`mpm_colliders` or lower the domain for a true drop. The grid cell size is
+`2 × particle_size` (`mpm_grid_resolution` is `PhysXGranular3D`-only — its dense
+box grid still uses it). Cost is at parity with the old fixed-box grid.
+
+Static and kinematic colliders couple cleanly; a **dynamic `RigidBody3D` in MPM
+fluid has soft buoyancy** and may sink slowly or over-bounce — feed it through
+`mpm_colliders` for the splash and drive real buoyancy from `get_submersion()`.
+`PhysXGranular3D` (MPM sand/snow) runs the original dense box grid, unchanged.
 
 GPU-only: the node is inert unless the active physics engine is PhysX and the
 build has GPU/compute support (`PBD` additionally needs a CUDA device). See the

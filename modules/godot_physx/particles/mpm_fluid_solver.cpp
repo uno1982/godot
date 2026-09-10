@@ -703,7 +703,7 @@ void MPMFluidSolver::_dispatch(const Callable &p_call) const {
 }
 
 void MPMFluidSolver::_compute_scales() {
-	dx = settings.domain.x / (float)settings.grid_res;
+	dx = settings.cell_size > 0.0f ? settings.cell_size : settings.domain.x / (float)settings.grid_res;
 	grid_dims = Vector3i(
 			settings.grid_res,
 			CLAMP((int)Math::round(settings.domain.y / dx), 4, 256),

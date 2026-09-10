@@ -176,7 +176,8 @@ public:
 	struct Settings {
 		int particle_target = 60000;
 		int substeps = 5;
-		int grid_res = 48;
+		int grid_res = 48; // dense/granular box resolution (cells across domain.x)
+		float cell_size = 0.0f; // explicit grid dx; 0 = derive from domain.x / grid_res (block-sparse fluid sets this from particle_size)
 		float stiffness = 6000.0f;
 		float viscosity = 0.65f;
 		float rest_density = 1000.0f;

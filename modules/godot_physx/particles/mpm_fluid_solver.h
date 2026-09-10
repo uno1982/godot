@@ -143,6 +143,7 @@ private:
 	bool _submitted = false; // local path: work in flight since the last sync
 	int _submitted_ncol = 0;
 	bool _submitted_surface = false;
+	int _last_surf_tris = 0; // running estimate used to size the async vert/normal reads
 	void _rt_free_buffers();
 	void _rt_rebuild_uniform_sets();
 	// Local path only: sync and pull mm / impulses / surface straight back.

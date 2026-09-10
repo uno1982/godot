@@ -331,9 +331,15 @@ void MPMFluidSolverGPU::rt_step(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p
 		rd->buffer_get_data_async(buf_cimp, callable_mp(this, &MPMFluidSolverGPU::rt_on_impulses).bind(p_self, p_ncol), 0, p_ncol * 4 * sizeof(int32_t));
 	}
 	if (p_want_surface) {
+		// Size the vert/normal reads to a padded estimate of last frame's triangle
+		// count rather than the full 200k budget (~19 MB) every surface frame. If
+		// the count spiked past the estimate, get_surface_mesh() skips one update
+		// while _last_surf_tris catches up -- imperceptible at the 20 Hz remesh.
+		const uint32_t est_tris = MIN((uint32_t)tri_budget, (uint32_t)(_last_surf_tris * 3 / 2) + 8192u);
+		const uint32_t vbytes = est_tris * 3u * 4u * sizeof(float);
 		rd->buffer_get_data_async(buf_mcount, callable_mp(this, &MPMFluidSolverGPU::rt_on_surf_count).bind(p_self), 0, sizeof(uint32_t));
-		rd->buffer_get_data_async(buf_mverts, callable_mp(this, &MPMFluidSolverGPU::rt_on_surf_verts).bind(p_self), 0, tri_budget * 3 * 4 * sizeof(float));
-		rd->buffer_get_data_async(buf_mnorms, callable_mp(this, &MPMFluidSolverGPU::rt_on_surf_norms).bind(p_self), 0, tri_budget * 3 * 4 * sizeof(float));
+		rd->buffer_get_data_async(buf_mverts, callable_mp(this, &MPMFluidSolverGPU::rt_on_surf_verts).bind(p_self), 0, vbytes);
+		rd->buffer_get_data_async(buf_mnorms, callable_mp(this, &MPMFluidSolverGPU::rt_on_surf_norms).bind(p_self), 0, vbytes);
 	}
 }
 
@@ -445,8 +451,10 @@ void MPMFluidSolverGPU::rt_on_surf_count(const PackedByteArray &p_data, Ref<MPMF
 	if (p_data.size() < (int)sizeof(uint32_t)) {
 		return;
 	}
+	const int tris = (int)MIN(decode_uint32(p_data.ptr()), (uint32_t)tri_budget);
+	_last_surf_tris = tris; // render thread only -- sizes next frame's vert/normal reads
 	MutexLock lock(cache_mtx);
-	surf_tris_cache = (int)MIN(decode_uint32(p_data.ptr()), (uint32_t)tri_budget);
+	surf_tris_cache = tris;
 }
 
 void MPMFluidSolverGPU::rt_on_surf_verts(const PackedByteArray &p_data, Ref<MPMFluidSolverGPU> p_self) {

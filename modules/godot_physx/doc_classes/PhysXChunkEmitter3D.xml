@@ -59,6 +59,18 @@
 		<member name="density" type="float" setter="set_density" getter="get_density" default="1200.0">
 			Chunk density in kg/m³, used with each chunk's random size to derive its mass.
 		</member>
+		<member name="friction" type="float" setter="set_friction" getter="get_friction" default="0.5">
+			Surface friction of every chunk (matches the space's default material). Raise it so chunks pile and stop instead of skittering away -- snow or gravel want this well above 1.0.
+		</member>
+		<member name="bounce" type="float" setter="set_bounce" getter="get_bounce" default="0.0">
+			Restitution of every chunk. 0 = no bounce (the default); raise for bouncier debris.
+		</member>
+		<member name="linear_damp" type="float" setter="set_linear_damp" getter="get_linear_damp" default="0.0">
+			Linear damping applied to every chunk, on top of friction. Useful to keep a pile from creeping.
+		</member>
+		<member name="angular_damp" type="float" setter="set_angular_damp" getter="get_angular_damp" default="0.0">
+			Angular damping applied to every chunk. Raise it so round chunks (spheres) stop rolling instead of coasting indefinitely.
+		</member>
 		<member name="emission_direction" type="Vector3" setter="set_emission_direction" getter="get_emission_direction" default="Vector3(0, 1, 0)">
 			World-space direction chunks are biased toward while [member emitting], within a [member spread_degrees] cone.
 		</member>
@@ -76,6 +88,9 @@
 		</member>
 		<member name="lifetime" type="float" setter="set_lifetime" getter="get_lifetime" default="5.0">
 			Seconds a chunk lives before it is recycled, even if [member max_active] has not been reached.
+		</member>
+		<member name="shrink_time" type="float" setter="set_shrink_time" getter="get_shrink_time" default="0.0">
+			Seconds before a chunk's natural [member lifetime] end during which it scales down to nothing instead of popping. 0 = pop (the default). Only the render scale shrinks -- the collision shape stays full size until the chunk is recycled, so a mid-shrink chunk still collides. Does not soften a chunk freed early for [member max_active] budget -- that still pops.
 		</member>
 		<member name="max_active" type="int" setter="set_max_active" getter="get_max_active" default="200">
 			Hard cap on chunks alive at once, across every burst and continuous emission from this emitter. Once reached, the oldest chunks are freed to make room for new ones.

@@ -75,6 +75,19 @@ struct GodotPhysXFluidIsosurface : public PxParticleSystemCallback {
 	LocalVector<PxVec4> host_positions; // scratch for outlier clamping
 	float clamp_reach = 3.5f; // max meters a particle may sit from the fluid's median before it is pinned
 	uint32_t frame = 0; // isosurface is re-extracted every other solve to halve the cost
+	// The clamp itself (sync + DToH + host scan + conditional HToD) is a full
+	// host round-trip and by far the most expensive part of finish_extraction()
+	// -- with N fluids finishing in turn, that round-trip stacks Nx even though
+	// the GPU work behind it already overlapped. Outliers are rare in a settled
+	// or steadily-emitting pool, so only actually check every CLAMP_EVERY-th
+	// extraction (still ~7.5 Hz at the surface's 30 Hz cadence); the skipped
+	// cycles kick extractIsosurface straight off dev_smoothed with no sync at
+	// all -- it is just another op enqueued on the same stream, so CUDA's
+	// in-order stream semantics keep it correctly ordered after the smoothing
+	// kernel without the host needing to wait for either.
+	static const uint32_t CLAMP_EVERY = 4;
+	uint32_t clamp_tick = 0;
+	PxVec3 last_center = PxVec3(0.0f); // stale center reused by kick_foam on a skipped clamp cycle
 	bool surface_clip_warned = false;
 	// Extractions are kicked async on the stream and their results read one
 	// 30 Hz tick later, so the GPU is never stalled waiting on marching cubes.
@@ -301,34 +314,38 @@ struct GodotPhysXFluidIsosurface : public PxParticleSystemCallback {
 		CUstream p_stream = pending_stream;
 		const bool use_aniso = pending_aniso;
 
-		// The one unavoidable sync: the outlier clamp below reads the smoothed
-		// positions back to the host.
-		cuda->getCudaContext()->streamSynchronize(p_stream);
+		PxVec3 center = last_center;
+		if ((clamp_tick++ % CLAMP_EVERY) == 0u) {
+			// The one unavoidable sync (on a clamp cycle): the outlier clamp
+			// below reads the smoothed positions back to the host.
+			cuda->getCudaContext()->streamSynchronize(p_stream);
 
-		// Pin outliers: a particle that escapes the container drags the sparse
-		// grid (and the mesh bounds) out to it -- the surface appears to stretch
-		// to infinity. Clamp every particle to within clamp_reach meters of the
-		// mean before feeding the extractor.
-		Ext::PxCudaHelpersExt::copyDToH(*cuda, host_positions.ptr(), dev_smoothed, n);
-		PxVec3 center(0.0f);
-		for (uint32_t i = 0; i < n; i++) {
-			center += host_positions[i].getXYZ();
-		}
-		center *= 1.0f / (float)n;
-		bool clamped_any = false;
-		for (uint32_t i = 0; i < n; i++) {
-			PxVec3 p = host_positions[i].getXYZ();
-			const PxVec3 d = p - center;
-			if (d.x < -clamp_reach || d.x > clamp_reach || d.y < -clamp_reach || d.y > clamp_reach || d.z < -clamp_reach || d.z > clamp_reach) {
-				p.x = center.x + PxClamp(d.x, -clamp_reach, clamp_reach);
-				p.y = center.y + PxClamp(d.y, -clamp_reach, clamp_reach);
-				p.z = center.z + PxClamp(d.z, -clamp_reach, clamp_reach);
-				host_positions[i] = PxVec4(p, host_positions[i].w);
-				clamped_any = true;
+			// Pin outliers: a particle that escapes the container drags the
+			// sparse grid (and the mesh bounds) out to it -- the surface
+			// appears to stretch to infinity. Clamp every particle to within
+			// clamp_reach meters of the mean before feeding the extractor.
+			Ext::PxCudaHelpersExt::copyDToH(*cuda, host_positions.ptr(), dev_smoothed, n);
+			center = PxVec3(0.0f);
+			for (uint32_t i = 0; i < n; i++) {
+				center += host_positions[i].getXYZ();
 			}
-		}
-		if (clamped_any) {
-			Ext::PxCudaHelpersExt::copyHToD(*cuda, dev_smoothed, host_positions.ptr(), n);
+			center *= 1.0f / (float)n;
+			bool clamped_any = false;
+			for (uint32_t i = 0; i < n; i++) {
+				PxVec3 p = host_positions[i].getXYZ();
+				const PxVec3 d = p - center;
+				if (d.x < -clamp_reach || d.x > clamp_reach || d.y < -clamp_reach || d.y > clamp_reach || d.z < -clamp_reach || d.z > clamp_reach) {
+					p.x = center.x + PxClamp(d.x, -clamp_reach, clamp_reach);
+					p.y = center.y + PxClamp(d.y, -clamp_reach, clamp_reach);
+					p.z = center.z + PxClamp(d.z, -clamp_reach, clamp_reach);
+					host_positions[i] = PxVec4(p, host_positions[i].w);
+					clamped_any = true;
+				}
+			}
+			if (clamped_any) {
+				Ext::PxCudaHelpersExt::copyHToD(*cuda, dev_smoothed, host_positions.ptr(), n);
+			}
+			last_center = center;
 		}
 
 		// Anisotropy is passed only when the owner opts in (settled pools). For

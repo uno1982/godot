@@ -108,6 +108,21 @@ for _glsl in _mpm_bs_glsl:
     env_physx.GLSL_HEADER(os.path.join("particles", _glsl))
     env_physx.Depends(os.path.join("particles", _glsl + ".gen.h"), _mpm_bs_glsl_dep)
 
+# Sparse-grid gas/smoke solver -- reuses the mpm_block_inc.glsl block-hash
+# technique (see particles/gas_block_inc.glsl) but is otherwise an independent
+# solver (persistent Eulerian field, not MPM's per-substep P2G/G2P scratch).
+_gas_glsl = (
+    "gas_bs_touch.glsl",
+    "gas_bs_clear.glsl",
+    "gas_bs_clear_range.glsl",
+    "gas_bs_curl.glsl",
+    "gas_bs_step.glsl",
+)
+_gas_glsl_dep = [os.path.join("particles", "gas_block_inc.glsl"), "#glsl_builders.py"]
+for _glsl in _gas_glsl:
+    env_physx.GLSL_HEADER(os.path.join("particles", _glsl))
+    env_physx.Depends(os.path.join("particles", _glsl + ".gen.h"), _gas_glsl_dep)
+
 # Godot source files
 module_obj = []
 env_physx.add_source_files(module_obj, "*.cpp")

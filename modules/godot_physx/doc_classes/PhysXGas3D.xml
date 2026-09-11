@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXGas3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A sparse-grid Eulerian smoke/gas volume, provided by the PhysX module.
+	</brief_description>
+	<description>
+		An early, v1 volumetric gas/smoke solver: a persistent velocity+density field on a block-sparse hash grid, advected with trilinear semi-Lagrangian sampling, driven by [member buoyancy] and real vorticity confinement, and continuously fed from [member source_position]. Runs on plain compute shaders (a private local [RenderingDevice]), not CUDA -- independent of whether the PhysX GPU/CUDA path is available.
+		Unlike [PhysXParticleFluid3D] and [PhysXGranular3D], this is not a particle system -- it shares only its block-hash lookup technique with their block-sparse grid, not their solve. Renders as a debug point cloud (small cubes, one per grid cell above a density threshold, colour-ramped by density) -- a proper volumetric render is a follow-up, not yet implemented.
+		[b]v1 scope, worth knowing before relying on this:[/b] [member domain_size]'s world footprint (X/Z and the bottom of Y) is frozen at the node's transform when it first configures and does not follow the node afterward -- a node that moves far from its start loses whatever crosses that boundary. The box's TOP does grow automatically as a plume rises past it (periodically, a few blocks at a time, up to 3x the configured height), so vertical headroom mostly takes care of itself; lateral spread past [member domain_size]'s X/Z does not. There is no pressure projection, so the flow is not divergence-free -- its spread comes from a diffusion term standing in for that, the same technique Stam's stable-fluids method uses for viscosity. Colliders (up to 4, see [member colliders]) are voxelized solids (forced empty and still every step), not a proper no-slip/free-slip boundary.
+	</description>
+	<tutorials>
+	</tutorials>
+	<members>
+		<member name="domain_size" type="Vector3" setter="set_domain_size" getter="get_domain_size" default="Vector3(1.92, 3.2, 1.92)">
+			World size of the fixed grid box, centered on the node. Rounded up to whole 4-cell blocks per axis. Frozen the first time the solver configures (on entering the tree) -- changing it after that reconfigures (and clears) the grid.
+		</member>
+		<member name="cell_size" type="float" setter="set_cell_size" getter="get_cell_size" default="0.08">
+			Grid cell size in meters. Also reconfigures the grid when changed.
+		</member>
+		<member name="source_position" type="Vector3" setter="set_source_position" getter="get_source_position" default="Vector3(0, 0, 0)">
+			Local-space position the gas is continuously injected from.
+		</member>
+		<member name="source_radius" type="float" setter="set_source_radius" getter="get_source_radius" default="0.22">
+			Radius (meters) of the injection region around [member source_position].
+		</member>
+		<member name="source_velocity" type="Vector3" setter="set_source_velocity" getter="get_source_velocity" default="Vector3(0, 1.4, 0)">
+			Local-space velocity injected into the source region each step, plus a small per-cell random jitter scaled by its magnitude -- a perfectly symmetric source gives vorticity confinement nothing to amplify, so a little injected asymmetry is what seeds any swirl.
+		</member>
+		<member name="source_density" type="float" setter="set_source_density" getter="get_source_density" default="1.0">
+			Density injected into the source region each step (clamped up to at least this, never down -- the source tops up, it does not overwrite a denser cell).
+		</member>
+		<member name="buoyancy" type="float" setter="set_buoyancy" getter="get_buoyancy" default="9.0">
+			Upward acceleration applied to a cell's velocity, scaled by its own density. Negative sinks instead of rises (a heavier-than-air gas).
+		</member>
+		<member name="vorticity_strength" type="float" setter="set_vorticity_strength" getter="get_vorticity_strength" default="8.0">
+			Vorticity confinement strength -- pumps energy back into small eddies the grid's own numerical diffusion would otherwise smear away. Only amplifies curl that already exists (see [member source_velocity]'s jitter); it does not manufacture swirl from nothing.
+		</member>
+		<member name="dissipation" type="float" setter="set_dissipation" getter="get_dissipation" default="0.996">
+			Per-step density multiplier (how fast the gas fades). [code]1.0[/code] never dissipates; lower values fade faster.
+		</member>
+		<member name="colliders" type="NodePath[]" setter="set_colliders" getter="get_colliders" default="[]">
+			Up to 4 [Node3D] paths; each one's global position drives a sphere obstacle. Every cell inside a sphere is forced empty and still each step, so the field parts and flows around it. A [CollisionShape3D] (or [CollisionObject3D]) carrying a [SphereShape3D] gets its own world-scaled radius from that shape; anything else (a plain [Node3D], or a shape other than a sphere) falls back to [member collider_radius].
+		</member>
+		<member name="collider_radius" type="float" setter="set_collider_radius" getter="get_collider_radius" default="0.0">
+			Fallback radius (meters) for entries in [member colliders] that are not a sphere-shaped [CollisionShape3D]/[CollisionObject3D]. [code]0[/code] disables such an entry.
+		</member>
+	</members>
+</class>

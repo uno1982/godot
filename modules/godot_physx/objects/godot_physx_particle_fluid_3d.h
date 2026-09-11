@@ -182,6 +182,13 @@ public:
 
 	// Called by the space after fetchResults(): copy positions GPU -> host.
 	void read_back();
+
+	// Called by the space right after fetchResults(), before read_back(), for
+	// every fluid: finishes an isosurface extraction kicked (but not synced) in
+	// onPostSolve. Splitting the two lets N concurrent fluids' GPU smoothing
+	// kernels all get issued before any of them blocks the CPU on a sync -- see
+	// GodotPhysXFluidIsosurface::finish_extraction(). No-op without surface_mesh.
+	void finish_isosurface_extraction();
 	const LocalVector<Vector3> &get_positions() const { return read_positions; }
 	uint32_t get_particle_count() const { return active_count; }
 

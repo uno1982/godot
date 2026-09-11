@@ -338,6 +338,15 @@ void GodotPhysXSpace3D::step(real_t p_step) {
 		sync_bodies.push_back(body);
 	}
 
+	// finish_isosurface_extraction() first, for every fluid, before any of them
+	// reads back: onPostSolve (already run for all fluids by the fetchResults()
+	// above) kicks each fluid's smoothing kernel without syncing, so by this
+	// point N concurrent fluids' GPU work is already in flight together --
+	// finishing them here (sync + CPU clamp + extract) no longer serializes N
+	// separate stalls the way syncing inline inside onPostSolve did.
+	for (GodotPhysXParticleFluid3D *fluid : fluids) {
+		fluid->finish_isosurface_extraction();
+	}
 	for (GodotPhysXParticleFluid3D *fluid : fluids) {
 		fluid->read_back();
 	}

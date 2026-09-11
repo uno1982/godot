@@ -5,7 +5,8 @@
 	</brief_description>
 	<description>
 		An early, v1 volumetric gas/smoke solver: a persistent velocity+density field on a block-sparse hash grid, advected with trilinear semi-Lagrangian sampling, driven by [member buoyancy] and real vorticity confinement, and continuously fed from [member source_position]. Runs on plain compute shaders (a private local [RenderingDevice]), not CUDA -- independent of whether the PhysX GPU/CUDA path is available.
-		Unlike [PhysXParticleFluid3D] and [PhysXGranular3D], this is not a particle system -- it shares only its block-hash lookup technique with their block-sparse grid, not their solve. Renders as a debug point cloud (small cubes, one per grid cell above a density threshold, colour-ramped by density) -- a proper volumetric render is a follow-up, not yet implemented.
+		Unlike [PhysXParticleFluid3D] and [PhysXGranular3D], this is not a particle system -- it shares only its block-hash lookup technique with their block-sparse grid, not their solve. Renders through a stock [FogVolume] + [FogMaterial]: the solver's density grid is baked into an [ImageTexture3D] each step and handed to [member FogMaterial.density_texture], so the actual raymarching, camera-frustum froxel integration, temporal reprojection and light/shadow scattering are all engine code, not anything custom here.
+		[b]FogVolume rendering requires [member Environment.volumetric_fog_enabled] to be on in the scene's active Environment -- this is a hard, scene-wide, all-or-nothing switch (it gates whether the engine's froxel fog buffer exists at all), not something this node can turn on by itself. With it off, this node (and every other [FogVolume] in the scene) draws nothing, silently. A configuration warning is shown in the editor when this is the case; [member volumetric_render] can be turned off in favour of [member debug_point_cloud] if you don't want to enable scene-wide volumetric fog.[/b]
 		[b]v1 scope, worth knowing before relying on this:[/b] [member domain_size]'s world footprint (X/Z and the bottom of Y) is frozen at the node's transform when it first configures and does not follow the node afterward -- a node that moves far from its start loses whatever crosses that boundary. The box's TOP does grow automatically as a plume rises past it (periodically, a few blocks at a time, up to 3x the configured height), so vertical headroom mostly takes care of itself; lateral spread past [member domain_size]'s X/Z does not. There is no pressure projection, so the flow is not divergence-free -- its spread comes from a diffusion term standing in for that, the same technique Stam's stable-fluids method uses for viscosity. Colliders (up to 4, see [member colliders]) are voxelized solids (forced empty and still every step), not a proper no-slip/free-slip boundary.
 	</description>
 	<tutorials>
@@ -43,6 +44,21 @@
 		</member>
 		<member name="collider_radius" type="float" setter="set_collider_radius" getter="get_collider_radius" default="0.0">
 			Fallback radius (meters) for entries in [member colliders] that are not a sphere-shaped [CollisionShape3D]/[CollisionObject3D]. [code]0[/code] disables such an entry.
+		</member>
+		<member name="volumetric_render" type="bool" setter="set_volumetric_render" getter="get_volumetric_render" default="true">
+			Draws the gas through a [FogVolume] + [FogMaterial] (see the class description for the [member Environment.volumetric_fog_enabled] requirement). Turning this off frees the [FogVolume] and its baked texture.
+		</member>
+		<member name="fog_density" type="float" setter="set_fog_density" getter="get_fog_density" default="24.0">
+			[member FogMaterial.density] on the managed [FogMaterial] -- multiplies the solver's raw density values (roughly [code]0..1[/code]) to a visible opacity. Raise it if the smoke looks too faint, lower it if it looks solid/opaque.
+		</member>
+		<member name="fog_albedo" type="Color" setter="set_fog_albedo" getter="get_fog_albedo" default="Color(1, 1, 1, 1)">
+			[member FogMaterial.albedo] on the managed [FogMaterial] -- the smoke's scattering colour.
+		</member>
+		<member name="debug_point_cloud" type="bool" setter="set_debug_point_cloud" getter="get_debug_point_cloud" default="false">
+			Also (or instead) draws a debug point cloud (a [MultiMesh] of small cubes, one per grid cell above [member render_threshold], colour-ramped by density) -- useful to sanity-check the raw simulation data against the shaded [member volumetric_render] result, or as a fallback when volumetric fog can't be enabled in the scene.
+		</member>
+		<member name="render_threshold" type="float" setter="set_render_threshold" getter="get_render_threshold" default="0.01">
+			Minimum density for a cell to appear in [member debug_point_cloud]. Has no effect on [member volumetric_render], which draws the continuous density field as-is.
 		</member>
 	</members>
 </class>

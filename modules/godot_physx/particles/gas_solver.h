@@ -88,10 +88,21 @@ public:
 	void set_colliders(const Vector<Vector3> &p_world_positions, const Vector<float> &p_radii);
 
 	// Synchronous readback: cell world positions + density for every active
-	// cell above p_density_threshold. Used by the node to build a MultiMesh.
-	// Blocking -- fine at this solver's cell counts (tens of thousands), not
-	// meant for a tight per-frame budget the way the async MPM path is.
+	// cell above p_density_threshold. Used by the node to build a debug-view
+	// MultiMesh. Blocking -- fine at this solver's cell counts (tens of
+	// thousands), not meant for a tight per-frame budget the way the async
+	// MPM path is.
 	void get_render_cells(float p_density_threshold, Vector<Vector3> &r_positions, Vector<float> &r_density) const;
+
+	// Synchronous readback: every cell's density (no threshold), densely
+	// packed in x + y*dims.x + z*dims.x*dims.y order -- ready to slice
+	// straight into an ImageTexture3D (r_dims.z slices of r_dims.x*r_dims.y).
+	// r_dims tracks the box's CURRENT size (grows with _grow_if_needed), so
+	// the caller must recreate its texture whenever r_dims changes. r_anchor
+	// is the world position of cell (0,0,0)'s min corner (matches
+	// grid_anchor) and r_cell_size the world size of one cell -- together
+	// they place the dense box in world space for a FogVolume.
+	void get_density_grid(Vector<float> &r_density, Vector3i &r_dims, Vector3 &r_anchor, float &r_cell_size) const;
 
 private:
 	RenderingDevice *rd = nullptr;

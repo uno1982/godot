@@ -75,8 +75,13 @@ private:
 	SolverBackend solver = SOLVER_AUTO;
 	MPMFluidSolver *mpm = nullptr;
 
-	// MPM-only tuning (ignored on the PBD path).
-	Vector3 mpm_domain_size = Vector3(3, 3, 3);
+	// MPM-only tuning (ignored on the PBD path). Y also sets the implicit floor
+	// height below spawn (see the property doc) -- too small a default and a
+	// fluid dropped from any height freezes solid the moment it crosses that
+	// plane instead of falling onto a real floor below it, which reads just
+	// like a frozen/dead solver. 6m gives a normal drop room to actually reach
+	// a collider before the implicit floor would catch it.
+	Vector3 mpm_domain_size = Vector3(6, 6, 6);
 	int mpm_grid_resolution = 0; // 0 = auto from particle_size (~2 cells per particle)
 	int mpm_substeps = 5;
 	float mpm_stiffness = 6000.0;

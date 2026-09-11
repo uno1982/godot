@@ -32,12 +32,20 @@
 
 #include "../particles/gas_solver.h"
 
+#include "core/io/image.h"
 #include "core/object/class_db.h"
+#include "core/os/os.h"
+#include "scene/3d/fog_volume.h"
 #include "scene/3d/physics/collision_object_3d.h"
 #include "scene/3d/physics/collision_shape_3d.h"
+#include "scene/main/viewport.h"
+#include "scene/resources/3d/fog_material.h"
 #include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/3d/sphere_shape_3d.h"
+#include "scene/resources/environment.h"
+#include "scene/resources/image_texture.h"
 #include "scene/resources/material.h"
+#include "scene/resources/3d/world_3d.h"
 #include "servers/rendering/rendering_server.h"
 
 PhysXGas3D::~PhysXGas3D() {
@@ -55,6 +63,43 @@ void PhysXGas3D::set_domain_size(const Vector3 &p_size) {
 void PhysXGas3D::set_cell_size(float p_size) {
 	cell_size = MAX(p_size, 0.005f);
 	configured = false;
+}
+
+void PhysXGas3D::set_volumetric_render(bool p_enabled) {
+	volumetric_render = p_enabled;
+	if (!volumetric_render && fog_volume != nullptr) {
+		fog_volume->queue_free();
+		fog_volume = nullptr;
+		density_texture.unref();
+		density_texture_dims = Vector3i();
+	}
+}
+
+void PhysXGas3D::set_fog_density(float p_density) {
+	fog_density = MAX(p_density, 0.0f);
+	if (fog_material.is_valid()) {
+		fog_material->set_density(fog_density);
+	}
+}
+
+void PhysXGas3D::set_fog_albedo(const Color &p_color) {
+	fog_albedo = p_color;
+	if (fog_material.is_valid()) {
+		fog_material->set_albedo(fog_albedo);
+	}
+}
+
+void PhysXGas3D::set_debug_point_cloud(bool p_enabled) {
+	debug_point_cloud = p_enabled;
+	if (!debug_point_cloud && multimesh.is_valid()) {
+		RenderingServer *rs = RenderingServer::get_singleton();
+		if (mm_instance.is_valid()) {
+			rs->free_rid(mm_instance);
+			mm_instance = RID();
+		}
+		rs->free_rid(multimesh);
+		multimesh = RID();
+	}
 }
 
 void PhysXGas3D::_ensure_configured() {
@@ -134,7 +179,110 @@ void PhysXGas3D::_step(double p_delta) {
 }
 
 void PhysXGas3D::_update_render() {
-	if (solver == nullptr || multimesh.is_null()) {
+	if (solver == nullptr) {
+		return;
+	}
+	if (volumetric_render) {
+		_ensure_fog_volume();
+		_update_volumetric_render();
+	}
+	if (debug_point_cloud) {
+		_ensure_point_cloud();
+		_update_point_cloud_render();
+	}
+}
+
+void PhysXGas3D::_ensure_fog_volume() {
+	if (fog_volume != nullptr) {
+		return;
+	}
+	fog_material.instantiate();
+	fog_material->set_density(fog_density);
+	fog_material->set_albedo(fog_albedo);
+
+	fog_volume = memnew(FogVolume);
+	fog_volume->set_shape(RSE::FOG_VOLUME_SHAPE_BOX);
+	fog_volume->set_material(fog_material);
+	// The solver's box is frozen in WORLD space at configure() (see
+	// GasSolver::configure / _grow_if_needed) and does not follow this
+	// node's transform -- top_level keeps the FogVolume's own position/size
+	// in world space too, set directly from grid_anchor each update instead
+	// of composing with this node's (possibly since-moved) transform.
+	fog_volume->set_as_top_level(true);
+	add_child(fog_volume, false, INTERNAL_MODE_BACK);
+}
+
+void PhysXGas3D::_update_volumetric_render() {
+	Vector<float> density;
+	Vector3i dims;
+	Vector3 anchor;
+	float grid_cell_size = cell_size;
+	solver->get_density_grid(density, dims, anchor, grid_cell_size);
+	if (dims.x <= 0 || dims.y <= 0 || dims.z <= 0) {
+		return;
+	}
+
+	// One Image slice per Z layer (dims.x * dims.y each) -- ImageTexture3D's
+	// native layout.
+	Vector<Ref<Image>> slices;
+	slices.resize(dims.z);
+	const int slice_floats = dims.x * dims.y;
+	for (int z = 0; z < dims.z; z++) {
+		Vector<uint8_t> bytes;
+		bytes.resize(slice_floats * (int)sizeof(float));
+		memcpy(bytes.ptrw(), density.ptr() + z * slice_floats, bytes.size());
+		slices.write[z] = Image::create_from_data(dims.x, dims.y, false, Image::FORMAT_RF, bytes);
+	}
+
+	if (density_texture.is_null() || density_texture_dims != dims) {
+		density_texture.instantiate();
+		density_texture->create(Image::FORMAT_RF, dims.x, dims.y, dims.z, false, slices);
+		density_texture_dims = dims;
+		fog_material->set_density_texture(density_texture);
+	} else {
+		density_texture->update(slices);
+	}
+
+	const Vector3 world_size = Vector3(dims) * grid_cell_size;
+	fog_volume->set_size(world_size);
+	fog_volume->set_position(anchor + world_size * 0.5f);
+}
+
+void PhysXGas3D::_ensure_point_cloud() {
+	if (multimesh.is_valid()) {
+		return;
+	}
+	Ref<BoxMesh> box;
+	box.instantiate();
+	box->set_size(Vector3(1, 1, 1) * (cell_size * 0.9f));
+	Ref<StandardMaterial3D> mat;
+	mat.instantiate();
+	mat->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
+	mat->set_transparency(BaseMaterial3D::TRANSPARENCY_ALPHA);
+	mat->set_shading_mode(BaseMaterial3D::SHADING_MODE_UNSHADED);
+	box->surface_set_material(0, mat);
+	cell_mesh = box;
+
+	RenderingServer *rs = RenderingServer::get_singleton();
+	// Sized for the largest domain a 96-block box at 4 cells/block could
+	// hold; get_render_cells() clamps to whatever is actually allocated,
+	// this just bounds the MultiMesh instance buffer.
+	const int cap = 128 * 128 * 128;
+	multimesh = rs->multimesh_create();
+	rs->multimesh_allocate_data(multimesh, cap, RSE::MULTIMESH_TRANSFORM_3D, true);
+	rs->multimesh_set_mesh(multimesh, cell_mesh->get_rid());
+	rs->multimesh_set_visible_instances(multimesh, 0);
+
+	// World-space positions are written directly into the instance
+	// transforms (see _update_point_cloud_render), so the RS instance itself
+	// never moves -- same pattern as the fluid node's foam layer.
+	mm_instance = rs->instance_create2(multimesh, get_world_3d()->get_scenario());
+	rs->instance_set_transform(mm_instance, Transform3D());
+	rs->instance_set_custom_aabb(mm_instance, AABB(Vector3(-100000, -100000, -100000), Vector3(200000, 200000, 200000)));
+}
+
+void PhysXGas3D::_update_point_cloud_render() {
+	if (multimesh.is_null()) {
 		return;
 	}
 	Vector<Vector3> positions;
@@ -160,35 +308,10 @@ void PhysXGas3D::_notification(int p_what) {
 			if (solver == nullptr) {
 				solver = memnew(GasSolver);
 			}
-			if (multimesh.is_null()) {
-				Ref<BoxMesh> box;
-				box.instantiate();
-				box->set_size(Vector3(1, 1, 1) * (cell_size * 0.9f));
-				Ref<StandardMaterial3D> mat;
-				mat.instantiate();
-				mat->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
-				mat->set_transparency(BaseMaterial3D::TRANSPARENCY_ALPHA);
-				mat->set_shading_mode(BaseMaterial3D::SHADING_MODE_UNSHADED);
-				box->surface_set_material(0, mat);
-				cell_mesh = box;
-
-				RenderingServer *rs = RenderingServer::get_singleton();
-				// Sized for the largest domain a 96-block box at 4 cells/block
-				// could hold; get_render_cells() clamps to whatever is actually
-				// allocated, this just bounds the MultiMesh instance buffer.
-				const int cap = 128 * 128 * 128;
-				multimesh = rs->multimesh_create();
-				rs->multimesh_allocate_data(multimesh, cap, RSE::MULTIMESH_TRANSFORM_3D, true);
-				rs->multimesh_set_mesh(multimesh, cell_mesh->get_rid());
-				rs->multimesh_set_visible_instances(multimesh, 0);
-
-				// World-space positions are written directly into the instance
-				// transforms (see _update_render), so the RS instance itself
-				// never moves -- same pattern as the fluid node's foam layer.
-				mm_instance = rs->instance_create2(multimesh, get_world_3d()->get_scenario());
-				rs->instance_set_transform(mm_instance, Transform3D());
-				rs->instance_set_custom_aabb(mm_instance, AABB(Vector3(-100000, -100000, -100000), Vector3(200000, 200000, 200000)));
-			}
+			// The FogVolume and the point-cloud MultiMesh are both created
+			// lazily, in _update_render, gated on volumetric_render /
+			// debug_point_cloud -- no point paying for either until the
+			// corresponding render path is actually enabled.
 			set_physics_process_internal(true);
 		} break;
 		case NOTIFICATION_EXIT_WORLD: {
@@ -201,11 +324,35 @@ void PhysXGas3D::_notification(int p_what) {
 				RenderingServer::get_singleton()->free_rid(multimesh);
 				multimesh = RID();
 			}
+			if (fog_volume != nullptr) {
+				fog_volume->queue_free();
+				fog_volume = nullptr;
+			}
+			density_texture.unref();
+			density_texture_dims = Vector3i();
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
 			_step(get_physics_process_delta_time());
 		} break;
 	}
+}
+
+PackedStringArray PhysXGas3D::get_configuration_warnings() const {
+	PackedStringArray warnings = Node3D::get_configuration_warnings();
+	if (!volumetric_render) {
+		return warnings;
+	}
+	if (OS::get_singleton()->get_current_rendering_method() != "forward_plus") {
+		warnings.push_back(RTR("PhysXGas3D's volumetric render needs the Forward+ renderer (it draws through a FogVolume)."));
+		return warnings;
+	}
+	if (is_inside_tree() && get_viewport() != nullptr && get_viewport()->find_world_3d().is_valid()) {
+		Ref<Environment> environment = get_viewport()->find_world_3d()->get_environment();
+		if (environment.is_valid() && !environment->is_volumetric_fog_enabled()) {
+			warnings.push_back(RTR("PhysXGas3D needs volumetric fog enabled in the scene's Environment to be visible (it renders through a FogVolume) -- otherwise it silently draws nothing. Turn off Volumetric Render to use the debug point cloud instead."));
+		}
+	}
+	return warnings;
 }
 
 void PhysXGas3D::_bind_methods() {
@@ -231,6 +378,16 @@ void PhysXGas3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_colliders"), &PhysXGas3D::get_colliders);
 	ClassDB::bind_method(D_METHOD("set_collider_radius", "radius"), &PhysXGas3D::set_collider_radius);
 	ClassDB::bind_method(D_METHOD("get_collider_radius"), &PhysXGas3D::get_collider_radius);
+	ClassDB::bind_method(D_METHOD("set_volumetric_render", "enabled"), &PhysXGas3D::set_volumetric_render);
+	ClassDB::bind_method(D_METHOD("get_volumetric_render"), &PhysXGas3D::get_volumetric_render);
+	ClassDB::bind_method(D_METHOD("set_fog_density", "density"), &PhysXGas3D::set_fog_density);
+	ClassDB::bind_method(D_METHOD("get_fog_density"), &PhysXGas3D::get_fog_density);
+	ClassDB::bind_method(D_METHOD("set_fog_albedo", "color"), &PhysXGas3D::set_fog_albedo);
+	ClassDB::bind_method(D_METHOD("get_fog_albedo"), &PhysXGas3D::get_fog_albedo);
+	ClassDB::bind_method(D_METHOD("set_debug_point_cloud", "enabled"), &PhysXGas3D::set_debug_point_cloud);
+	ClassDB::bind_method(D_METHOD("get_debug_point_cloud"), &PhysXGas3D::get_debug_point_cloud);
+	ClassDB::bind_method(D_METHOD("set_render_threshold", "threshold"), &PhysXGas3D::set_render_threshold);
+	ClassDB::bind_method(D_METHOD("get_render_threshold"), &PhysXGas3D::get_render_threshold);
 
 	ADD_GROUP("Domain", "");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "domain_size", PROPERTY_HINT_NONE, "suffix:m"), "set_domain_size", "get_domain_size");
@@ -247,4 +404,10 @@ void PhysXGas3D::_bind_methods() {
 	ADD_GROUP("Collider", "collider");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "colliders", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_colliders", "get_colliders");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collider_radius", PROPERTY_HINT_RANGE, "0.0,3.0,0.01,suffix:m"), "set_collider_radius", "get_collider_radius");
+	ADD_GROUP("Rendering", "");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "volumetric_render"), "set_volumetric_render", "get_volumetric_render");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fog_density", PROPERTY_HINT_RANGE, "0.0,32.0,0.1"), "set_fog_density", "get_fog_density");
+	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "fog_albedo"), "set_fog_albedo", "get_fog_albedo");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "debug_point_cloud"), "set_debug_point_cloud", "get_debug_point_cloud");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "render_threshold", PROPERTY_HINT_RANGE, "0.0,1.0,0.005"), "set_render_threshold", "get_render_threshold");
 }

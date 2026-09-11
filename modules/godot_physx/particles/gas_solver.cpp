@@ -385,3 +385,42 @@ void GasSolver::get_render_cells(float p_density_threshold, Vector<Vector3> &r_p
 		}
 	}
 }
+
+void GasSolver::get_density_grid(Vector<float> &r_density, Vector3i &r_dims, Vector3 &r_anchor, float &r_cell_size) const {
+	r_density.clear();
+	r_dims = Vector3i();
+	r_anchor = grid_anchor;
+	r_cell_size = settings.cell_size;
+	if (rd == nullptr || buf_grid_a.is_null()) {
+		return;
+	}
+	const Vector3i dims = settings.box_blocks * BLK;
+	r_density.resize(dims.x * dims.y * dims.z); // zero-initialized: any cell whose block hasn't landed in slot_block yet (shouldn't happen -- box is fully pre-touched) reads as empty
+	float *w = r_density.ptrw();
+	memset(w, 0, r_density.size() * sizeof(float));
+
+	RID cur = a_is_current ? buf_grid_a : buf_grid_b;
+	Vector<uint8_t> raw = rd->buffer_get_data(cur, 0, max_blocks * BCELLS * 4 * sizeof(float));
+	if (raw.size() < max_blocks * BCELLS * 4 * (int)sizeof(float)) {
+		return;
+	}
+	const float *data = (const float *)raw.ptr();
+
+	for (int slot = 0; slot < slot_block.size(); slot++) {
+		const Vector3i bc = slot_block[slot];
+		for (int lz = 0; lz < BLK; lz++) {
+			for (int ly = 0; ly < BLK; ly++) {
+				for (int lx = 0; lx < BLK; lx++) {
+					const int lin = (lz * BLK + ly) * BLK + lx;
+					const int idx = (slot * BCELLS + lin) * 4;
+					const Vector3i c(bc.x * BLK + lx, bc.y * BLK + ly, bc.z * BLK + lz);
+					if (c.x < 0 || c.y < 0 || c.z < 0 || c.x >= dims.x || c.y >= dims.y || c.z >= dims.z) {
+						continue; // a block beyond the current (possibly since-shrunk-in-code, never in practice) box -- defensive only
+					}
+					w[c.x + c.y * dims.x + c.z * dims.x * dims.y] = data[idx + 3];
+				}
+			}
+		}
+	}
+	r_dims = dims;
+}

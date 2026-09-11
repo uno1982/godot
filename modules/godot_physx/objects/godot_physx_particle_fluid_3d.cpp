@@ -81,6 +81,16 @@ struct GodotPhysXFluidIsosurface : public PxParticleSystemCallback {
 	bool surface_pending = false;
 	bool foam_pending = false;
 
+	// onPostSolve kicks the smoothing (+anisotropy) kernel and stops there;
+	// finish_extraction() -- called once per fluid from the space, after every
+	// fluid's onPostSolve has already fired -- does the sync + CPU outlier clamp
+	// + extractIsosurface kick. See finish_extraction() for why.
+	bool extraction_pending = false;
+	PxGpuParticleSystem *pending_gps = nullptr;
+	PxU32 pending_n = 0;
+	CUstream pending_stream = nullptr;
+	bool pending_aniso = false;
+
 	// Second extractor over the diffuse (foam) particles. Coarser grid: foam is
 	// meant to read as froth, not a smooth skin, and the particle count is low.
 	PxSparseGridIsosurfaceExtractor *foam_extractor = nullptr;
@@ -259,6 +269,38 @@ struct GodotPhysXFluidIsosurface : public PxParticleSystemCallback {
 		if (use_aniso) {
 			anisotropy->generateAnisotropy(p_gps.mDevicePtr, gps.mCommonData.mMaxParticles, p_stream);
 		}
+
+		// Defer the sync + CPU outlier clamp + extract kick to finish_extraction(),
+		// called once per fluid from the space right after fetchResults() returns
+		// -- see there for why: with N concurrent PxPBDParticleSystems, PhysX
+		// invokes each one's onPostSolve in turn *during* fetchResults, so if the
+		// sync happened inline here, system 2's smoothing kernel would not even be
+		// issued until system 1's callback finished blocking on its own sync --
+		// N systems serialize instead of sharing one pipelined GPU dispatch.
+		// mHostPtr / the stream are PhysX-owned resources that stay valid until
+		// the next simulate() call, so caching them across the callback return is
+		// safe within this step's window.
+		pending_gps = &gps;
+		pending_n = n;
+		pending_stream = p_stream;
+		pending_aniso = use_aniso;
+		extraction_pending = true;
+	}
+
+	// Called once per fluid, after every fluid's onPostSolve has already kicked
+	// its smoothing kernel (see onPostSolve) -- so by the time this fluid's sync
+	// blocks, the other fluids' kernels are usually already running or done,
+	// instead of not yet issued.
+	void finish_extraction() {
+		if (!extraction_pending) {
+			return;
+		}
+		extraction_pending = false;
+		PxGpuParticleSystem &gps = *pending_gps;
+		const PxU32 n = pending_n;
+		CUstream p_stream = pending_stream;
+		const bool use_aniso = pending_aniso;
+
 		// The one unavoidable sync: the outlier clamp below reads the smoothed
 		// positions back to the host.
 		cuda->getCudaContext()->streamSynchronize(p_stream);
@@ -907,6 +949,12 @@ void GodotPhysXParticleFluid3D::emit(const Vector<Vector3> &p_positions, const V
 	write_head = (write_head + n) % capacity;
 	active_count = MIN(active_count + n, capacity);
 	px_buffer->setNbActiveParticles(active_count);
+}
+
+void GodotPhysXParticleFluid3D::finish_isosurface_extraction() {
+	if (iso) {
+		iso->finish_extraction();
+	}
 }
 
 void GodotPhysXParticleFluid3D::read_back() {

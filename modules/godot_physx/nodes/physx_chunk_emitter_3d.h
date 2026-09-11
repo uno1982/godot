@@ -84,10 +84,19 @@ private:
 	float spread_degrees = 55.0; // cone half-angle around the burst direction; 180 = omnidirectional
 	float spin_impulse = 6.0; // max random angular velocity, rad/s
 	float lifetime = 5.0; // seconds before a chunk is recycled even under budget
+	float shrink_time = 0.0; // seconds before end-of-lifetime a chunk scales to 0 instead of popping; 0 = pop (default)
 	int max_active = 200; // hard cap; oldest chunks are freed to make room
 	uint32_t collision_layer = 1;
 	uint32_t collision_mask = 1;
 	real_t density = 1200.0; // kg/m^3, used to derive chunk mass from its volume
+	// Defaults match the space's default PxMaterial (0.5 / 0.5 / 0.0) and no
+	// damping, i.e. what a chunk got before these existed -- behaviour-neutral
+	// until set. Crank friction/damp up for something that should pile and stop
+	// (snow) instead of skittering (rubble).
+	real_t friction = 0.5;
+	real_t bounce = 0.0;
+	real_t linear_damp = 0.0;
+	real_t angular_damp = 0.0;
 
 	bool emitting = false; // continuous stream from the node's own position
 	float emission_rate = 10.0; // chunks/sec while emitting
@@ -133,6 +142,8 @@ public:
 	float get_spin_impulse() const { return spin_impulse; }
 	void set_lifetime(float p_v);
 	float get_lifetime() const { return lifetime; }
+	void set_shrink_time(float p_v);
+	float get_shrink_time() const { return shrink_time; }
 	void set_max_active(int p_v);
 	int get_max_active() const { return max_active; }
 	void set_collision_layer(uint32_t p_v);
@@ -141,6 +152,14 @@ public:
 	uint32_t get_collision_mask() const { return collision_mask; }
 	void set_density(real_t p_v);
 	real_t get_density() const { return density; }
+	void set_friction(real_t p_v);
+	real_t get_friction() const { return friction; }
+	void set_bounce(real_t p_v);
+	real_t get_bounce() const { return bounce; }
+	void set_linear_damp(real_t p_v);
+	real_t get_linear_damp() const { return linear_damp; }
+	void set_angular_damp(real_t p_v);
+	real_t get_angular_damp() const { return angular_damp; }
 	void set_chunk_mesh(const Ref<Mesh> &p_v);
 	Ref<Mesh> get_chunk_mesh() const { return chunk_mesh; }
 

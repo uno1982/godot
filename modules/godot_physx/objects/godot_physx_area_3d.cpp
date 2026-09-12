@@ -238,6 +238,111 @@ void GodotPhysXArea3D::report_body_overlap(GodotPhysXBody3D *p_body, int p_body_
 	st.delta += p_entered ? 1 : -1;
 }
 
+void GodotPhysXArea3D::poll_area_overlap(GodotPhysXArea3D *p_other) {
+	if (!p_other || area_monitor_callback.is_null()) {
+		return;
+	}
+	PxRigidActor *other_actor = p_other->get_px_actor();
+	if (!px_actor || !other_actor) {
+		return;
+	}
+	// Same bidirectional layer/mask convention as godot_physx_filter_shader()
+	// applies to every other collision pair in this module.
+	const bool collide = (collision_layer & p_other->get_collision_mask()) || (p_other->get_collision_layer() & collision_mask);
+	if (!collide) {
+		return;
+	}
+
+	const PxTransform self_pose = px_actor->getGlobalPose();
+	const PxTransform other_pose = other_actor->getGlobalPose();
+
+	const PxU32 nb_self = px_actor->getNbShapes();
+	const PxU32 nb_other = other_actor->getNbShapes();
+	LocalVector<PxShape *> self_shapes;
+	self_shapes.resize(nb_self);
+	px_actor->getShapes(self_shapes.ptr(), nb_self);
+	LocalVector<PxShape *> other_shapes;
+	other_shapes.resize(nb_other);
+	other_actor->getShapes(other_shapes.ptr(), nb_other);
+
+	HashSet<AreaOverlapKey, AreaOverlapKeyHasher> touching_now;
+	for (PxU32 i = 0; i < nb_self; i++) {
+		PxShape *ss = self_shapes[i];
+		if (!ss) {
+			continue;
+		}
+		const PxTransform self_shape_pose = self_pose * ss->getLocalPose();
+		const int self_idx = (int)reinterpret_cast<uintptr_t>(ss->userData);
+
+		for (PxU32 j = 0; j < nb_other; j++) {
+			PxShape *os = other_shapes[j];
+			if (!os) {
+				continue;
+			}
+			const PxTransform other_shape_pose = other_pose * os->getLocalPose();
+			const bool ov = PxGeometryQuery::overlap(ss->getGeometry(), self_shape_pose, os->getGeometry(), other_shape_pose);
+			if (!ov) {
+				continue;
+			}
+			const int other_idx = (int)reinterpret_cast<uintptr_t>(os->userData);
+			AreaOverlapKey key;
+			key.other_area_rid = p_other->get_self();
+			key.shape_pair = ((uint32_t)other_idx << 16) | ((uint32_t)self_idx & 0xFFFF);
+			touching_now.insert(key);
+		}
+	}
+
+	// touching_areas holds state for EVERY other area this one polls against,
+	// not just p_other -- only add/remove p_other's own keys below, never
+	// blanket-replace the set (this area may be polled against several other
+	// areas in the same step's _detect_area_overlaps() pass).
+	const RID other_rid = p_other->get_self();
+
+	// New pairs since the last poll of this specific p_other -> enter.
+	for (const AreaOverlapKey &key : touching_now) {
+		if (!touching_areas.has(key)) {
+			AreaOverlapState &st = pending_areas[key];
+			st.instance_id = p_other->get_instance_id();
+			st.delta += 1;
+		}
+	}
+	// This other area's pairs that stopped touching -> exit.
+	LocalVector<AreaOverlapKey> stale;
+	for (const AreaOverlapKey &key : touching_areas) {
+		if (key.other_area_rid != other_rid) {
+			continue; // belongs to a different p_other -- not this poll's concern
+		}
+		if (!touching_now.has(key)) {
+			AreaOverlapState &st = pending_areas[key];
+			st.instance_id = p_other->get_instance_id();
+			st.delta -= 1;
+			stale.push_back(key);
+		}
+	}
+	for (const AreaOverlapKey &key : stale) {
+		touching_areas.erase(key);
+	}
+	for (const AreaOverlapKey &key : touching_now) {
+		touching_areas.insert(key);
+	}
+}
+
+void GodotPhysXArea3D::area_removed(GodotPhysXArea3D *p_other) {
+	if (!p_other) {
+		return;
+	}
+	const RID other_rid = p_other->get_self();
+	LocalVector<AreaOverlapKey> stale;
+	for (const AreaOverlapKey &key : touching_areas) {
+		if (key.other_area_rid == other_rid) {
+			stale.push_back(key);
+		}
+	}
+	for (const AreaOverlapKey &key : stale) {
+		touching_areas.erase(key);
+	}
+}
+
 void GodotPhysXArea3D::set_param(PhysicsServer3D::AreaParameter p_param, const Variant &p_value) {
 	switch (p_param) {
 		case PhysicsServer3D::AREA_PARAM_GRAVITY_OVERRIDE_MODE:
@@ -351,25 +456,45 @@ Vector3 GodotPhysXArea3D::wind_at(const Vector3 &p_position) const {
 }
 
 void GodotPhysXArea3D::call_queries() {
-	if (monitor_callback.is_null() || pending.is_empty()) {
-		return;
-	}
-	Variant args[5];
-	const Variant *argp[5] = { &args[0], &args[1], &args[2], &args[3], &args[4] };
+	if (!monitor_callback.is_null() && !pending.is_empty()) {
+		Variant args[5];
+		const Variant *argp[5] = { &args[0], &args[1], &args[2], &args[3], &args[4] };
 
-	for (const KeyValue<OverlapKey, OverlapState> &E : pending) {
-		if (E.value.delta == 0) {
-			continue;
+		for (const KeyValue<OverlapKey, OverlapState> &E : pending) {
+			if (E.value.delta == 0) {
+				continue;
+			}
+			args[0] = E.value.delta > 0 ? PhysicsServer3D::AREA_BODY_ADDED : PhysicsServer3D::AREA_BODY_REMOVED;
+			args[1] = E.key.body_rid;
+			args[2] = E.value.instance_id;
+			args[3] = (int)(E.key.shape_pair >> 16); // body shape
+			args[4] = (int)(E.key.shape_pair & 0xFFFF); // area shape
+
+			Callable::CallError ce;
+			Variant ret;
+			monitor_callback.callp(argp, 5, ret, ce);
 		}
-		args[0] = E.value.delta > 0 ? PhysicsServer3D::AREA_BODY_ADDED : PhysicsServer3D::AREA_BODY_REMOVED;
-		args[1] = E.key.body_rid;
-		args[2] = E.value.instance_id;
-		args[3] = (int)(E.key.shape_pair >> 16); // body shape
-		args[4] = (int)(E.key.shape_pair & 0xFFFF); // area shape
-
-		Callable::CallError ce;
-		Variant ret;
-		monitor_callback.callp(argp, 5, ret, ce);
+		pending.clear();
 	}
-	pending.clear();
+
+	if (!area_monitor_callback.is_null() && !pending_areas.is_empty()) {
+		Variant args[5];
+		const Variant *argp[5] = { &args[0], &args[1], &args[2], &args[3], &args[4] };
+
+		for (const KeyValue<AreaOverlapKey, AreaOverlapState> &E : pending_areas) {
+			if (E.value.delta == 0) {
+				continue;
+			}
+			args[0] = E.value.delta > 0 ? PhysicsServer3D::AREA_BODY_ADDED : PhysicsServer3D::AREA_BODY_REMOVED;
+			args[1] = E.key.other_area_rid;
+			args[2] = E.value.instance_id;
+			args[3] = (int)(E.key.shape_pair >> 16); // other area's shape
+			args[4] = (int)(E.key.shape_pair & 0xFFFF); // this area's shape
+
+			Callable::CallError ce;
+			Variant ret;
+			area_monitor_callback.callp(argp, 5, ret, ce);
+		}
+		pending_areas.clear();
+	}
 }

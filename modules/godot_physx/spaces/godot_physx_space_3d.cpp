@@ -310,6 +310,7 @@ void GodotPhysXSpace3D::step(real_t p_step) {
 	}
 
 	_apply_area_overrides();
+	_detect_area_overlaps();
 
 	px_scene->simulate((PxReal)p_step);
 	px_scene->fetchResults(true); // fills body contact buffers via g_contact_callback
@@ -375,6 +376,33 @@ void GodotPhysXSpace3D::step(real_t p_step) {
 void GodotPhysXSpace3D::body_removed_from_areas(GodotPhysXBody3D *p_body) {
 	for (GodotPhysXArea3D *area : areas) {
 		area->body_removed(p_body);
+	}
+}
+
+void GodotPhysXSpace3D::unregister_area(GodotPhysXArea3D *p_area) {
+	areas.erase(p_area);
+	for (GodotPhysXArea3D *area : areas) {
+		area->area_removed(p_area);
+	}
+}
+
+void GodotPhysXSpace3D::_detect_area_overlaps() {
+	// Naive O(n^2) over every registered area, run once per (monitoring,
+	// monitorable) pair per step -- real cost, unlike the free trigger-vs-body
+	// event path (see GodotPhysXArea3D's header comment). Fine for the small
+	// number of areas a scene actually wants area-to-area detection on; a
+	// broad-phase pre-filter would be the first lever if this ever shows up on
+	// a profile with many areas.
+	for (GodotPhysXArea3D *area : areas) {
+		if (!area->wants_area_monitoring()) {
+			continue;
+		}
+		for (GodotPhysXArea3D *other : areas) {
+			if (other == area || !other->is_monitorable()) {
+				continue;
+			}
+			area->poll_area_overlap(other);
+		}
 	}
 }
 

@@ -318,11 +318,21 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   `Generic6DOFJoint3D` linear/angular spring on each link to pull it back toward
   its rest pose (PhysX 5 removed joint projection, so a spring is the closest
   substitute).
-- **Not yet implemented:** separation-ray shapes; area-to-area detection (`Area3D`
-  monitoring another `Area3D`); center-of-mass and inertia tensor overrides; 6DOF
-  angular motors; joint softness / bias / restitution parameters. 6DOF linear and
-  angular springs are supported (mapped onto PhysX joint drives).
-  Unsupported shapes are treated as having no collision and log a warning once.
+- **Not yet implemented:** separation-ray shapes; center-of-mass and inertia
+  tensor overrides; 6DOF angular motors; joint softness / bias / restitution
+  parameters. 6DOF linear and angular springs are supported (mapped onto PhysX
+  joint drives). Unsupported shapes are treated as having no collision and log
+  a warning once.
+- **Area-to-area detection** (`Area3D` monitoring another `Area3D`) works, but
+  unlike every other collision pair in this module it costs real per-step
+  work: PhysX never reports trigger-trigger pairs (only trigger-vs-rigid), so
+  `GodotPhysXSpace3D` polls it manually every step with a naive O(n²) pass
+  over every `(monitoring, monitorable)` area pair, each a real shape-vs-shape
+  `PxGeometryQuery::overlap()` test. Both `monitoring` and `monitorable`
+  default to `true` on every `Area3D`, so this runs for every area pair by
+  default unless a scene explicitly opts areas out with `monitorable = false`.
+  Fine for the handful of areas a scene typically wants this on; revisit with
+  a broad-phase pre-filter if a scene ever has many mutually-monitoring areas.
 - **`HeightMapShape3D`** works — a `PxHeightField` quantized to 16 bits over the
   map's height range (so vertical resolution is `(max_height − min_height) /
   65535`). Like concave (trimesh) shapes, it is static/kinematic only. The GPU

@@ -33,6 +33,7 @@
 #include "core/math/transform_3d.h"
 #include "core/object/object_id.h"
 #include "core/templates/hash_map.h"
+#include "core/templates/hash_set.h"
 #include "core/templates/hashfuncs.h"
 #include "core/templates/local_vector.h"
 #include "core/templates/rid.h"
@@ -49,8 +50,17 @@ class GodotPhysXBody3D;
 
 // Trigger volume. Overlap with rigid bodies is detected via PhysX trigger shapes
 // and reported to Godot through the monitor callback. Gravity, damping and wind
-// overrides are applied to overlapping bodies by the space each step. Area-area
-// detection is not implemented (PhysX does not report trigger-trigger pairs).
+// overrides are applied to overlapping bodies by the space each step.
+//
+// Area-area overlap (one Area3D detecting another) is NOT delivered by a PhysX
+// trigger event -- PhysX never reports trigger-trigger pairs at all, only
+// trigger-vs-rigid. Instead GodotPhysXSpace3D polls every (monitoring area,
+// monitorable area) pair once per step with a manual shape-vs-shape overlap
+// test and diffs the result against last step's state to find enter/exit
+// transitions (see GodotPhysXSpace3D::_detect_area_overlaps() and
+// poll_area_overlap() below). This is real per-pair work every step, unlike
+// the free trigger-vs-body path -- see README.md's Area3D section for the
+// cost tradeoff.
 class GodotPhysXArea3D {
 public:
 	struct ShapeRef {
@@ -111,6 +121,27 @@ private:
 	};
 	HashMap<OverlapKey, OverlapState, OverlapKeyHasher> pending;
 
+	Callable area_monitor_callback;
+
+	// (other_area_rid, other_shape << 16 | self_shape) -- same key shape as
+	// OverlapKey above, keyed on the OTHER area's RID instead of a body's.
+	struct AreaOverlapKey {
+		RID other_area_rid;
+		uint32_t shape_pair = 0; // other_shape << 16 | self_shape
+		bool operator==(const AreaOverlapKey &p_o) const { return other_area_rid == p_o.other_area_rid && shape_pair == p_o.shape_pair; }
+	};
+	struct AreaOverlapKeyHasher {
+		static uint32_t hash(const AreaOverlapKey &p_k) { return hash_murmur3_one_32(p_k.shape_pair, p_k.other_area_rid.get_id()); }
+	};
+	struct AreaOverlapState {
+		ObjectID instance_id;
+		int delta = 0;
+	};
+	// Pairs touching as of the last poll_area_overlap() call, for enter/exit
+	// edge detection (there is no trigger event to diff against instead).
+	HashSet<AreaOverlapKey, AreaOverlapKeyHasher> touching_areas;
+	HashMap<AreaOverlapKey, AreaOverlapState, AreaOverlapKeyHasher> pending_areas;
+
 	void _destroy_actor();
 	void _build_actor();
 	void _apply_filter_data();
@@ -147,6 +178,12 @@ public:
 
 	void set_monitor_callback(const Callable &p_callback) { monitor_callback = p_callback; }
 
+	void set_area_monitor_callback(const Callable &p_callback) { area_monitor_callback = p_callback; }
+	// True once Area3D::set_monitoring(true) has wired a real callback -- Godot
+	// clears it back to a null Callable on set_monitoring(false), so this is the
+	// only "does this area actively look for other areas" signal that exists.
+	bool wants_area_monitoring() const { return !area_monitor_callback.is_null(); }
+
 	void set_param(PhysicsServer3D::AreaParameter p_param, const Variant &p_value);
 	Variant get_param(PhysicsServer3D::AreaParameter p_param) const;
 
@@ -175,6 +212,18 @@ public:
 	void report_body_overlap(GodotPhysXBody3D *p_body, int p_body_shape, int p_area_shape, bool p_entered);
 	// Called when a body leaves the simulation while still overlapping.
 	void body_removed(GodotPhysXBody3D *p_body) { overlapping_bodies.erase(p_body); }
+
+	// Called once per physics step, once per (this, p_other) pair where this
+	// area wants_area_monitoring() and p_other->is_monitorable() -- see
+	// GodotPhysXSpace3D::_detect_area_overlaps(). Runs a manual shape-vs-shape
+	// overlap test (PhysX has no trigger-trigger event to drive this from
+	// instead) and diffs against touching_areas to queue enter/exit events.
+	void poll_area_overlap(GodotPhysXArea3D *p_other);
+	// Called when another area leaves the space while still touching this one.
+	// Matches body_removed()'s precedent: drops the stale state without
+	// synthesizing an exit event for it.
+	void area_removed(GodotPhysXArea3D *p_other);
+
 	// Called from flush_queries.
 	void call_queries();
 

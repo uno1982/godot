@@ -142,6 +142,18 @@ private:
 	// Crisper crests, but it needles fast particles, so keep it off while emitting.
 	bool surface_anisotropy = false;
 	RID array_mesh;
+	// Own world-space instance, like foam_mesh_instance below -- isosurface
+	// vertices come back in world space, and the mesh is only re-marched every
+	// Nth step (see _mpm_surface_tick), not every frame. Drawing it through
+	// set_base() on this node would mean whatever local-space conversion was
+	// baked in at the last mesh rebuild gets rendered through this node's
+	// CURRENT transform every frame in between -- fine for a stationary node
+	// (its transform never changes between rebuilds), but a node whose
+	// transform changes every frame (mounted on a moving/aiming camera) would
+	// show the whole mesh visibly swimming between rebuilds. A dedicated
+	// always-identity instance sidesteps this by never needing the conversion
+	// at all, the same way foam already avoids it.
+	RID array_mesh_instance;
 	Ref<Material> water_material;
 	uint32_t surface_mesh_version = 0;
 
@@ -182,6 +194,11 @@ private:
 	void _update_render();
 	void _update_surface_mesh();
 	void _commit_iso_mesh(RID p_mesh, PackedVector3Array &verts, PackedVector3Array &normals, PackedInt32Array &indices, const Ref<Material> &p_material, bool p_to_local, bool p_keep_largest_component, float p_feature_size);
+	// array_mesh_instance/foam_instance/foam_mesh_instance are raw RenderingServer
+	// instances, not this node's own -- GeometryInstance3D::set_gi_mode() (like
+	// material_override) only ever touches get_instance(), so VoxelGI/baked-light
+	// participation has to be reapplied to each of them by hand instead.
+	void _apply_gi_mode(RID p_instance) const;
 	void _emit_step(double p_delta);
 
 protected:

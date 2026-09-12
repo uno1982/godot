@@ -29,8 +29,35 @@ Visual Studio with the C++ workload and Windows SDK, the D3D12 Agility SDK):
   `CUDA_PATH`; open a fresh terminal afterwards). The end-user machine only
   needs an NVIDIA driver (`nvcuda.dll`), not the toolkit.
 
-Currently only the Win64 / MSVC build presets ship (`misc/physx_presets/`).
-Other platforms need an equivalent preset and PhysX's `generate_projects.sh`.
+Win64 / MSVC is the only build that has actually been run and tested. A Linux
+build has been *prepped but not verified* — `SCsub` has a `linuxbsd` branch and
+`misc/physx_presets/linux64-godot[-gpu].xml` presets exist, and
+`build_physx.py --platform linuxbsd` will attempt it, but nobody has run it
+against a real Linux toolchain yet. If you're the first to try, treat these as
+the checklist of what's still unconfirmed:
+
+- **Preset acceptance** — `linux64-godot.xml` uses `targetPlatform="linux"
+  compiler="clang"`, matching PhysX's own public preset naming from memory, not
+  from a tested run against this pinned `PHYSX_REF`. If `generate_projects.sh`
+  rejects it, check `physx/buildtools/presets/public/` in the cloned checkout
+  for the exact accepted spelling.
+- **Install `bin/` layout** — `SCsub` and `build_physx.py` guess
+  `bin/linux.clang.x86_64/release` for the static `.a` libraries (by analogy
+  with Windows' `bin/win.x86_64.vc143.mt/release`). Confirm this against what
+  the build actually installs and fix both files if it differs.
+- **GPU link mechanism** — the Windows GPU build links an import lib
+  (`PhysXGpu_64.lib`) for a DLL loaded at runtime; whether Linux needs the
+  equivalent `-lPhysXGpu_64` against `libPhysXGpu_64.so`, an rpath/
+  `LD_LIBRARY_PATH` entry instead, or nothing at link time at all (pure
+  `dlopen`) hasn't been checked.
+- The two bundled `misc/physx_patches/` (heightfield GPU boundary crash, Turing
+  `sm_75` SASS) are platform-generic source/CMake changes, not Windows-specific,
+  so they should apply and matter the same way on Linux — but that's also
+  unverified.
+
+CPU-only static libraries otherwise link the same way SCons resolves any Unix
+lib (`env.Append(LIBS=...)`), so the Linux CPU path is the smaller lift; the
+GPU/CUDA path is the bigger unknown.
 
 ### Step 1 — build the PhysX SDK
 
@@ -38,6 +65,10 @@ Other platforms need an equivalent preset and PhysX's `generate_projects.sh`.
 python modules/godot_physx/misc/build_physx.py            # CPU only
 python modules/godot_physx/misc/build_physx.py --gpu      # + GPU dynamics / fluid
 ```
+
+`--platform` defaults to the host OS (`windows` on Windows, `linuxbsd`
+elsewhere) — pass it explicitly to be sure, e.g. `--platform linuxbsd --gpu`.
+Run it on the machine you're building for.
 
 This clones NVIDIA's PhysX repo (pinned) into a `physx-sdk/` folder next to the
 Godot repo, applies the Godot-tuned preset, builds and installs it, then prints
@@ -321,7 +352,11 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   only, as in most engines.
 - **Cloth self-collision** is disabled; a cloth can pass through itself. Cloth
   tearing is not implemented.
-- Windows x86-64 is the only platform wired up in the build script so far.
+- Windows x86-64 is the only platform actually built and tested. Linux has been
+  prepped (`SCsub`, `misc/physx_presets/linux64-godot*.xml`,
+  `build_physx.py --platform linuxbsd`) but not run against a real toolchain —
+  see the Linux checklist under [Building](#building) for the specific
+  unknowns to resolve first if it doesn't work out of the box.
 
 ## Layout
 

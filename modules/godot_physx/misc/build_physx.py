@@ -13,8 +13,14 @@ The GPU build additionally needs the CUDA Toolkit installed (CUDA_PATH set) and
 copies nothing automatically -- PhysXGpu_64.dll from the install's bin/ must sit
 next to the Godot binary at runtime.
 
-Only the Win64 / MSVC presets ship here. Other platforms need an equivalent
-preset in physx_presets/ and PhysX's generate_projects.sh.
+Run this script on the machine you're building the module for -- --platform
+defaults to the host OS (windows / linuxbsd). The Linux presets
+(linux64-godot[-gpu].xml) are UNVERIFIED: nobody has run this script or built
+the module on Linux yet, only prepared it. If generate_projects.sh, the CMake
+build, or the later scons link step fails, see each preset file's header
+comment and README.md's Linux section for the specific unknowns to check
+first (preset platform/compiler naming, install bin/ layout, GPU link
+mechanism) before assuming something else is wrong.
 """
 
 import argparse
@@ -41,6 +47,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--gpu", action="store_true", help="also build the CUDA GPU projects (needs the CUDA Toolkit)")
     ap.add_argument(
+        "--platform",
+        choices=["windows", "linuxbsd"],
+        default="windows" if os.name == "nt" else "linuxbsd",
+        help="target platform / scons platform= value (default: autodetected from the host)",
+    )
+    ap.add_argument(
         "--src",
         metavar="DIR",
         help="PhysX checkout to build in; cloned here if absent (default: a 'physx-sdk' directory beside the Godot repo)",
@@ -50,10 +62,19 @@ def main():
     ap.add_argument("--config", default="release", choices=["release", "checked", "profile", "debug"])
     args = ap.parse_args()
 
-    preset = "vc17win64-godot-gpu" if args.gpu else "vc17win64-godot"
+    preset_base = "vc17win64-godot" if args.platform == "windows" else "linux64-godot"
+    preset = preset_base + "-gpu" if args.gpu else preset_base
     preset_file = os.path.join(PRESET_DIR, preset + ".xml")
     if not os.path.isfile(preset_file):
         sys.exit("missing preset: " + preset_file)
+    if args.platform == "linuxbsd":
+        print(
+            "NOTE: the %s preset is unverified -- no Linux build of this module has "
+            "been run yet. See its header comment and README.md's Linux section for "
+            "the specific unknowns (preset platform/compiler naming, install bin/ "
+            "layout, GPU link mechanism) if generate_projects.sh or the CMake build "
+            "fails here." % preset
+        )
 
     if args.gpu and not (os.environ.get("CUDA_PATH") or shutil.which("nvcc")):
         sys.exit("--gpu needs the CUDA Toolkit (set CUDA_PATH or put nvcc on PATH)")
@@ -117,14 +138,22 @@ def main():
     print()
     print("Build the module with:")
     print(
-        "    scons platform=windows target=editor physx_sdk=%s%s"
-        % (sdk.replace("\\", "/"), " physx_gpu=yes" if args.gpu else "")
+        "    scons platform=%s target=editor physx_sdk=%s%s"
+        % (args.platform, sdk.replace("\\", "/"), " physx_gpu=yes" if args.gpu else "")
     )
     if args.gpu:
-        dll = os.path.join(sdk, "bin", "win.x86_64.vc143.mt", args.config, "PhysXGpu_64.dll")
-        print()
-        print("Then copy the GPU runtime next to the Godot binary:")
-        print("    copy %s bin\\" % dll)
+        if args.platform == "windows":
+            dll = os.path.join(sdk, "bin", "win.x86_64.vc143.mt", args.config, "PhysXGpu_64.dll")
+            print()
+            print("Then copy the GPU runtime next to the Godot binary:")
+            print("    copy %s bin\\" % dll)
+        else:
+            # UNVERIFIED bin/ subdirectory name -- see linux64-godot-gpu.xml's
+            # header comment; check the actual install output and adjust.
+            so = os.path.join(sdk, "bin", "linux.clang.x86_64", args.config, "libPhysXGpu_64.so")
+            print()
+            print("Then copy the GPU runtime next to the Godot binary (path above is a guess -- verify it):")
+            print("    cp %s bin/" % so)
 
 
 if __name__ == "__main__":

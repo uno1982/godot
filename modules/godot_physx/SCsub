@@ -24,19 +24,38 @@ physx_gpu = ARGUMENTS.get("physx_gpu", "no") not in ("no", "0", "false", "False"
 physx_sdk = ARGUMENTS.get("physx_sdk", os.environ.get("PHYSX_SDK", ""))
 physx_inc = os.path.join(physx_sdk, "include")
 
+physx_static_libs = [
+    "PhysX_static_64",
+    "PhysXExtensions_static_64",
+    "PhysXPvdSDK_static_64",
+    "PhysXCooking_static_64",
+    "PhysXCommon_static_64",
+    "PhysXFoundation_static_64",
+]
+
 if env["platform"] == "windows":
-    # TODO: parameterize for target/arch/config and other platforms.
+    # TODO: parameterize for target/arch/config.
     physx_lib = os.path.join(physx_sdk, "bin", "win.x86_64.vc143.mt", "release")
-    physx_libs = [
-        "PhysX_static_64",
-        "PhysXExtensions_static_64",
-        "PhysXPvdSDK_static_64",
-        "PhysXCooking_static_64",
-        "PhysXCommon_static_64",
-        "PhysXFoundation_static_64",
-    ]
+    physx_libs = list(physx_static_libs)
     if physx_gpu:
         physx_libs.append("PhysXGpu_64")  # import lib for PhysXGpu_64.dll
+elif env["platform"] == "linuxbsd":
+    # UNVERIFIED: no Linux build of this module has been run yet (see
+    # misc/physx_presets/linux64-godot*.xml and README.md's Linux section).
+    # `bin/linux.clang.x86_64/release` matches PhysX's own Linux preset output
+    # layout, but has not been confirmed against an actual build here -- check
+    # it against whatever `install/linux64-godot/PhysX/bin/` actually contains
+    # and adjust if it differs.
+    physx_lib = os.path.join(physx_sdk, "bin", "linux.clang.x86_64", "release")
+    physx_libs = list(physx_static_libs)
+    if physx_gpu:
+        # UNVERIFIED: on Windows this links an import lib for a DLL loaded at
+        # runtime; the Linux equivalent (libPhysXGpu_64.so) may need a plain
+        # -l link plus an rpath/LD_LIBRARY_PATH entry instead, or may be
+        # dlopen'd by the SDK itself with no link-time dependency at all.
+        # Confirm against the actual GPU preset's install output before
+        # shipping a physx_gpu=yes Linux build.
+        physx_libs.append("PhysXGpu_64")
 else:
     physx_lib = ""
     physx_libs = []
@@ -68,6 +87,11 @@ else:
 env.Append(LIBPATH=[physx_lib])
 if env["platform"] == "windows":
     env.Append(LINKFLAGS=[x + ".lib" for x in physx_libs])
+elif env["platform"] == "linuxbsd":
+    # SCons' own LIBS mechanism resolves libFoo.a and adds -lFoo, so no
+    # per-platform name formatting is needed here the way MSVC's LINKFLAGS
+    # above needs the literal ".lib" suffix.
+    env.Append(LIBS=physx_libs)
 
 # MLS-MPM compute-fluid shaders (cross-vendor fallback for the PhysX GPU path).
 # Every pass #include's mpm_fluid_inc.glsl, which GLSL_HEADER does not see, so

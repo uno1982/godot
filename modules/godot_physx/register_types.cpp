@@ -35,6 +35,7 @@
 #include "nodes/physx_chunk_emitter_3d.h"
 #include "nodes/physx_cloth_3d.h"
 #include "nodes/physx_gas_3d.h"
+#include "nodes/physx_gas_emitter_3d.h"
 #include "nodes/physx_granular_3d.h"
 #include "nodes/physx_particle_fluid_3d.h"
 
@@ -72,6 +73,7 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(PhysXCloth3D);
 		GDREGISTER_CLASS(PhysXChunkEmitter3D);
 		GDREGISTER_CLASS(PhysXGas3D);
+		GDREGISTER_CLASS(PhysXGasEmitter3D);
 	}
 
 #ifdef TOOLS_ENABLED

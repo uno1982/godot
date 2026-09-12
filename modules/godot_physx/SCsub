@@ -116,6 +116,9 @@ _gas_glsl = (
     "gas_bs_clear.glsl",
     "gas_bs_clear_range.glsl",
     "gas_bs_curl.glsl",
+    "gas_bs_divergence.glsl",
+    "gas_bs_jacobi.glsl",
+    "gas_bs_project.glsl",
     "gas_bs_step.glsl",
 )
 _gas_glsl_dep = [os.path.join("particles", "gas_block_inc.glsl"), "#glsl_builders.py"]

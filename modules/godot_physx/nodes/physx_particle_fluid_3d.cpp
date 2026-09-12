@@ -1353,6 +1353,18 @@ void PhysXParticleFluid3D::_editor_preview_enter() {
 	rs->multimesh_set_mesh(preview_multimesh, preview_mesh->get_rid());
 	rs->multimesh_set_visible_instances(preview_multimesh, 0);
 	set_base(preview_multimesh);
+	// This is a fake CPU-animated preview, not the real simulated fluid --
+	// gi_mode is still a normal exported property, though, so Godot's own
+	// GeometryInstance3D::set_gi_mode() already applied INSTANCE_FLAG_USE_
+	// DYNAMIC_GI to this node's own instance (the one preview_multimesh just
+	// became the base of) the moment the scene loaded, regardless of editor
+	// vs runtime. Voxelizing a handful of small drifting preview spheres is
+	// what actually triggers VoxelGI's dynamic-object pass to produce a
+	// negative-size Rect2i and a garbage compute-dispatch count (reproduced
+	// and confirmed by isolating this node's gi_mode in an otherwise-empty
+	// editor session) -- force it back off here, since a fake preview has
+	// nothing real to contribute to GI anyway.
+	rs->instance_geometry_set_flag(get_instance(), RSE::INSTANCE_FLAG_USE_DYNAMIC_GI, false);
 }
 
 void PhysXParticleFluid3D::_editor_preview_exit() {

@@ -131,7 +131,7 @@ public:
 	}
 
 	void register_area(GodotPhysXArea3D *p_area) { areas.insert(p_area); }
-	void unregister_area(GodotPhysXArea3D *p_area) { areas.erase(p_area); }
+	void unregister_area(GodotPhysXArea3D *p_area);
 
 	void register_fluid(GodotPhysXParticleFluid3D *p_fluid) { fluids.insert(p_fluid); }
 	void unregister_fluid(GodotPhysXParticleFluid3D *p_fluid) { fluids.erase(p_fluid); }
@@ -160,4 +160,7 @@ private:
 
 	// Apply each area's gravity/damp/wind overrides to the bodies it contains.
 	void _apply_area_overrides();
+	// Manual area-vs-area overlap poll (PhysX reports no trigger-trigger event
+	// to drive this from instead -- see GodotPhysXArea3D's header comment).
+	void _detect_area_overlaps();
 };

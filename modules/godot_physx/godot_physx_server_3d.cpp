@@ -357,6 +357,12 @@ void GodotPhysXServer3D::area_set_monitor_callback(RID p_area, const Callable &p
 	area->set_monitor_callback(p_callback);
 }
 
+void GodotPhysXServer3D::area_set_area_monitor_callback(RID p_area, const Callable &p_callback) {
+	GodotPhysXArea3D *area = area_owner.get_or_null(p_area);
+	ERR_FAIL_NULL(area);
+	area->set_area_monitor_callback(p_callback);
+}
+
 void GodotPhysXServer3D::area_set_param(RID p_area, AreaParameter p_param, const Variant &p_value) {
 	// The scene tree writes default gravity to the space RID, which doubles as
 	// the space's default area.

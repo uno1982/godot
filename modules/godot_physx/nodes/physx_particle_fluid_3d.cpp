@@ -469,19 +469,17 @@ void PhysXParticleFluid3D::_mpm_step(double p_delta) {
 
 	if (want_surface) {
 		// The solver marches the isosurface on the GPU; we get back a triangle
-		// soup in world space and hand it to an ArrayMesh in this node's space.
+		// soup in world space and hand it to array_mesh as-is -- it draws
+		// through array_mesh_instance's own always-identity world-space
+		// instance, not this node's transform (see that member's comment: the
+		// mesh is only re-marched every SURFACE_EVERY steps, so baking a
+		// local-space conversion here would go stale the moment this node's
+		// transform changes again before the next re-mesh -- exactly the case
+		// for an emitter mounted on a moving/aiming camera).
 		PackedVector3Array verts, normals;
 		const int tris = mpm->get_surface_mesh(verts, normals);
 		rs->mesh_clear(array_mesh);
 		if (tris > 0) {
-			const Transform3D inv = get_global_transform().affine_inverse();
-			const Basis nb = inv.basis;
-			Vector3 *vw = verts.ptrw();
-			Vector3 *nw = normals.ptrw();
-			for (int i = 0; i < verts.size(); i++) {
-				vw[i] = inv.xform(vw[i]);
-				nw[i] = nb.xform(nw[i]).normalized();
-			}
 			Array arrays;
 			arrays.resize(RSE::ARRAY_MAX);
 			arrays[RSE::ARRAY_VERTEX] = verts;
@@ -490,6 +488,13 @@ void PhysXParticleFluid3D::_mpm_step(double p_delta) {
 			if (water_material.is_valid()) {
 				rs->mesh_surface_set_material(array_mesh, 0, water_material->get_rid());
 			}
+			// array_mesh no longer draws through this node's own instance (see
+			// array_mesh_instance's header comment), so the usual automatic
+			// GeometryInstance3D::material_override behaviour doesn't reach it
+			// anymore -- reapply it by hand to array_mesh_instance instead.
+			const Ref<Material> override_mat = get_material_override();
+			rs->instance_geometry_set_material_override(array_mesh_instance, override_mat.is_valid() ? override_mat->get_rid() : RID());
+			_apply_gi_mode(array_mesh_instance);
 		}
 		rs->multimesh_set_visible_instances(multimesh, 0);
 		return;
@@ -573,7 +578,10 @@ void PhysXParticleFluid3D::_make_fluid() {
 				m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
 				water_material = m;
 			}
-			set_base(array_mesh);
+			array_mesh_instance = rs->instance_create2(array_mesh, get_world_3d()->get_scenario());
+			rs->instance_set_transform(array_mesh_instance, Transform3D());
+			rs->instance_set_custom_aabb(array_mesh_instance, AABB(Vector3(-100000, -100000, -100000), Vector3(200000, 200000, 200000)));
+			_apply_gi_mode(array_mesh_instance);
 		}
 
 		mpm = memnew(MPMFluidSolver);
@@ -645,6 +653,7 @@ void PhysXParticleFluid3D::_make_fluid() {
 	rs->instance_set_transform(foam_instance, Transform3D());
 	// World-space instance that never moves; keep it from being culled.
 	rs->instance_set_custom_aabb(foam_instance, AABB(Vector3(-100000, -100000, -100000), Vector3(200000, 200000, 200000)));
+	_apply_gi_mode(foam_instance);
 
 	_apply_foam();
 
@@ -670,7 +679,10 @@ void PhysXParticleFluid3D::_make_fluid() {
 			m->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
 			water_material = m;
 		}
-		set_base(array_mesh);
+		array_mesh_instance = rs->instance_create2(array_mesh, get_world_3d()->get_scenario());
+		rs->instance_set_transform(array_mesh_instance, Transform3D());
+		rs->instance_set_custom_aabb(array_mesh_instance, AABB(Vector3(-100000, -100000, -100000), Vector3(200000, 200000, 200000)));
+		_apply_gi_mode(array_mesh_instance);
 
 		// Foam layer: a coarser isosurface over the diffuse particles, drawn as a
 		// whiter, rougher, less transparent skin sitting on the water. Its own
@@ -690,6 +702,7 @@ void PhysXParticleFluid3D::_make_fluid() {
 		foam_mesh_instance = rs->instance_create2(foam_array_mesh, get_world_3d()->get_scenario());
 		rs->instance_set_transform(foam_mesh_instance, Transform3D());
 		rs->instance_set_custom_aabb(foam_mesh_instance, AABB(Vector3(-100000, -100000, -100000), Vector3(200000, 200000, 200000)));
+		_apply_gi_mode(foam_mesh_instance);
 	}
 }
 
@@ -743,6 +756,10 @@ void PhysXParticleFluid3D::_free_fluid() {
 	}
 	foam_water_material.unref();
 
+	if (array_mesh_instance.is_valid()) {
+		rs->free_rid(array_mesh_instance);
+		array_mesh_instance = RID();
+	}
 	if (array_mesh.is_valid()) {
 		rs->free_rid(array_mesh);
 		array_mesh = RID();
@@ -1041,8 +1058,18 @@ void PhysXParticleFluid3D::_update_surface_mesh() {
 		const int tris = server->particle_fluid_get_surface_mesh(fluid, verts, normals, indices, surface_mesh_version);
 		if (tris >= 0) {
 			// Keep only the largest connected component: stray marching-cubes
-			// debris (a blade, a floating blob) is dropped.
-			_commit_iso_mesh(array_mesh, verts, normals, indices, water_material, true, true, particle_size);
+			// debris (a blade, a floating blob) is dropped. p_to_local=false --
+			// array_mesh draws through its own always-identity world-space
+			// instance (array_mesh_instance), not this node's own transform, so
+			// the vertices stay in the world space they already came back in.
+			_commit_iso_mesh(array_mesh, verts, normals, indices, water_material, false, true, particle_size);
+			// See the MPM path's identical comment: array_mesh_instance is a
+			// raw instance now, not this node's own, so material_override has
+			// to be reapplied by hand instead of relying on the automatic
+			// GeometryInstance3D behaviour.
+			const Ref<Material> override_mat = get_material_override();
+			RenderingServer::get_singleton()->instance_geometry_set_material_override(array_mesh_instance, override_mat.is_valid() ? override_mat->get_rid() : RID());
+			_apply_gi_mode(array_mesh_instance);
 		}
 	}
 	if (foam_mesh_instance.is_valid()) {
@@ -1053,6 +1080,27 @@ void PhysXParticleFluid3D::_update_surface_mesh() {
 			// Foam is naturally many disconnected clumps -- keep them all.
 			_commit_iso_mesh(foam_array_mesh, verts, normals, indices, foam_water_material, false, false, _effective_foam_size());
 		}
+	}
+}
+
+void PhysXParticleFluid3D::_apply_gi_mode(RID p_instance) const {
+	if (!p_instance.is_valid()) {
+		return;
+	}
+	RenderingServer *rs = RenderingServer::get_singleton();
+	switch (get_gi_mode()) {
+		case GI_MODE_DISABLED:
+			rs->instance_geometry_set_flag(p_instance, RSE::INSTANCE_FLAG_USE_BAKED_LIGHT, false);
+			rs->instance_geometry_set_flag(p_instance, RSE::INSTANCE_FLAG_USE_DYNAMIC_GI, false);
+			break;
+		case GI_MODE_STATIC:
+			rs->instance_geometry_set_flag(p_instance, RSE::INSTANCE_FLAG_USE_BAKED_LIGHT, true);
+			rs->instance_geometry_set_flag(p_instance, RSE::INSTANCE_FLAG_USE_DYNAMIC_GI, false);
+			break;
+		case GI_MODE_DYNAMIC:
+			rs->instance_geometry_set_flag(p_instance, RSE::INSTANCE_FLAG_USE_BAKED_LIGHT, false);
+			rs->instance_geometry_set_flag(p_instance, RSE::INSTANCE_FLAG_USE_DYNAMIC_GI, true);
+			break;
 	}
 }
 

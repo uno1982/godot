@@ -81,6 +81,38 @@ public:
 	PhysXCloth3DGizmoPlugin();
 };
 
+// Viewport gizmo for PhysXGas3D: a wireframe box for domain_size, centered on
+// the node -- otherwise the domain is entirely invisible until Play. Read-only
+// (no drag handles yet; resize via the inspector's domain_size property).
+class PhysXGas3DGizmoPlugin : public EditorNode3DGizmoPlugin {
+	GDCLASS(PhysXGas3DGizmoPlugin, EditorNode3DGizmoPlugin);
+
+public:
+	bool has_gizmo(Node3D *p_spatial) override;
+	String get_gizmo_name() const override;
+	int get_priority() const override;
+	bool is_selectable_when_hidden() const override;
+	void redraw(EditorNode3DGizmo *p_gizmo) override;
+
+	PhysXGas3DGizmoPlugin();
+};
+
+// Viewport gizmo for PhysXGasEmitter3D: a wireframe sphere or box matching
+// [member shape], plus an arrow for the injected velocity direction -- read
+// only, same scope as PhysXGas3DGizmoPlugin.
+class PhysXGasEmitter3DGizmoPlugin : public EditorNode3DGizmoPlugin {
+	GDCLASS(PhysXGasEmitter3DGizmoPlugin, EditorNode3DGizmoPlugin);
+
+public:
+	bool has_gizmo(Node3D *p_spatial) override;
+	String get_gizmo_name() const override;
+	int get_priority() const override;
+	bool is_selectable_when_hidden() const override;
+	void redraw(EditorNode3DGizmo *p_gizmo) override;
+
+	PhysXGasEmitter3DGizmoPlugin();
+};
+
 class PhysXEditorPlugin : public EditorPlugin {
 	GDCLASS(PhysXEditorPlugin, EditorPlugin);
 

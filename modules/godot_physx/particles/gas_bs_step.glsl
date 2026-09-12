@@ -74,13 +74,24 @@ void main() {
 	// Pure pull-based (semi-Lagrangian) advection alone can't spread momentum
 	// to a cell whose own velocity is still zero -- it just samples itself and
 	// stays zero forever, so a plume can never climb past the cells the
-	// source directly touches. A real solver gets its spread from the
-	// pressure-projection coupling every cell each step (not implemented in
-	// v1 -- see gas_block_inc.glsl's header); the cheap stand-in is Stam's own
-	// diffusion term: blend in the 6-face-neighbour average so momentum/
-	// density leak outward one cell's worth per step even where self_v is
-	// zero.
-	vec3 back_gp = (wpos - self_v.xyz * DT - ORIGIN) / CDX;
+	// source directly touches. Pressure projection (gas_bs_divergence/
+	// gas_bs_jacobi/gas_bs_project, run after this pass -- see
+	// GasSolver::step) is now what actually gives this solver its spread and
+	// its shape-holding coherence; this neighbour-average blend is kept ONLY
+	// as a tiny numerical-diffusion floor so a fully-isolated zero-velocity
+	// cell still gets touched at all. Cut from 0.12 to 0.02: at the higher
+	// value this term was actively erasing the small-scale vorticity a real
+	// shear-layer roll-up (the actual mechanism a mushroom-cloud cap curls
+	// under from) needs to survive more than a step or two -- a pure blur
+	// operator fighting the thing projection is supposed to preserve.
+	// Curl-noise turbulence: an analytically divergence-free perturbation
+	// velocity (see turbulence_velocity()'s header comment) added on top of
+	// the real solved velocity for the backtrace ONLY -- this fakes the
+	// fine "billowing cauliflower" detail a coarse real-time grid can't
+	// resolve, without disturbing new_vel itself (which stays the real,
+	// physically-driven field vorticity confinement/projection work with).
+	vec3 turb = turbulence_velocity(wpos);
+	vec3 back_gp = (wpos - (self_v.xyz + turb) * DT - ORIGIN) / CDX;
 	vec4 advected = sample_trilinear(back_gp);
 
 	vec4 nsum = sample_field(c + ivec3(1, 0, 0)) + sample_field(c - ivec3(1, 0, 0)) +
@@ -88,7 +99,7 @@ void main() {
 			sample_field(c + ivec3(0, 0, 1)) + sample_field(c - ivec3(0, 0, 1));
 	vec4 nbr_avg = nsum * (1.0 / 6.0);
 
-	const float DIFFUSE = 0.12;
+	const float DIFFUSE = 0.02;
 	vec4 blended = mix(advected, nbr_avg, DIFFUSE);
 
 	vec3 new_vel = blended.xyz;
@@ -113,24 +124,68 @@ void main() {
 	new_dens *= DISS;
 	new_vel *= 0.998;
 
-	float d = distance(wpos, source_pos_radius.xyz);
-	if (d < source_pos_radius.w) {
-		new_dens = max(new_dens, source_vel_density.w);
+	// Up to MAX_GAS_EMITTERS independent sphere/box injection points -- lets a
+	// scene place several differently-shaped sources to sculpt a composite
+	// plume. Per-emitter jitter is decorrelated by folding the emitter index
+	// into the hash input (else simultaneously-active emitters would jitter
+	// in lockstep).
+	for (int ei = 0; ei < MAX_GAS_EMITTERS; ei++) {
+		int eshape = int(emitter_pos_shape[ei].w);
+		if (eshape < 0) {
+			continue; // disabled slot
+		}
+		vec3 epos = emitter_pos_shape[ei].xyz;
+		vec3 esize = emitter_size_density[ei].xyz;
+		bool inside;
+		if (eshape == EMITTER_BOX) {
+			// Axis-aligned only (v1) -- no inverse-rotation transform yet, see
+			// the header for the scope note.
+			vec3 d = abs(wpos - epos) - esize;
+			inside = all(lessThan(d, vec3(0.0)));
+		} else {
+			inside = distance(wpos, epos) < esize.x;
+		}
+		if (!inside) {
+			continue;
+		}
+		new_dens = max(new_dens, emitter_size_density[ei].w);
+		vec3 evel = emitter_velocity[ei].xyz;
+
+		// Divergence: outward-radial speed from the emitter centre, on top of
+		// the directional jet -- an explosion/burst wants every cell pushed
+		// AWAY FROM CENTRE, not all pushed the same direction (Flow's
+		// NvFlowEmitterSphereParams.divergence). Swirl: tangential speed
+		// around world +Y through the centre, for directly authoring rotation
+		// (a mushroom-cloud cap curling over needs more coherent rotation than
+		// vorticity confinement alone reliably amplifies from incidental
+		// jitter).
+		float ediv = emitter_extra[ei].x;
+		float eswirl = emitter_extra[ei].y;
+		vec3 rel = wpos - epos;
+		if (ediv != 0.0 || eswirl != 0.0) {
+			float rlen = length(rel);
+			if (rlen > 1e-5) {
+				vec3 radial = rel / rlen;
+				vec3 tangent = normalize(cross(vec3(0.0, 1.0, 0.0), radial) + vec3(1e-6));
+				evel += radial * ediv + tangent * eswirl;
+			}
+		}
+
 		vec3 jitter = vec3(
-				hash13(vec3(c) + vec3(TIME, 0.0, 0.0)) - 0.5,
+				hash13(vec3(c) + vec3(TIME + float(ei) * 17.0, 0.0, 0.0)) - 0.5,
 				0.0,
-				hash13(vec3(c) + vec3(0.0, 0.0, TIME)) - 0.5);
-		new_vel += (source_vel_density.xyz + jitter * source_vel_density.y * 0.6) * DT;
+				hash13(vec3(c) + vec3(0.0, 0.0, TIME + float(ei) * 17.0)) - 0.5);
+		new_vel += (evel + jitter * length(evel) * 0.6) * DT;
 	}
 
-	// Solid obstacles: voxelized spheres, forced empty+still every step. A
-	// cell just outside one still pulls its backtrace/diffusion samples FROM
-	// inside (always zero), so the field naturally thins and parts near the
-	// surface without any extra boundary-condition code -- the same
-	// "missing/zero neighbour" mechanism that makes the box edges an open
-	// boundary.
+	// Solid obstacles: voxelized sphere/box/plane, forced empty+still every
+	// step. A cell just outside one still pulls its backtrace/diffusion
+	// samples FROM inside (always zero), so the field naturally thins and
+	// parts near the surface without any extra boundary-condition code --
+	// the same "missing/zero neighbour" mechanism that makes the box edges
+	// an open boundary.
 	for (int ci = 0; ci < MAX_GAS_COLLIDERS; ci++) {
-		if (colliders[ci].w > 0.0 && distance(wpos, colliders[ci].xyz) < colliders[ci].w) {
+		if (collider_sdf(ci, wpos) < 0.0) {
 			new_vel = vec3(0.0);
 			new_dens = 0.0;
 			break;

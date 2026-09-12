@@ -31,6 +31,7 @@
 #include "physx_gas_3d.h"
 
 #include "../particles/gas_solver.h"
+#include "physx_gas_emitter_3d.h"
 
 #include "core/io/image.h"
 #include "core/object/class_db.h"
@@ -40,13 +41,61 @@
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/main/viewport.h"
 #include "scene/resources/3d/fog_material.h"
+#include "scene/resources/3d/box_shape_3d.h"
 #include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/3d/sphere_shape_3d.h"
+#include "scene/resources/3d/world_boundary_shape_3d.h"
 #include "scene/resources/environment.h"
+#include "scene/resources/gradient.h"
+#include "scene/resources/gradient_texture.h"
 #include "scene/resources/image_texture.h"
 #include "scene/resources/material.h"
+#include "scene/resources/shader.h"
 #include "scene/resources/3d/world_3d.h"
 #include "servers/rendering/rendering_server.h"
+
+namespace {
+// Maps the SAME density field a stock FogMaterial would render through a
+// hot-core-to-smoke colour ramp with emission, instead of a flat uniform
+// albedo -- see PhysXGas3D::fire_look's header comment for why this is
+// "good enough" without a real second temperature channel: density is
+// already highest right at an emitter and falls off outward/upward, so
+// ramping colour by density alone reads as a hot core cooling into smoke.
+const char *GAS_FIRE_SHADER_SOURCE = R"(
+shader_type fog;
+
+uniform sampler3D density_tex;
+uniform float density_scale = 24.0;
+// Raw density isn't normalized to 0..1 (an emitter's own "density" property
+// can be set arbitrarily, e.g. 3.0 for a strong burst) -- this is "what raw
+// density value counts as fully hot," so the colour ramp below stays
+// correctly shaped regardless of how a scene's emitters are tuned, instead
+// of hardcoding a 0..1 assumption that washes out at higher densities.
+uniform float density_norm = 2.0;
+// A full artist-authored multi-stop ramp (PhysXGas3D.fire_color_ramp) instead
+// of a hardcoded 2-threshold mix -- sampled along its length by normalized
+// density. Alpha at each stop doubles as the emission-intensity control (0 =
+// pure albedo/no glow, 1 = full EMISSION) -- same convention GPUParticles3D's
+// own colour ramps use for fade, which is also what lets the SAME Gradient
+// resource be shared with a GPUParticles3D spark layer's
+// ParticleProcessMaterial.color_ramp and stay visually consistent.
+uniform sampler2D color_ramp_tex : source_color;
+uniform float emission_strength = 6.0;
+
+void fog() {
+	float d = texture(density_tex, UVW).r;
+	// Same edge-falloff shape stock FogMaterial uses (see fog_material.cpp) so
+	// the box's boundary doesn't show a hard cutoff -- SDF is a raw signed
+	// distance (negative inside), not a ready-made 0..1 factor.
+	float edge = pow(clamp(-2.0 * SDF / min(min(SIZE.x, SIZE.y), SIZE.z), 0.0, 1.0), 1.0);
+	DENSITY = d * density_scale * edge;
+	float dn = clamp(d / max(density_norm, 0.0001), 0.0, 1.0);
+	vec4 ramp = texture(color_ramp_tex, vec2(dn, 0.5));
+	ALBEDO = ramp.rgb;
+	EMISSION = ramp.rgb * ramp.a * emission_strength;
+}
+)";
+} //namespace
 
 PhysXGas3D::~PhysXGas3D() {
 	if (solver != nullptr) {
@@ -58,6 +107,18 @@ PhysXGas3D::~PhysXGas3D() {
 void PhysXGas3D::set_domain_size(const Vector3 &p_size) {
 	domain_size = p_size.maxf(0.1f);
 	configured = false; // reconfigure next tick
+}
+
+bool PhysXGas3D::is_domain_configured() const {
+	return solver != nullptr && solver->is_configured();
+}
+
+Vector3 PhysXGas3D::get_configured_domain_anchor() const {
+	return solver != nullptr ? solver->get_grid_anchor() : Vector3();
+}
+
+Vector3 PhysXGas3D::get_configured_domain_size() const {
+	return solver != nullptr ? solver->get_world_size() : domain_size;
 }
 
 void PhysXGas3D::set_cell_size(float p_size) {
@@ -80,12 +141,89 @@ void PhysXGas3D::set_fog_density(float p_density) {
 	if (fog_material.is_valid()) {
 		fog_material->set_density(fog_density);
 	}
+	if (fire_material.is_valid()) {
+		fire_material->set_shader_parameter("density_scale", fog_density);
+	}
 }
 
 void PhysXGas3D::set_fog_albedo(const Color &p_color) {
 	fog_albedo = p_color;
 	if (fog_material.is_valid()) {
 		fog_material->set_albedo(fog_albedo);
+	}
+}
+
+void PhysXGas3D::set_fire_look(bool p_enabled) {
+	fire_look = p_enabled;
+	if (fog_volume == nullptr) {
+		return; // picked up next _ensure_fog_volume()
+	}
+	if (fire_look) {
+		_ensure_fire_material();
+		fog_volume->set_material(fire_material);
+	} else if (fog_material.is_valid()) {
+		fog_volume->set_material(fog_material);
+	}
+}
+
+void PhysXGas3D::set_fire_color_ramp(const Ref<Gradient> &p_ramp) {
+	fire_color_ramp = p_ramp;
+	if (fire_color_ramp.is_valid()) {
+		if (fire_color_ramp_tex.is_null()) {
+			fire_color_ramp_tex.instantiate();
+		}
+		fire_color_ramp_tex->set_gradient(fire_color_ramp);
+	} else {
+		fire_color_ramp_tex.unref();
+	}
+	if (fire_material.is_valid()) {
+		fire_material->set_shader_parameter("color_ramp_tex", fire_color_ramp_tex);
+	}
+}
+
+void PhysXGas3D::set_fire_emission_strength(float p_s) {
+	fire_emission_strength = MAX(p_s, 0.0f);
+	if (fire_material.is_valid()) {
+		fire_material->set_shader_parameter("emission_strength", fire_emission_strength);
+	}
+}
+
+// Matches the old hardcoded ramp's look (smoke-grey -> orange -> warm
+// yellow-white) so fire_look's default appearance is unchanged -- alpha
+// ramps 0->1 across the same span, standing in for the old HOT_THRESHOLD..1.0
+// emission-intensity range.
+void PhysXGas3D::_init_default_fire_color_ramp() {
+	fire_color_ramp.instantiate();
+	fire_color_ramp->set_offsets({ 0.0f, 0.3f, 1.0f });
+	fire_color_ramp->set_colors({
+			Color(0.85f, 0.85f, 0.9f, 0.0f),
+			Color(1.0f, 0.5f, 0.12f, 0.0f),
+			Color(1.0f, 0.85f, 0.5f, 1.0f),
+	});
+}
+
+void PhysXGas3D::_ensure_fire_material() {
+	if (fire_material.is_valid()) {
+		return;
+	}
+	if (fire_shader.is_null()) {
+		fire_shader.instantiate();
+		fire_shader->set_code(GAS_FIRE_SHADER_SOURCE);
+	}
+	if (fire_color_ramp.is_null()) {
+		_init_default_fire_color_ramp();
+	}
+	if (fire_color_ramp_tex.is_null()) {
+		fire_color_ramp_tex.instantiate();
+		fire_color_ramp_tex->set_gradient(fire_color_ramp);
+	}
+	fire_material.instantiate();
+	fire_material->set_shader(fire_shader);
+	fire_material->set_shader_parameter("density_scale", fog_density);
+	fire_material->set_shader_parameter("color_ramp_tex", fire_color_ramp_tex);
+	fire_material->set_shader_parameter("emission_strength", fire_emission_strength);
+	if (density_texture.is_valid()) {
+		fire_material->set_shader_parameter("density_tex", density_texture);
 	}
 }
 
@@ -115,25 +253,24 @@ void PhysXGas3D::_ensure_configured() {
 	GasSolver::Settings s;
 	s.box_blocks = box_blocks;
 	s.cell_size = cell_size;
-	s.source_position = source_position;
-	s.source_radius = source_radius;
-	s.source_velocity = source_velocity;
-	s.source_density = source_density;
 	s.buoyancy = buoyancy;
 	s.vorticity_strength = vorticity_strength;
 	s.dissipation = dissipation;
+	s.turbulence_strength = turbulence_strength;
+	s.turbulence_scale = turbulence_scale;
 
 	solver->configure(s, get_global_transform());
 	configured = true;
 }
 
-// A CollisionShape3D (or CollisionObject3D with one) carrying a SphereShape3D
-// gives its own world-scaled radius; anything else (a plain Node3D, or a
-// shape this collider doesn't understand -- box/capsule/etc.) falls back to
-// the shared collider_radius. Mirrors how PhysXParticleFluid3D's mpm_colliders
-// resolves an analytic collider from a node, at a fraction of the scope (this
-// solver only has a sphere obstacle, not a general shape catalog).
-float PhysXGas3D::_resolve_collider_radius(Node3D *p_node) const {
+// A CollisionShape3D (or CollisionObject3D with one) carrying a
+// Sphere/Box/WorldBoundary(plane) shape gives its own analytic collider;
+// anything else (a plain Node3D, or a shape this collider doesn't understand
+// -- capsule/etc.) falls back to a sphere using the shared collider_radius.
+// Mirrors MPMFluidSolver's Collider catalog, minus rotation (axis-aligned box
+// only) -- a roof/floor/wall is exactly the case a rotation-free box/plane
+// already covers, so that's not a real loss for this solver's use cases.
+void PhysXGas3D::_resolve_collider(Node3D *p_node, int &r_shape, Vector3 &r_position, Vector3 &r_extents) const {
 	Ref<Shape3D> shape;
 	if (CollisionShape3D *cshape = Object::cast_to<CollisionShape3D>(p_node)) {
 		shape = cshape->get_shape();
@@ -147,32 +284,112 @@ float PhysXGas3D::_resolve_collider_radius(Node3D *p_node) const {
 			}
 		}
 	}
-	Ref<SphereShape3D> sphere = shape;
-	if (sphere.is_valid()) {
-		const Vector3 scale = p_node->get_global_transform().basis.get_scale().abs();
-		const float uniform_scale = MAX(scale.x, MAX(scale.y, scale.z));
-		return MAX(sphere->get_radius() * uniform_scale, 0.01f);
+	const Transform3D xform = p_node->get_global_transform();
+	if (Ref<WorldBoundaryShape3D> plane_shape = shape; plane_shape.is_valid()) {
+		const Plane world_plane = xform.xform(plane_shape->get_plane());
+		r_shape = 2; // COLLIDER_PLANE
+		r_position = world_plane.get_center();
+		r_extents = world_plane.normal;
+		return;
 	}
-	return collider_radius;
+	if (Ref<BoxShape3D> box_shape = shape; box_shape.is_valid()) {
+		const Vector3 scale = xform.basis.get_scale().abs();
+		r_shape = 1; // COLLIDER_BOX
+		r_position = xform.origin;
+		r_extents = (box_shape->get_size() * 0.5) * scale;
+		return;
+	}
+	if (Ref<SphereShape3D> sphere_shape = shape; sphere_shape.is_valid()) {
+		const Vector3 scale = xform.basis.get_scale().abs();
+		const float uniform_scale = MAX(scale.x, MAX(scale.y, scale.z));
+		r_shape = 0; // COLLIDER_SPHERE
+		r_position = xform.origin;
+		r_extents = Vector3(MAX(sphere_shape->get_radius() * uniform_scale, 0.01f), 0, 0);
+		return;
+	}
+	r_shape = 0; // COLLIDER_SPHERE
+	r_position = xform.origin;
+	r_extents = Vector3(collider_radius, 0, 0);
+}
+
+// A PhysXGasEmitter3D gives its own independent shape/size/velocity/density;
+// any other Node3D falls back to a sphere using emitter_radius/
+// emitter_velocity/emitter_density -- same fallback pattern as
+// _resolve_collider_radius. Velocity is rotated (not scaled) by the node's
+// own basis so a PhysXGasEmitter3D's "up" can be aimed by orienting it.
+void PhysXGas3D::_resolve_emitter(Node3D *p_node, int &r_shape, Vector3 &r_size, Vector3 &r_velocity, float &r_density, float &r_divergence, float &r_swirl) const {
+	if (PhysXGasEmitter3D *e = Object::cast_to<PhysXGasEmitter3D>(p_node)) {
+		r_shape = (int)e->get_shape();
+		r_size = e->get_shape() == PhysXGasEmitter3D::SHAPE_BOX ? e->get_size() * 0.5f : Vector3(e->get_radius(), e->get_radius(), e->get_radius());
+		r_velocity = e->get_global_transform().basis.get_rotation_quaternion().xform(e->get_velocity());
+		r_density = e->get_density();
+		r_divergence = e->get_divergence();
+		r_swirl = e->get_swirl();
+		return;
+	}
+	r_shape = 0; // sphere
+	r_size = Vector3(emitter_radius, emitter_radius, emitter_radius);
+	r_velocity = emitter_velocity;
+	r_density = emitter_density;
+	r_divergence = 0.0f;
+	r_swirl = 0.0f;
 }
 
 void PhysXGas3D::_step(double p_delta) {
 	if (solver == nullptr || !solver->is_available()) {
 		return;
 	}
+	if (pending_reconfigure) {
+		reconfigure_settle_timer -= p_delta;
+		if (reconfigure_settle_timer <= 0.0) {
+			pending_reconfigure = false;
+			// A move alone doesn't need domain_size/cell_size's full
+			// free+rebuild (see GasSolver::reposition's header comment for
+			// why that path specifically is worth avoiding) -- just re-lock
+			// the existing grid at the new position. configured stays true;
+			// _ensure_configured() below only fires on an actual size change.
+			solver->reposition(get_global_transform());
+		}
+	}
 	_ensure_configured();
 
-	Vector<Vector3> collider_positions;
-	Vector<float> collider_radii;
+	Vector<GasSolver::Collider> resolved_colliders;
 	for (int i = 0; i < colliders.size() && i < GasSolver::MAX_COLLIDERS; i++) {
 		Node3D *n = Object::cast_to<Node3D>(get_node_or_null(colliders[i]));
 		if (n == nullptr) {
 			continue;
 		}
-		collider_positions.push_back(n->get_global_position());
-		collider_radii.push_back(_resolve_collider_radius(n));
+		int shape = 0;
+		Vector3 position, extents;
+		_resolve_collider(n, shape, position, extents);
+		GasSolver::Collider c;
+		c.shape = (GasSolver::ColliderShape)shape;
+		c.position = position;
+		c.extents = extents;
+		resolved_colliders.push_back(c);
 	}
-	solver->set_colliders(collider_positions, collider_radii);
+	solver->set_colliders(resolved_colliders);
+
+	Vector<GasSolver::Emitter> resolved_emitters;
+	for (int i = 0; i < emitters.size() && resolved_emitters.size() < GasSolver::MAX_EMITTERS; i++) {
+		Node3D *n = Object::cast_to<Node3D>(get_node_or_null(emitters[i]));
+		if (n == nullptr) {
+			continue;
+		}
+		if (PhysXGasEmitter3D *ge = Object::cast_to<PhysXGasEmitter3D>(n)) {
+			if (!ge->is_enabled()) {
+				continue;
+			}
+		}
+		GasSolver::Emitter em;
+		em.enabled = true;
+		em.world_position = n->get_global_position();
+		int shape = 0;
+		_resolve_emitter(n, shape, em.size, em.velocity, em.density, em.divergence, em.swirl);
+		em.shape = shape == 1 ? GasSolver::EMITTER_BOX : GasSolver::EMITTER_SPHERE;
+		resolved_emitters.push_back(em);
+	}
+	solver->set_emitters(resolved_emitters);
 
 	solver->step(p_delta, get_global_transform());
 	_update_render();
@@ -202,7 +419,12 @@ void PhysXGas3D::_ensure_fog_volume() {
 
 	fog_volume = memnew(FogVolume);
 	fog_volume->set_shape(RSE::FOG_VOLUME_SHAPE_BOX);
-	fog_volume->set_material(fog_material);
+	if (fire_look) {
+		_ensure_fire_material();
+		fog_volume->set_material(fire_material);
+	} else {
+		fog_volume->set_material(fog_material);
+	}
 	// The solver's box is frozen in WORLD space at configure() (see
 	// GasSolver::configure / _grow_if_needed) and does not follow this
 	// node's transform -- top_level keeps the FogVolume's own position/size
@@ -222,6 +444,19 @@ void PhysXGas3D::_update_volumetric_render() {
 		return;
 	}
 
+	last_max_density = 0.0f;
+	int nan_count = 0;
+	for (int i = 0; i < density.size(); i++) {
+		if (!Math::is_finite(density[i])) {
+			nan_count++;
+			continue;
+		}
+		last_max_density = MAX(last_max_density, density[i]);
+	}
+	if (nan_count > 0) {
+		print_line(vformat("[gas-diag] %d/%d cells are NaN/Inf!", nan_count, density.size()));
+	}
+
 	// One Image slice per Z layer (dims.x * dims.y each) -- ImageTexture3D's
 	// native layout.
 	Vector<Ref<Image>> slices;
@@ -239,6 +474,9 @@ void PhysXGas3D::_update_volumetric_render() {
 		density_texture->create(Image::FORMAT_RF, dims.x, dims.y, dims.z, false, slices);
 		density_texture_dims = dims;
 		fog_material->set_density_texture(density_texture);
+		if (fire_material.is_valid()) {
+			fire_material->set_shader_parameter("density_tex", density_texture);
+		}
 	} else {
 		density_texture->update(slices);
 	}
@@ -313,6 +551,25 @@ void PhysXGas3D::_notification(int p_what) {
 			// debug_point_cloud -- no point paying for either until the
 			// corresponding render path is actually enabled.
 			set_physics_process_internal(true);
+			set_notify_transform(true); // for NOTIFICATION_TRANSFORM_CHANGED below
+		} break;
+		case NOTIFICATION_TRANSFORM_CHANGED: {
+			// The domain freezes in world space at configure() and does NOT
+			// track this node afterward (see GasSolver::configure's own
+			// note) -- without this, moving the node after the very first
+			// physics tick would do nothing at all, making it useless as an
+			// authoring/placement tool the moment the scene has ever run
+			// once. Debounced (see RECONFIGURE_SETTLE_SECONDS) rather than
+			// reconfiguring immediately -- a live editor drag fires this
+			// every tick the mouse moves, and wiping the grid on every one
+			// of those left it permanently empty for as long as you were
+			// actively dragging. Only debounced once actually configured --
+			// before that there's nothing to wipe, so the very first
+			// configure (on entering the tree) stays immediate.
+			if (configured) {
+				pending_reconfigure = true;
+				reconfigure_settle_timer = RECONFIGURE_SETTLE_SECONDS;
+			}
 		} break;
 		case NOTIFICATION_EXIT_WORLD: {
 			set_physics_process_internal(false);
@@ -358,22 +615,30 @@ PackedStringArray PhysXGas3D::get_configuration_warnings() const {
 void PhysXGas3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_domain_size", "size"), &PhysXGas3D::set_domain_size);
 	ClassDB::bind_method(D_METHOD("get_domain_size"), &PhysXGas3D::get_domain_size);
+	ClassDB::bind_method(D_METHOD("is_domain_configured"), &PhysXGas3D::is_domain_configured);
+	ClassDB::bind_method(D_METHOD("get_configured_domain_anchor"), &PhysXGas3D::get_configured_domain_anchor);
+	ClassDB::bind_method(D_METHOD("get_configured_domain_size"), &PhysXGas3D::get_configured_domain_size);
+	ClassDB::bind_method(D_METHOD("get_last_max_density"), &PhysXGas3D::get_last_max_density);
 	ClassDB::bind_method(D_METHOD("set_cell_size", "size"), &PhysXGas3D::set_cell_size);
 	ClassDB::bind_method(D_METHOD("get_cell_size"), &PhysXGas3D::get_cell_size);
-	ClassDB::bind_method(D_METHOD("set_source_position", "position"), &PhysXGas3D::set_source_position);
-	ClassDB::bind_method(D_METHOD("get_source_position"), &PhysXGas3D::get_source_position);
-	ClassDB::bind_method(D_METHOD("set_source_radius", "radius"), &PhysXGas3D::set_source_radius);
-	ClassDB::bind_method(D_METHOD("get_source_radius"), &PhysXGas3D::get_source_radius);
-	ClassDB::bind_method(D_METHOD("set_source_velocity", "velocity"), &PhysXGas3D::set_source_velocity);
-	ClassDB::bind_method(D_METHOD("get_source_velocity"), &PhysXGas3D::get_source_velocity);
-	ClassDB::bind_method(D_METHOD("set_source_density", "density"), &PhysXGas3D::set_source_density);
-	ClassDB::bind_method(D_METHOD("get_source_density"), &PhysXGas3D::get_source_density);
+	ClassDB::bind_method(D_METHOD("set_emitters", "paths"), &PhysXGas3D::set_emitters);
+	ClassDB::bind_method(D_METHOD("get_emitters"), &PhysXGas3D::get_emitters);
+	ClassDB::bind_method(D_METHOD("set_emitter_radius", "radius"), &PhysXGas3D::set_emitter_radius);
+	ClassDB::bind_method(D_METHOD("get_emitter_radius"), &PhysXGas3D::get_emitter_radius);
+	ClassDB::bind_method(D_METHOD("set_emitter_velocity", "velocity"), &PhysXGas3D::set_emitter_velocity);
+	ClassDB::bind_method(D_METHOD("get_emitter_velocity"), &PhysXGas3D::get_emitter_velocity);
+	ClassDB::bind_method(D_METHOD("set_emitter_density", "density"), &PhysXGas3D::set_emitter_density);
+	ClassDB::bind_method(D_METHOD("get_emitter_density"), &PhysXGas3D::get_emitter_density);
 	ClassDB::bind_method(D_METHOD("set_buoyancy", "buoyancy"), &PhysXGas3D::set_buoyancy);
 	ClassDB::bind_method(D_METHOD("get_buoyancy"), &PhysXGas3D::get_buoyancy);
 	ClassDB::bind_method(D_METHOD("set_vorticity_strength", "strength"), &PhysXGas3D::set_vorticity_strength);
 	ClassDB::bind_method(D_METHOD("get_vorticity_strength"), &PhysXGas3D::get_vorticity_strength);
 	ClassDB::bind_method(D_METHOD("set_dissipation", "dissipation"), &PhysXGas3D::set_dissipation);
 	ClassDB::bind_method(D_METHOD("get_dissipation"), &PhysXGas3D::get_dissipation);
+	ClassDB::bind_method(D_METHOD("set_turbulence_strength", "strength"), &PhysXGas3D::set_turbulence_strength);
+	ClassDB::bind_method(D_METHOD("get_turbulence_strength"), &PhysXGas3D::get_turbulence_strength);
+	ClassDB::bind_method(D_METHOD("set_turbulence_scale", "scale"), &PhysXGas3D::set_turbulence_scale);
+	ClassDB::bind_method(D_METHOD("get_turbulence_scale"), &PhysXGas3D::get_turbulence_scale);
 	ClassDB::bind_method(D_METHOD("set_colliders", "paths"), &PhysXGas3D::set_colliders);
 	ClassDB::bind_method(D_METHOD("get_colliders"), &PhysXGas3D::get_colliders);
 	ClassDB::bind_method(D_METHOD("set_collider_radius", "radius"), &PhysXGas3D::set_collider_radius);
@@ -384,6 +649,12 @@ void PhysXGas3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_fog_density"), &PhysXGas3D::get_fog_density);
 	ClassDB::bind_method(D_METHOD("set_fog_albedo", "color"), &PhysXGas3D::set_fog_albedo);
 	ClassDB::bind_method(D_METHOD("get_fog_albedo"), &PhysXGas3D::get_fog_albedo);
+	ClassDB::bind_method(D_METHOD("set_fire_look", "enabled"), &PhysXGas3D::set_fire_look);
+	ClassDB::bind_method(D_METHOD("get_fire_look"), &PhysXGas3D::get_fire_look);
+	ClassDB::bind_method(D_METHOD("set_fire_color_ramp", "ramp"), &PhysXGas3D::set_fire_color_ramp);
+	ClassDB::bind_method(D_METHOD("get_fire_color_ramp"), &PhysXGas3D::get_fire_color_ramp);
+	ClassDB::bind_method(D_METHOD("set_fire_emission_strength", "strength"), &PhysXGas3D::set_fire_emission_strength);
+	ClassDB::bind_method(D_METHOD("get_fire_emission_strength"), &PhysXGas3D::get_fire_emission_strength);
 	ClassDB::bind_method(D_METHOD("set_debug_point_cloud", "enabled"), &PhysXGas3D::set_debug_point_cloud);
 	ClassDB::bind_method(D_METHOD("get_debug_point_cloud"), &PhysXGas3D::get_debug_point_cloud);
 	ClassDB::bind_method(D_METHOD("set_render_threshold", "threshold"), &PhysXGas3D::set_render_threshold);
@@ -392,15 +663,17 @@ void PhysXGas3D::_bind_methods() {
 	ADD_GROUP("Domain", "");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "domain_size", PROPERTY_HINT_NONE, "suffix:m"), "set_domain_size", "get_domain_size");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "cell_size", PROPERTY_HINT_RANGE, "0.01,0.5,0.005,suffix:m"), "set_cell_size", "get_cell_size");
-	ADD_GROUP("Source", "source_");
-	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "source_position", PROPERTY_HINT_NONE, "suffix:m"), "set_source_position", "get_source_position");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "source_radius", PROPERTY_HINT_RANGE, "0.01,2.0,0.01,suffix:m"), "set_source_radius", "get_source_radius");
-	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "source_velocity", PROPERTY_HINT_NONE, "suffix:m/s"), "set_source_velocity", "get_source_velocity");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "source_density", PROPERTY_HINT_RANGE, "0.0,4.0,0.01"), "set_source_density", "get_source_density");
+	ADD_GROUP("Emitters", "emitter");
+	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "emitters", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_emitters", "get_emitters");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "emitter_radius", PROPERTY_HINT_RANGE, "0.01,2.0,0.01,suffix:m"), "set_emitter_radius", "get_emitter_radius");
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "emitter_velocity", PROPERTY_HINT_NONE, "suffix:m/s"), "set_emitter_velocity", "get_emitter_velocity");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "emitter_density", PROPERTY_HINT_RANGE, "0.0,4.0,0.01"), "set_emitter_density", "get_emitter_density");
 	ADD_GROUP("Motion", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "buoyancy", PROPERTY_HINT_RANGE, "-20.0,20.0,0.1"), "set_buoyancy", "get_buoyancy");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "vorticity_strength", PROPERTY_HINT_RANGE, "0.0,30.0,0.1"), "set_vorticity_strength", "get_vorticity_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "dissipation", PROPERTY_HINT_RANGE, "0.9,1.0,0.0005"), "set_dissipation", "get_dissipation");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "turbulence_strength", PROPERTY_HINT_RANGE, "0.0,8.0,0.05,suffix:m/s"), "set_turbulence_strength", "get_turbulence_strength");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "turbulence_scale", PROPERTY_HINT_RANGE, "0.2,10.0,0.1"), "set_turbulence_scale", "get_turbulence_scale");
 	ADD_GROUP("Collider", "collider");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "colliders", PROPERTY_HINT_ARRAY_TYPE, "NodePath"), "set_colliders", "get_colliders");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collider_radius", PROPERTY_HINT_RANGE, "0.0,3.0,0.01,suffix:m"), "set_collider_radius", "get_collider_radius");
@@ -408,6 +681,9 @@ void PhysXGas3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "volumetric_render"), "set_volumetric_render", "get_volumetric_render");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fog_density", PROPERTY_HINT_RANGE, "0.0,32.0,0.1"), "set_fog_density", "get_fog_density");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "fog_albedo"), "set_fog_albedo", "get_fog_albedo");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "fire_look"), "set_fire_look", "get_fire_look");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "fire_color_ramp", PROPERTY_HINT_RESOURCE_TYPE, "Gradient"), "set_fire_color_ramp", "get_fire_color_ramp");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fire_emission_strength", PROPERTY_HINT_RANGE, "0.0,20.0,0.1"), "set_fire_emission_strength", "get_fire_emission_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "debug_point_cloud"), "set_debug_point_cloud", "get_debug_point_cloud");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "render_threshold", PROPERTY_HINT_RANGE, "0.0,1.0,0.005"), "set_render_threshold", "get_render_threshold");
 }

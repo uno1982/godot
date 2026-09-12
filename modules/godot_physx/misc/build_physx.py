@@ -102,12 +102,13 @@ def main():
     if os.path.isdir(PATCH_DIR):
         for name in sorted(f for f in os.listdir(PATCH_DIR) if f.endswith(".patch")):
             patch = os.path.join(PATCH_DIR, name)
-            if subprocess.call(["git", "apply", "--reverse", "--check", patch], cwd=src,
-                               stderr=subprocess.DEVNULL) == 0:
+            if (
+                subprocess.call(["git", "apply", "--reverse", "--check", patch], cwd=src, stderr=subprocess.DEVNULL)
+                == 0
+            ):
                 print("patch already applied: " + name)
                 continue
-            if subprocess.call(["git", "apply", "--check", patch], cwd=src,
-                               stderr=subprocess.DEVNULL) != 0:
+            if subprocess.call(["git", "apply", "--check", patch], cwd=src, stderr=subprocess.DEVNULL) != 0:
                 sys.exit("bundled patch does not apply (wrong PhysX ref?): " + name)
             run(["git", "apply", patch], cwd=src)
             print("applied patch: " + name)

@@ -6,12 +6,21 @@ This script clones NVIDIA's PhysX repository at a pinned revision, drops in a
 build preset tuned to match Godot, runs PhysX's own project generation and
 CMake build, and prints the path to pass to scons as physx_sdk=.
 
-    python modules/godot_physx/misc/build_physx.py [--gpu]
-    scons platform=windows target=editor physx_sdk=<printed path> [physx_gpu=yes]
+    python modules/godot_physx/misc/build_physx.py [--gpu] [--blast]
+    scons platform=windows target=editor physx_sdk=<printed path> [physx_gpu=yes] [blast_sdk=<printed path>]
 
 The GPU build additionally needs the CUDA Toolkit installed (CUDA_PATH set) and
 copies nothing automatically -- PhysXGpu_64.dll from the install's bin/ must sit
 next to the Godot binary at runtime.
+
+--blast additionally builds the Blast SDK (runtime mesh fracture/destruction,
+NvBlast + extensions) from this same checkout's blast/ subdirectory -- it's
+version-locked to the same NVIDIA-Omniverse/PhysX release train as PhysX
+itself, so no separate clone or ref pin is needed. Unlike PhysX, Blast ships
+as DLLs, not static libs; the printed NvBlast*.dll files must sit next to the
+Godot binary at runtime, same as PhysXGpu_64.dll already does for physx_gpu.
+This module does not yet contain any Blast-using C++ (no PhysX bridge ships
+with Blast itself -- see NOTES.md) -- blast_sdk= is currently plumbing only.
 
 Run this script on the machine you're building the module for -- --platform
 defaults to the host OS (windows / linuxbsd). The Linux presets
@@ -46,6 +55,11 @@ def run(cmd, cwd):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--gpu", action="store_true", help="also build the CUDA GPU projects (needs the CUDA Toolkit)")
+    ap.add_argument(
+        "--blast",
+        action="store_true",
+        help="also build the Blast SDK (NvBlast + extensions) from this same checkout's blast/ subdirectory",
+    )
     ap.add_argument(
         "--platform",
         choices=["windows", "linuxbsd"],
@@ -155,6 +169,48 @@ def main():
             print()
             print("Then copy the GPU runtime next to the Godot binary (path above is a guess -- verify it):")
             print("    cp %s bin/" % so)
+
+    if args.blast:
+        # Blast lives in the SAME checkout as PhysX (NVIDIA-Omniverse/PhysX's
+        # own blast/ subdirectory), version-locked to the same release train --
+        # no separate clone or ref to manage. It has its own build system
+        # (premake5 via a bundled `repo` tool), independent of PhysX's CMake
+        # build above, and always builds its "release" config by default (no
+        # attempt is made to map PhysX's release/checked/profile/debug config
+        # enum onto Blast's own, simpler config flag).
+        blast_dir = os.path.join(src, "blast")
+        if not os.path.isdir(blast_dir):
+            sys.exit("--blast needs a blast/ directory in the checkout at " + src)
+        blast_script = os.path.join(blast_dir, "build.bat" if is_windows else "build.sh")
+        if not os.path.isfile(blast_script):
+            sys.exit("no Blast build script at " + blast_script)
+        run([blast_script] if is_windows else ["bash", blast_script], cwd=blast_dir)
+
+        blast_platform = "windows-x86_64" if is_windows else "linux-x86_64"
+        blast_sdk = os.path.join(blast_dir, "_build", blast_platform, "release", "blast-sdk")
+        if not os.path.isdir(os.path.join(blast_sdk, "include")):
+            sys.exit("Blast build finished but no SDK at " + blast_sdk)
+
+        print()
+        print("Blast SDK ready:")
+        print("    " + blast_sdk)
+        print()
+        print("Build the module with blast_sdk= added:")
+        print(
+            "    scons platform=%s target=editor physx_sdk=%s blast_sdk=%s%s"
+            % (
+                args.platform,
+                sdk.replace("\\", "/"),
+                blast_sdk.replace("\\", "/"),
+                " physx_gpu=yes" if args.gpu else "",
+            )
+        )
+        print()
+        print("Blast ships as DLLs (not static libs, unlike PhysX) -- copy these next to the Godot binary too:")
+        blast_bin = os.path.join(blast_sdk, "bin")
+        for name in ("NvBlast", "NvBlastGlobals", "NvBlastExtAuthoring"):
+            runtime = os.path.join(blast_bin, name + (".dll" if is_windows else ".so"))
+            print(("    copy %s bin\\" if is_windows else "    cp %s bin/") % runtime)
 
 
 if __name__ == "__main__":

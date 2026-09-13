@@ -32,6 +32,9 @@
 
 #include "godot_physx_project_settings.h"
 #include "godot_physx_server_3d.h"
+#ifdef GODOT_PHYSX_BLAST
+#include "blast/godot_physx_blast_probe.h"
+#endif
 #include "nodes/physx_chunk_emitter_3d.h"
 #include "nodes/physx_cloth_3d.h"
 #include "nodes/physx_gas_3d.h"
@@ -74,6 +77,10 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(PhysXChunkEmitter3D);
 		GDREGISTER_CLASS(PhysXGas3D);
 		GDREGISTER_CLASS(PhysXGasEmitter3D);
+#ifdef GODOT_PHYSX_BLAST
+		// Runtime-bridge MVP probe, not public API yet -- see blast/godot_physx_blast_probe.h.
+		GDREGISTER_CLASS(GodotPhysXBlastProbe);
+#endif
 	}
 
 #ifdef TOOLS_ENABLED

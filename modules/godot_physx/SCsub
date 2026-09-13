@@ -93,6 +93,58 @@ elif env["platform"] == "linuxbsd":
     # above needs the literal ".lib" suffix.
     env.Append(LIBS=physx_libs)
 
+# --- Blast SDK location (optional) ------------------------------------------------
+# Blast (NvBlast + extensions) is a separate, optional SDK on top of PhysX --
+# runtime mesh fracture/destruction. Point the build at a built Blast SDK
+# (containing include/ and bin/) with `blast_sdk=<path>` on the scons command
+# line or the BLAST_SDK environment variable; omitted entirely, the module
+# builds exactly as before with no Blast support compiled in. See
+# `misc/build_physx.py --blast` for building it -- it shares the same
+# NVIDIA-Omniverse/PhysX checkout PhysX itself is built from (Blast lives in
+# that repo's own `blast/` subdirectory, version-locked to the same release
+# train), so there is no separate clone/pin to manage.
+#
+# Unlike PhysX, Blast's own build sets `staticruntime "Off"`, so it ships as
+# DLLs, not static libs -- this only ever links the small import `.lib` stubs;
+# the matching `NvBlast*.dll` files must sit next to the Godot binary at
+# runtime, the same way `PhysXGpu_64.dll` already does for `physx_gpu=yes`.
+blast_sdk = ARGUMENTS.get("blast_sdk", os.environ.get("BLAST_SDK", ""))
+if blast_sdk:
+    blast_inc = os.path.join(blast_sdk, "include")
+    if not os.path.isdir(blast_inc):
+        raise SystemExit(
+            "godot_physx: no Blast SDK include/ directory at '%s'. Check blast_sdk= "
+            "/ BLAST_SDK points at a built Blast SDK (see misc/build_physx.py --blast)." % blast_inc
+        )
+    # Blast's own headers #include each other with flat names (e.g.
+    # NvBlastExtAuthoring.h does #include "NvBlastExtAuthoringTypes.h"),
+    # assuming same-directory resolution -- one root CPPPATH entry isn't
+    # enough, each leaf subdirectory needs its own entry (confirmed while
+    # compiling the first real Blast-using code against this SDK layout).
+    for _blast_subdir in (
+        "extensions/authoring",
+        "extensions/authoringCommon",
+        "extensions/shaders",
+        "globals",
+        "lowlevel",
+        "shared/NvFoundation",
+    ):
+        env_physx.Append(CPPPATH=[os.path.join(blast_inc, *_blast_subdir.split("/"))])
+    env_physx.Append(CPPDEFINES=["GODOT_PHYSX_BLAST"])
+
+    # Low-level API, the authoring extension (offline fracture authoring),
+    # and the shaders extension (pre-built radial/falloff damage programs --
+    # see blast/godot_physx_blast_probe.cpp) -- no runtime PhysX bridge ships
+    # with Blast itself (see NOTES.md's Blast entry), so NvBlastTk/
+    # serialization/stress aren't linked here.
+    blast_libs = ["NvBlast", "NvBlastGlobals", "NvBlastExtAuthoring", "NvBlastExtShaders"]
+    blast_lib_dir = os.path.join(blast_sdk, "bin")
+    env.Append(LIBPATH=[blast_lib_dir])
+    if env["platform"] == "windows":
+        env.Append(LINKFLAGS=[x + ".lib" for x in blast_libs])
+    elif env["platform"] == "linuxbsd":
+        env.Append(LIBS=blast_libs)
+
 # MLS-MPM compute-fluid shaders (cross-vendor fallback for the PhysX GPU path).
 # Every pass #include's mpm_fluid_inc.glsl, which GLSL_HEADER does not see, so
 # bind the dependency to each .gen.h target *by name* (a Glob here only catches
@@ -153,6 +205,8 @@ for _glsl in _gas_glsl:
 # Godot source files
 module_obj = []
 env_physx.add_source_files(module_obj, "*.cpp")
+if blast_sdk:
+    env_physx.add_source_files(module_obj, "blast/*.cpp")
 env_physx.add_source_files(module_obj, "cloth/*.cpp")
 env_physx.add_source_files(module_obj, "joints/*.cpp")
 env_physx.add_source_files(module_obj, "nodes/*.cpp")

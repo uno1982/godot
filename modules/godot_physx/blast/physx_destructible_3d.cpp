@@ -141,9 +141,12 @@ PackedStringArray PhysXDestructible3D::get_configuration_warnings() const {
 void PhysXDestructible3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_WORLD: {
-			if (Engine::get_singleton()->is_editor_hint()) {
-				break; // no PhysX/RenderingServer simulation state in the editor -- matches this module's other nodes
-			}
+			// Unlike this module's other (volumetric/particle) editor-invisible
+			// nodes, this one replaces a real visible MeshInstance3D -- staying
+			// invisible in the editor would be a real authoring regression, not
+			// just a missing nicety. So the render mesh always spawns; only the
+			// PhysicsServer3D body (no simulation runs in the editor anyway)
+			// is skipped there -- see _spawn_intact()/_spawn_piece().
 			if (!loaded) {
 				loaded = _load();
 			}
@@ -157,8 +160,11 @@ void PhysXDestructible3D::_notification(int p_what) {
 		case NOTIFICATION_TRANSFORM_CHANGED: {
 			if (!fractured && pieces.size() == 1) {
 				// Still intact -- the single "piece" IS this node, so keep its
-				// body/visual glued to wherever the node itself moves.
-				PhysicsServer3D::get_singleton()->body_set_state(pieces[0].body, PhysicsServer3D::BODY_STATE_TRANSFORM, get_global_transform());
+				// body/visual glued to wherever the node itself moves. The body
+				// is RID() in the editor (see _spawn_intact()), so skip it there.
+				if (pieces[0].body.is_valid()) {
+					PhysicsServer3D::get_singleton()->body_set_state(pieces[0].body, PhysicsServer3D::BODY_STATE_TRANSFORM, get_global_transform());
+				}
 				RenderingServer::get_singleton()->instance_set_transform(pieces[0].instance, get_global_transform());
 			}
 		} break;
@@ -257,28 +263,36 @@ void PhysXDestructible3D::_spawn_intact() {
 	// Chunk 0 is always the fracture-tool's root chunk -- the whole
 	// unfractured asset mesh (see blast_test_gen.cpp) -- so rendering/
 	// colliding as chunk 0 while nothing has broken is exactly correct, not
-	// an approximation.
-	_spawn_piece(0, get_global_transform(), Vector3());
-	PhysicsServer3D::get_singleton()->body_set_mode(pieces[0].body, PhysicsServer3D::BODY_MODE_STATIC);
+	// an approximation. No physics body in the editor -- nothing simulates
+	// there, and the render-only piece is enough for authoring/placement.
+	const bool physics = !Engine::get_singleton()->is_editor_hint();
+	_spawn_piece(0, get_global_transform(), Vector3(), physics);
+	if (physics) {
+		PhysicsServer3D::get_singleton()->body_set_mode(pieces[0].body, PhysicsServer3D::BODY_MODE_STATIC);
+	}
 }
 
-void PhysXDestructible3D::_spawn_piece(uint32_t p_chunk_index, const Transform3D &p_transform, const Vector3 &p_linear_velocity) {
+void PhysXDestructible3D::_spawn_piece(uint32_t p_chunk_index, const Transform3D &p_transform, const Vector3 &p_linear_velocity, bool p_physics) {
 	ERR_FAIL_INDEX(p_chunk_index, chunk_points.size());
 	const PackedVector3Array &points = chunk_points[p_chunk_index];
 	const uint32_t tri_count = points.size() / 3;
 	ERR_FAIL_COND_MSG(points.size() < 4, vformat("PhysXDestructible3D: chunk %d has too few vertices for a convex hull.", p_chunk_index));
 
-	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
-	RID shape = ps->convex_polygon_shape_create();
-	ps->shape_set_data(shape, points);
+	RID shape;
+	RID body;
+	if (p_physics) {
+		PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
+		shape = ps->convex_polygon_shape_create();
+		ps->shape_set_data(shape, points);
 
-	RID body = ps->body_create();
-	ps->body_set_mode(body, PhysicsServer3D::BODY_MODE_RIGID);
-	ps->body_add_shape(body, shape);
-	ps->body_set_state(body, PhysicsServer3D::BODY_STATE_TRANSFORM, p_transform);
-	ps->body_set_state(body, PhysicsServer3D::BODY_STATE_LINEAR_VELOCITY, p_linear_velocity);
-	if (is_inside_world() && get_world_3d().is_valid()) {
-		ps->body_set_space(body, get_world_3d()->get_space());
+		body = ps->body_create();
+		ps->body_set_mode(body, PhysicsServer3D::BODY_MODE_RIGID);
+		ps->body_add_shape(body, shape);
+		ps->body_set_state(body, PhysicsServer3D::BODY_STATE_TRANSFORM, p_transform);
+		ps->body_set_state(body, PhysicsServer3D::BODY_STATE_LINEAR_VELOCITY, p_linear_velocity);
+		if (is_inside_world() && get_world_3d().is_valid()) {
+			ps->body_set_space(body, get_world_3d()->get_space());
+		}
 	}
 
 	// Flat per-triangle normals -- the authoring dump only stores positions.
@@ -338,8 +352,15 @@ void PhysXDestructible3D::_free_all_pieces() {
 	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
 	RenderingServer *rs = RenderingServer::get_singleton();
 	for (const ChunkVisual &piece : pieces) {
-		ps->free_rid(piece.body);
-		ps->free_rid(piece.shape);
+		// body/shape are RID() for a render-only editor piece (see
+		// _spawn_piece's p_physics) -- freeing an invalid RID is harmless on
+		// most servers, but skip it explicitly rather than rely on that.
+		if (piece.body.is_valid()) {
+			ps->free_rid(piece.body);
+		}
+		if (piece.shape.is_valid()) {
+			ps->free_rid(piece.shape);
+		}
 		rs->free_rid(piece.instance);
 		rs->free_rid(piece.mesh);
 	}

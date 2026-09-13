@@ -130,7 +130,11 @@ private:
 	bool _load();
 	bool _load_asset_bytes(const PackedByteArray &p_bytes);
 	void _spawn_intact();
-	void _spawn_piece(uint32_t p_chunk_index, const Transform3D &p_transform, const Vector3 &p_linear_velocity);
+	// p_physics: create a PhysicsServer3D body+shape for this piece too, not
+	// just its RenderingServer mesh instance. False in the editor (no physics
+	// simulation runs there anyway) so the node still shows *something* in
+	// the viewport -- ChunkVisual::body/shape stay RID() in that case.
+	void _spawn_piece(uint32_t p_chunk_index, const Transform3D &p_transform, const Vector3 &p_linear_velocity, bool p_physics = true);
 	Vector3 _chunk_centroid_local(uint32_t p_chunk_index) const;
 	void _free_all_pieces();
 	void _sync_transforms();

@@ -30,6 +30,8 @@
 
 #pragma once
 
+#include "physx_blast_asset.h"
+
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/material.h"
@@ -66,6 +68,13 @@ public:
 	void set_chunks_path(const String &p_path);
 	String get_chunks_path() const { return chunks_path; }
 
+	// Preferred over asset_path/chunks_path when set -- a real Resource
+	// (PhysXBlastAuthoring::fracture_mesh()'s output, or one loaded from
+	// disk) instead of the old two-file convention. asset_path/chunks_path
+	// remain supported as a fallback when this isn't set, not deprecated.
+	void set_blast_asset(const Ref<PhysXBlastAsset> &p_asset);
+	Ref<PhysXBlastAsset> get_blast_asset() const { return blast_asset; }
+
 	void set_material_override(const Ref<Material> &p_material);
 	Ref<Material> get_material_override() const { return material_override_res; }
 
@@ -91,6 +100,7 @@ public:
 private:
 	String asset_path;
 	String chunks_path;
+	Ref<PhysXBlastAsset> blast_asset;
 	Ref<Material> material_override_res;
 	float shatter_speed = 8.0f;
 
@@ -118,6 +128,7 @@ private:
 	bool fractured = false;
 
 	bool _load();
+	bool _load_asset_bytes(const PackedByteArray &p_bytes);
 	void _spawn_intact();
 	void _spawn_piece(uint32_t p_chunk_index, const Transform3D &p_transform, const Vector3 &p_linear_velocity);
 	Vector3 _chunk_centroid_local(uint32_t p_chunk_index) const;

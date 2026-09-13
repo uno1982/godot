@@ -77,6 +77,8 @@ void PhysXDestructible3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_asset_path"), &PhysXDestructible3D::get_asset_path);
 	ClassDB::bind_method(D_METHOD("set_chunks_path", "path"), &PhysXDestructible3D::set_chunks_path);
 	ClassDB::bind_method(D_METHOD("get_chunks_path"), &PhysXDestructible3D::get_chunks_path);
+	ClassDB::bind_method(D_METHOD("set_blast_asset", "asset"), &PhysXDestructible3D::set_blast_asset);
+	ClassDB::bind_method(D_METHOD("get_blast_asset"), &PhysXDestructible3D::get_blast_asset);
 	ClassDB::bind_method(D_METHOD("set_material_override", "material"), &PhysXDestructible3D::set_material_override);
 	ClassDB::bind_method(D_METHOD("get_material_override"), &PhysXDestructible3D::get_material_override);
 	ClassDB::bind_method(D_METHOD("set_shatter_speed", "speed"), &PhysXDestructible3D::set_shatter_speed);
@@ -85,6 +87,7 @@ void PhysXDestructible3D::_bind_methods() {
 
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "asset_path", PROPERTY_HINT_FILE, "*.asset"), "set_asset_path", "get_asset_path");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "chunks_path", PROPERTY_HINT_FILE, "*.chunks"), "set_chunks_path", "get_chunks_path");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "blast_asset", PROPERTY_HINT_RESOURCE_TYPE, "PhysXBlastAsset"), "set_blast_asset", "get_blast_asset");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material_override", PROPERTY_HINT_RESOURCE_TYPE, "Material"), "set_material_override", "get_material_override");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shatter_speed", PROPERTY_HINT_RANGE, "0,50,0.1"), "set_shatter_speed", "get_shatter_speed");
 }
@@ -113,6 +116,11 @@ void PhysXDestructible3D::set_chunks_path(const String &p_path) {
 	update_configuration_warnings();
 }
 
+void PhysXDestructible3D::set_blast_asset(const Ref<PhysXBlastAsset> &p_asset) {
+	blast_asset = p_asset;
+	update_configuration_warnings();
+}
+
 void PhysXDestructible3D::set_material_override(const Ref<Material> &p_material) {
 	material_override_res = p_material;
 	RenderingServer *rs = RenderingServer::get_singleton();
@@ -124,8 +132,8 @@ void PhysXDestructible3D::set_material_override(const Ref<Material> &p_material)
 
 PackedStringArray PhysXDestructible3D::get_configuration_warnings() const {
 	PackedStringArray warnings = Node3D::get_configuration_warnings();
-	if (asset_path.is_empty() || chunks_path.is_empty()) {
-		warnings.push_back("PhysXDestructible3D needs both asset_path and chunks_path to render or collide.");
+	if (blast_asset.is_null() && (asset_path.is_empty() || chunks_path.is_empty())) {
+		warnings.push_back("PhysXDestructible3D needs either blast_asset, or both asset_path and chunks_path, to render or collide.");
 	}
 	return warnings;
 }
@@ -162,13 +170,11 @@ void PhysXDestructible3D::_notification(int p_what) {
 	}
 }
 
-bool PhysXDestructible3D::_load() {
-	Ref<FileAccess> af = FileAccess::open(asset_path, FileAccess::READ);
-	ERR_FAIL_COND_V_MSG(af.is_null(), false, vformat("PhysXDestructible3D: cannot open asset_path '%s'.", asset_path));
-	const uint64_t asset_size = af->get_length();
-	asset_mem = aligned_alloc_16((size_t)asset_size);
+bool PhysXDestructible3D::_load_asset_bytes(const PackedByteArray &p_bytes) {
+	ERR_FAIL_COND_V_MSG(p_bytes.is_empty(), false, "PhysXDestructible3D: empty asset bytes.");
+	asset_mem = aligned_alloc_16((size_t)p_bytes.size());
 	ERR_FAIL_NULL_V(asset_mem, false);
-	af->get_buffer(reinterpret_cast<uint8_t *>(asset_mem), asset_size);
+	memcpy(asset_mem, p_bytes.ptr(), p_bytes.size());
 
 	NvBlastAsset *asset = reinterpret_cast<NvBlastAsset *>(asset_mem);
 	asset_chunk_count = NvBlastAssetGetChunkCount(asset, blast_log);
@@ -192,6 +198,27 @@ bool PhysXDestructible3D::_load() {
 	NvBlastActor *first_actor = NvBlastFamilyCreateFirstActor(family, &actor_desc, scratch.ptr(), blast_log);
 	ERR_FAIL_NULL_V_MSG(first_actor, false, "PhysXDestructible3D: NvBlastFamilyCreateFirstActor failed.");
 	live_actors.push_back(first_actor);
+	return true;
+}
+
+bool PhysXDestructible3D::_load() {
+	if (blast_asset.is_valid()) {
+		if (!_load_asset_bytes(blast_asset->get_asset_bytes())) {
+			return false;
+		}
+		const Array points = blast_asset->get_chunk_points();
+		chunk_points.resize(points.size());
+		for (int i = 0; i < points.size(); i++) {
+			chunk_points[i] = points[i];
+		}
+		return true;
+	}
+
+	Ref<FileAccess> af = FileAccess::open(asset_path, FileAccess::READ);
+	ERR_FAIL_COND_V_MSG(af.is_null(), false, vformat("PhysXDestructible3D: cannot open asset_path '%s'.", asset_path));
+	if (!_load_asset_bytes(af->get_buffer(af->get_length()))) {
+		return false;
+	}
 
 	Ref<FileAccess> cf = FileAccess::open(chunks_path, FileAccess::READ);
 	ERR_FAIL_COND_V_MSG(cf.is_null(), false, vformat("PhysXDestructible3D: cannot open chunks_path '%s'.", chunks_path));

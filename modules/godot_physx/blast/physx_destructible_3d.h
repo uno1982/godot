@@ -69,9 +69,18 @@ public:
 	void set_material_override(const Ref<Material> &p_material);
 	Ref<Material> get_material_override() const { return material_override_res; }
 
+	void set_shatter_speed(float p_speed) { shatter_speed = p_speed; }
+	float get_shatter_speed() const { return shatter_speed; }
+
 	// p_world_position: world-space damage origin (converted to this node's
 	// local space internally, since chunk geometry is authored local-space).
-	// Returns how many new rigid-body pieces this call produced.
+	// Returns how many new rigid-body pieces this call produced. Each new
+	// piece gets a real outward velocity -- radial direction from the damage
+	// origin to that piece's own centroid, scaled by shatter_speed and the
+	// same distance falloff the damage itself uses, plus a slight upward
+	// bias -- same shape as demo/cpu/physx_playground.gd's own _blast(),
+	// just computed here so it's intrinsic to fracturing, not a separate
+	// demo-script concern layered on top.
 	int apply_radial_damage(const Vector3 &p_world_position, float p_damage, float p_min_radius, float p_max_radius);
 
 	PackedStringArray get_configuration_warnings() const override;
@@ -83,6 +92,7 @@ private:
 	String asset_path;
 	String chunks_path;
 	Ref<Material> material_override_res;
+	float shatter_speed = 8.0f;
 
 	void *asset_mem = nullptr;
 	void *family_mem = nullptr;
@@ -110,6 +120,7 @@ private:
 	bool _load();
 	void _spawn_intact();
 	void _spawn_piece(uint32_t p_chunk_index, const Transform3D &p_transform, const Vector3 &p_linear_velocity);
+	Vector3 _chunk_centroid_local(uint32_t p_chunk_index) const;
 	void _free_all_pieces();
 	void _sync_transforms();
 };

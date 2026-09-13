@@ -79,11 +79,14 @@ void PhysXDestructible3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_chunks_path"), &PhysXDestructible3D::get_chunks_path);
 	ClassDB::bind_method(D_METHOD("set_material_override", "material"), &PhysXDestructible3D::set_material_override);
 	ClassDB::bind_method(D_METHOD("get_material_override"), &PhysXDestructible3D::get_material_override);
+	ClassDB::bind_method(D_METHOD("set_shatter_speed", "speed"), &PhysXDestructible3D::set_shatter_speed);
+	ClassDB::bind_method(D_METHOD("get_shatter_speed"), &PhysXDestructible3D::get_shatter_speed);
 	ClassDB::bind_method(D_METHOD("apply_radial_damage", "world_position", "damage", "min_radius", "max_radius"), &PhysXDestructible3D::apply_radial_damage);
 
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "asset_path", PROPERTY_HINT_FILE, "*.asset"), "set_asset_path", "get_asset_path");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "chunks_path", PROPERTY_HINT_FILE, "*.chunks"), "set_chunks_path", "get_chunks_path");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material_override", PROPERTY_HINT_RESOURCE_TYPE, "Material"), "set_material_override", "get_material_override");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shatter_speed", PROPERTY_HINT_RANGE, "0,50,0.1"), "set_shatter_speed", "get_shatter_speed");
 }
 
 PhysXDestructible3D::PhysXDestructible3D() {
@@ -291,6 +294,19 @@ void PhysXDestructible3D::_spawn_piece(uint32_t p_chunk_index, const Transform3D
 	pieces.push_back(piece);
 }
 
+Vector3 PhysXDestructible3D::_chunk_centroid_local(uint32_t p_chunk_index) const {
+	ERR_FAIL_INDEX_V(p_chunk_index, chunk_points.size(), Vector3());
+	const PackedVector3Array &points = chunk_points[p_chunk_index];
+	if (points.is_empty()) {
+		return Vector3();
+	}
+	Vector3 sum;
+	for (int i = 0; i < points.size(); i++) {
+		sum += points[i];
+	}
+	return sum / (real_t)points.size();
+}
+
 void PhysXDestructible3D::_free_all_pieces() {
 	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
 	RenderingServer *rs = RenderingServer::get_singleton();
@@ -396,13 +412,21 @@ int PhysXDestructible3D::apply_radial_damage(const Vector3 &p_world_position, fl
 			visible.resize(visible_count);
 			NvBlastActorGetVisibleChunkIndices(visible.ptr(), visible_count, new_actor, blast_log);
 			for (uint32_t v = 0; v < visible_count; v++) {
-				// Every new piece starts at the object's own transform/rest --
-				// this MVP has no real single pre-fracture body to inherit a
-				// genuine per-actor velocity from (chunk 0's intact body was
-				// just a placeholder, freed above). A real per-actor velocity
-				// carry-over is future work once there's something meaningful
-				// to inherit from.
-				_spawn_piece(visible[v], get_global_transform(), Vector3());
+				// No real pre-fracture body exists to inherit a genuine
+				// per-actor velocity from (chunk 0's intact body was just a
+				// placeholder, freed above) -- instead give each piece an
+				// outward "shatter" kick from the damage origin to its own
+				// centroid, same radial-direction + distance-falloff +
+				// slight-upward-bias shape as demo/cpu/physx_playground.gd's
+				// _blast(), just computed intrinsically here rather than
+				// bolted on by whatever script happens to call this.
+				const Vector3 centroid_world = get_global_transform().xform(_chunk_centroid_local(visible[v]));
+				const Vector3 offset = centroid_world - p_world_position;
+				const real_t dist = offset.length();
+				const Vector3 dir = dist > 0.001 ? (offset / dist) : Vector3(0, 1, 0);
+				const real_t falloff = CLAMP(1.0 - dist / (real_t)p_max_radius, 0.0, 1.0);
+				const Vector3 piece_velocity = (dir + Vector3(0, 0.3, 0)).normalized() * shatter_speed * falloff;
+				_spawn_piece(visible[v], get_global_transform(), piece_velocity);
 				spawned++;
 			}
 		}

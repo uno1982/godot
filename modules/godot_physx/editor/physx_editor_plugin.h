@@ -113,8 +113,16 @@ public:
 	PhysXGasEmitter3DGizmoPlugin();
 };
 
+#ifdef GODOT_PHYSX_BLAST
+class PhysXBlastFractureDialog;
+#endif
+
 class PhysXEditorPlugin : public EditorPlugin {
 	GDCLASS(PhysXEditorPlugin, EditorPlugin);
+
+#ifdef GODOT_PHYSX_BLAST
+	PhysXBlastFractureDialog *blast_fracture_dialog = nullptr;
+#endif
 
 public:
 	PhysXEditorPlugin();

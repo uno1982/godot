@@ -252,13 +252,18 @@ void PhysXDestructible3D::_spawn_piece(uint32_t p_chunk_index, const Transform3D
 	}
 
 	// Flat per-triangle normals -- the authoring dump only stores positions.
+	// (c-a).cross(b-a), not the more intuitive (b-a).cross(c-a) -- Blast's
+	// AuthoringResult::geometry triangle winding is the opposite of what
+	// PRIMITIVE_TRIANGLES/CCW-front-face expects here; the wrong order cooked
+	// clean but rendered every visible face pitch-black (normals pointing
+	// inward), confirmed by a real screenshot before/after flipping it.
 	PackedVector3Array normals;
 	normals.resize(points.size());
 	for (uint32_t t = 0; t < tri_count; t++) {
 		const Vector3 a = points[t * 3 + 0];
 		const Vector3 b = points[t * 3 + 1];
 		const Vector3 c = points[t * 3 + 2];
-		const Vector3 n = (b - a).cross(c - a).normalized();
+		const Vector3 n = (c - a).cross(b - a).normalized();
 		normals.write[t * 3 + 0] = n;
 		normals.write[t * 3 + 1] = n;
 		normals.write[t * 3 + 2] = n;
@@ -319,7 +324,7 @@ int PhysXDestructible3D::apply_radial_damage(const Vector3 &p_world_position, fl
 		// are tracked per-actor, not as one intact whole.
 		_free_all_pieces();
 		fractured = true;
-		set_process_internal(true);
+		set_physics_process_internal(true);
 	}
 
 	const Vector3 local_position = get_global_transform().affine_inverse().xform(p_world_position);

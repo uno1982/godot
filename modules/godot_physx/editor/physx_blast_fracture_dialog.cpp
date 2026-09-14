@@ -51,6 +51,7 @@
 #include "scene/gui/box_container.h"
 #include "scene/gui/button.h"
 #include "scene/gui/label.h"
+#include "scene/gui/option_button.h"
 #include "scene/gui/spin_box.h"
 #include "scene/resources/mesh.h"
 #include "scene/scene_string_names.h"
@@ -65,10 +66,11 @@ void PhysXBlastFractureDialog::_start(const Ref<Mesh> &p_mesh) {
 void PhysXBlastFractureDialog::_regenerate() {
 	seed += 1;
 	const int site_count = site_count_spin ? (int)site_count_spin->get_value() : 12;
+	const PhysXBlastAuthoring::FracturePattern pattern = (pattern_option && pattern_option->get_selected_id() == 1) ? PhysXBlastAuthoring::PATTERN_SLICING : PhysXBlastAuthoring::PATTERN_VORONOI;
 
 	Ref<PhysXBlastAuthoring> authoring;
 	authoring.instantiate();
-	authored_asset = authoring->fracture_mesh(source_mesh, site_count, seed);
+	authored_asset = authoring->fracture_mesh(source_mesh, site_count, seed, pattern);
 
 	if (authored_asset.is_null()) {
 		if (chunk_count_label) {
@@ -173,6 +175,13 @@ PhysXBlastFractureDialog::PhysXBlastFractureDialog() {
 
 	HBoxContainer *controls = memnew(HBoxContainer);
 	root->add_child(controls);
+
+	controls->add_child(memnew(Label(TTR("Pattern:"))));
+	pattern_option = memnew(OptionButton);
+	pattern_option->add_item(TTR("Voronoi"), 0);
+	pattern_option->add_item(TTR("Slicing"), 1);
+	pattern_option->connect(SceneStringName(item_selected), callable_mp(this, &PhysXBlastFractureDialog::_regenerate).unbind(1));
+	controls->add_child(pattern_option);
 
 	controls->add_child(memnew(Label(TTR("Chunks:"))));
 	site_count_spin = memnew(SpinBox);

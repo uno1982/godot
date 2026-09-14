@@ -155,10 +155,13 @@ public:
 } //namespace
 
 void PhysXBlastAuthoring::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("fracture_mesh", "mesh", "site_count", "seed"), &PhysXBlastAuthoring::fracture_mesh);
+	ClassDB::bind_method(D_METHOD("fracture_mesh", "mesh", "site_count", "seed", "pattern"), &PhysXBlastAuthoring::fracture_mesh, DEFVAL(PATTERN_VORONOI));
+
+	BIND_ENUM_CONSTANT(PATTERN_VORONOI);
+	BIND_ENUM_CONSTANT(PATTERN_SLICING);
 }
 
-Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh, int p_site_count, int p_seed) {
+Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh, int p_site_count, int p_seed, FracturePattern p_pattern) {
 	ERR_FAIL_COND_V_MSG(p_mesh.is_null() || p_mesh->get_surface_count() < 1, Ref<PhysXBlastAsset>(),
 			"PhysXBlastAuthoring: mesh is null or has no surfaces.");
 	PxPhysics *physics = GodotPhysXServer3D::get_singleton() ? GodotPhysXServer3D::get_singleton()->get_px_physics() : nullptr;
@@ -210,22 +213,50 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 
 	GodotRandomGenerator rng;
 	rng.seed(p_seed);
-	Nv::Blast::VoronoiSitesGenerator *sites_gen = NvBlastExtAuthoringCreateVoronoiSitesGenerator(blast_mesh, &rng);
-	sites_gen->uniformlyGenerateSitesInMesh((uint32_t)MAX(p_site_count, 1));
-	const NvcVec3 *sites = nullptr;
-	const uint32_t site_count = sites_gen->getVoronoiSites(sites);
 
 	Ref<PhysXBlastAsset> result;
-	const int32_t frac_result = fTool->voronoiFracturing(0, site_count, sites, false);
-	if (frac_result != 0) {
-		ERR_PRINT(vformat("PhysXBlastAuthoring: voronoiFracturing failed, code=%d.", frac_result));
+	Nv::Blast::VoronoiSitesGenerator *sites_gen = nullptr;
+	int32_t frac_result;
+
+	if (p_pattern == PATTERN_SLICING) {
+		// slicing() works in slice-counts-per-axis, not a single site count --
+		// approximate p_site_count with a roughly-cube-root split so the
+		// property still reads as "about this many pieces" regardless of
+		// which pattern is picked. A small amount of offset/angle variation
+		// by default so the cuts don't look like a perfectly uniform grid.
+		int per_axis = 1;
+		const int target = MAX(p_site_count, 1);
+		while ((per_axis + 1) * (per_axis + 1) * (per_axis + 1) <= target) {
+			per_axis++;
+		}
+		Nv::Blast::SlicingConfiguration conf;
+		conf.x_slices = per_axis;
+		conf.y_slices = per_axis;
+		conf.z_slices = per_axis;
+		conf.offset_variations = 0.2f;
+		conf.angle_variations = 0.2f;
+		frac_result = fTool->slicing(0, conf, false, &rng);
+		if (frac_result != 0) {
+			ERR_PRINT(vformat("PhysXBlastAuthoring: slicing failed, code=%d.", frac_result));
+		}
 	} else {
+		sites_gen = NvBlastExtAuthoringCreateVoronoiSitesGenerator(blast_mesh, &rng);
+		sites_gen->uniformlyGenerateSitesInMesh((uint32_t)MAX(p_site_count, 1));
+		const NvcVec3 *sites = nullptr;
+		const uint32_t site_count = sites_gen->getVoronoiSites(sites);
+		frac_result = fTool->voronoiFracturing(0, site_count, sites, false);
+		if (frac_result != 0) {
+			ERR_PRINT(vformat("PhysXBlastAuthoring: voronoiFracturing failed, code=%d.", frac_result));
+		}
+	}
+
+	if (frac_result == 0) {
 		fTool->finalizeFracturing();
 
 		GodotConvexMeshBuilder collision_builder(physics);
 		Nv::Blast::BlastBondGenerator *bond_gen = NvBlastExtAuthoringCreateBondGenerator(&collision_builder);
 		Nv::Blast::ConvexDecompositionParams cparams;
-		cparams.maximumNumberOfHulls = 1; // chunks are already convex (voronoi cells of a convex source)
+		cparams.maximumNumberOfHulls = 1; // chunks are already convex (both Voronoi cells and slicing planes of a convex source stay convex)
 
 		Nv::Blast::AuthoringResult *ares = NvBlastExtAuthoringProcessFracture(*fTool, *bond_gen, collision_builder, cparams);
 		if (!ares) {
@@ -261,7 +292,9 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 		bond_gen->release();
 	}
 
-	sites_gen->release();
+	if (sites_gen) {
+		sites_gen->release();
+	}
 	fTool->release();
 	blast_mesh->release();
 	return result;

@@ -36,9 +36,9 @@
 
 class Mesh;
 
-// In-engine Voronoi mesh fracturing -- the real replacement for the
-// standalone throwaway blast_test_gen.cpp tool this whole Blast effort
-// prototyped with. Ports that tool's proven-correct authoring call sequence
+// In-engine mesh fracturing -- the real replacement for the standalone
+// throwaway blast_test_gen.cpp tool this whole Blast effort prototyped with.
+// Ports that tool's proven-correct authoring call sequence
 // (NvBlastExtAuthoringCreateFractureTool -> VoronoiSitesGenerator ->
 // voronoiFracturing -> NvBlastExtAuthoringProcessFracture) into real module
 // code, using the module's own PxPhysics (GodotPhysXServer3D) to cook
@@ -51,13 +51,34 @@ class Mesh;
 class PhysXBlastAuthoring : public RefCounted {
 	GDCLASS(PhysXBlastAuthoring, RefCounted);
 
+public:
+	// NvBlastExtAuthoring's FractureTool supports more than one fracture
+	// algorithm -- PATTERN_VORONOI (organic/rock-like chunks, what this class
+	// originally only offered) and PATTERN_SLICING (regular, brick-like
+	// pieces from cutting planes -- FractureTool::slicing()/
+	// SlicingConfiguration -- much better suited to man-made/architectural
+	// shapes like crates or walls than Voronoi's random cells). A third,
+	// PATTERN_CUTOUT (2D pattern extruded through the mesh, built for glass-
+	// pane spiderweb cracks), exists in the SDK too but needs a separate
+	// pattern asset and a narrower use case -- not exposed here yet.
+	enum FracturePattern {
+		PATTERN_VORONOI,
+		PATTERN_SLICING,
+	};
+
 protected:
 	static void _bind_methods();
 
 public:
-	// Fractures p_mesh's surface 0 into p_site_count Voronoi cells (plus the
+	// Fractures p_mesh's surface 0 into roughly p_site_count pieces (plus the
 	// implicit root chunk = the whole unfractured mesh, chunk 0 -- same
-	// convention PhysXDestructible3D/GodotPhysXBlastProbe already assume).
-	// Returns a null Ref on failure (mesh has no surfaces, cooking failed, etc).
-	Ref<PhysXBlastAsset> fracture_mesh(const Ref<Mesh> &p_mesh, int p_site_count, int p_seed);
+	// convention PhysXDestructible3D/GodotPhysXBlastProbe already assume),
+	// using p_pattern's algorithm. For PATTERN_SLICING, p_site_count is only
+	// approximate -- it's converted to a roughly-cube-root split across the
+	// 3 slicing axes, since slicing works in slice-counts-per-axis, not a
+	// single site count. Returns a null Ref on failure (mesh has no
+	// surfaces, cooking failed, etc).
+	Ref<PhysXBlastAsset> fracture_mesh(const Ref<Mesh> &p_mesh, int p_site_count, int p_seed, FracturePattern p_pattern = PATTERN_VORONOI);
 };
+
+VARIANT_ENUM_CAST(PhysXBlastAuthoring::FracturePattern);

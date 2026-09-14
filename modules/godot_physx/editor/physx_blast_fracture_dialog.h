@@ -38,6 +38,7 @@ class Label;
 class Mesh;
 class MeshEditor;
 class Node;
+class OptionButton;
 class PhysXBlastAsset;
 class SpinBox;
 
@@ -70,6 +71,7 @@ class PhysXBlastFractureDialog : public ConfirmationDialog {
 	Ref<Mesh> source_mesh;
 
 	MeshEditor *preview = nullptr;
+	OptionButton *pattern_option = nullptr;
 	SpinBox *site_count_spin = nullptr;
 	Label *chunk_count_label = nullptr;
 

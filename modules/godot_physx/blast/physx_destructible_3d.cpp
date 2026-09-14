@@ -81,6 +81,8 @@ void PhysXDestructible3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_blast_asset"), &PhysXDestructible3D::get_blast_asset);
 	ClassDB::bind_method(D_METHOD("set_material_override", "material"), &PhysXDestructible3D::set_material_override);
 	ClassDB::bind_method(D_METHOD("get_material_override"), &PhysXDestructible3D::get_material_override);
+	ClassDB::bind_method(D_METHOD("set_gi_mode", "mode"), &PhysXDestructible3D::set_gi_mode);
+	ClassDB::bind_method(D_METHOD("get_gi_mode"), &PhysXDestructible3D::get_gi_mode);
 	ClassDB::bind_method(D_METHOD("set_shatter_speed", "speed"), &PhysXDestructible3D::set_shatter_speed);
 	ClassDB::bind_method(D_METHOD("get_shatter_speed"), &PhysXDestructible3D::get_shatter_speed);
 	ClassDB::bind_method(D_METHOD("set_mass", "mass"), &PhysXDestructible3D::set_mass);
@@ -105,6 +107,7 @@ void PhysXDestructible3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "chunks_path", PROPERTY_HINT_FILE, "*.chunks"), "set_chunks_path", "get_chunks_path");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "blast_asset", PROPERTY_HINT_RESOURCE_TYPE, "PhysXBlastAsset"), "set_blast_asset", "get_blast_asset");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material_override", PROPERTY_HINT_RESOURCE_TYPE, "Material"), "set_material_override", "get_material_override");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "gi_mode", PROPERTY_HINT_ENUM, "Disabled,Static,Dynamic"), "set_gi_mode", "get_gi_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shatter_speed", PROPERTY_HINT_RANGE, "0,50,0.1"), "set_shatter_speed", "get_shatter_speed");
 	ADD_GROUP("Physics", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "auto_mass"), "set_auto_mass", "get_auto_mass");
@@ -120,6 +123,10 @@ void PhysXDestructible3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_damage_scale", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_impact_damage_scale", "get_impact_damage_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_radius", PROPERTY_HINT_RANGE, "0.1,50,0.1"), "set_impact_radius", "get_impact_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "kill_y", PROPERTY_HINT_RANGE, "-10000,100,1,or_less,or_greater"), "set_kill_y", "get_kill_y");
+
+	BIND_ENUM_CONSTANT(GI_MODE_DISABLED);
+	BIND_ENUM_CONSTANT(GI_MODE_STATIC);
+	BIND_ENUM_CONSTANT(GI_MODE_DYNAMIC);
 }
 
 PhysXDestructible3D::PhysXDestructible3D() {
@@ -191,6 +198,23 @@ void PhysXDestructible3D::set_material_override(const Ref<Material> &p_material)
 	for (const ChunkVisual &piece : pieces) {
 		rs->instance_geometry_set_material_override(piece.instance, mat_rid);
 	}
+}
+
+void PhysXDestructible3D::set_gi_mode(GIMode p_mode) {
+	gi_mode = p_mode;
+	RenderingServer *rs = RenderingServer::get_singleton();
+	for (const ChunkVisual &piece : pieces) {
+		_apply_gi_mode(rs, piece.instance);
+	}
+}
+
+void PhysXDestructible3D::_apply_gi_mode(RenderingServer *p_rs, RID p_instance) const {
+	// Same two flags GeometryInstance3D::set_gi_mode() itself sets (see
+	// visual_instance_3d.cpp) -- every piece here is a raw instance_create2()
+	// call, not a real GeometryInstance3D node, so nothing was ever setting
+	// them without this.
+	p_rs->instance_geometry_set_flag(p_instance, RSE::INSTANCE_FLAG_USE_BAKED_LIGHT, gi_mode == GI_MODE_STATIC);
+	p_rs->instance_geometry_set_flag(p_instance, RSE::INSTANCE_FLAG_USE_DYNAMIC_GI, gi_mode == GI_MODE_DYNAMIC);
 }
 
 PackedStringArray PhysXDestructible3D::get_configuration_warnings() const {
@@ -540,6 +564,7 @@ void PhysXDestructible3D::_spawn_piece(uint32_t p_chunk_index, const Transform3D
 	if (material_override_res.is_valid()) {
 		rs->instance_geometry_set_material_override(instance, material_override_res->get_rid());
 	}
+	_apply_gi_mode(rs, instance);
 
 	ChunkVisual piece;
 	piece.body = body;

@@ -39,6 +39,7 @@
 struct NvBlastAsset;
 struct NvBlastFamily;
 struct NvBlastActor;
+class RenderingServer;
 
 // Real node wrapping the Blast runtime bridge proved out by
 // GodotPhysXBlastProbe (see godot_physx_blast_probe.h -- that class stays as
@@ -78,6 +79,34 @@ public:
 
 	void set_material_override(const Ref<Material> &p_material);
 	Ref<Material> get_material_override() const { return material_override_res; }
+
+	// Every piece's RenderingServer instance is created directly via
+	// instance_create2() (see _spawn_piece()), not through a real
+	// GeometryInstance3D node -- so unlike a MeshInstance3D, nothing was
+	// ever calling instance_geometry_set_flag(INSTANCE_FLAG_USE_BAKED_LIGHT/
+	// USE_DYNAMIC_GI), and a VoxelGI had no way to tell these pieces apart
+	// from ordinary invisible-to-GI geometry. Mirrors
+	// GeometryInstance3D::GIMode exactly (same enum, same two flags) so it's
+	// a drop-in familiar property.
+	//
+	// Defaults to Static, matching both GeometryInstance3D's own default
+	// and -- more importantly -- the RenderingServer Instance's built-in
+	// defaults before this property existed at all (baked_light = true,
+	// dynamic_gi = false; see renderer_scene_cull.h). Dynamic would make
+	// more physical sense for something that's often about to go tumbling
+	// as debris, but a single fracture can spawn a couple dozen pieces at
+	// once and a VoxelGI's dynamic-object tracking cost scales with how many
+	// of those it has to follow every frame -- opting a pile of debris into
+	// that by default risked being expensive well before anyone asked for
+	// it, and silently changing existing scenes' behavior underneath them.
+	// Opt into Dynamic per-node instead.
+	enum GIMode {
+		GI_MODE_DISABLED,
+		GI_MODE_STATIC,
+		GI_MODE_DYNAMIC,
+	};
+	void set_gi_mode(GIMode p_mode);
+	GIMode get_gi_mode() const { return gi_mode; }
 
 	void set_shatter_speed(float p_speed) { shatter_speed = p_speed; }
 	float get_shatter_speed() const { return shatter_speed; }
@@ -186,6 +215,7 @@ private:
 	String chunks_path;
 	Ref<PhysXBlastAsset> blast_asset;
 	Ref<Material> material_override_res;
+	GIMode gi_mode = GI_MODE_STATIC;
 	float shatter_speed = 8.0f;
 	float mass = 1.0f;
 	bool auto_mass = true;
@@ -247,6 +277,8 @@ private:
 	// simulation runs there anyway) so the node still shows *something* in
 	// the viewport -- ChunkVisual::body/shape stay RID() in that case.
 	void _spawn_piece(uint32_t p_chunk_index, const Transform3D &p_transform, const Vector3 &p_linear_velocity, bool p_physics = true);
+	// See set_gi_mode()'s own note on why this is needed at all.
+	void _apply_gi_mode(RenderingServer *p_rs, RID p_instance) const;
 	Vector3 _chunk_centroid_local(uint32_t p_chunk_index) const;
 	void _free_all_pieces();
 	void _sync_transforms();
@@ -255,3 +287,5 @@ private:
 	// if any single contact's impulse exceeds impact_strength.
 	void _check_impact_fracture();
 };
+
+VARIANT_ENUM_CAST(PhysXDestructible3D::GIMode);

@@ -487,6 +487,18 @@ void PhysXDestructible3D::_spawn_piece(uint32_t p_chunk_index, const Transform3D
 		ps->shape_set_data(shape, points);
 
 		body = ps->body_create();
+		// A real CollisionObject3D (RigidBody3D, StaticBody3D, ...) always
+		// does this in its constructor -- it's how the *other* body's
+		// RigidBody3D::_body_inout() resolves a Node to emit body_entered/
+		// body_shape_entered against (see rigid_body_3d.cpp; without it,
+		// ObjectDB::get_instance() on the raw body's RID returns null, the
+		// node stays "not in tree", and those signals silently never fire,
+		// even though the physics-server-level collision response -- the
+		// literal bounce -- still happens). Missing this made every
+		// PhysXDestructible3D body invisible to any script relying on
+		// body_entered (e.g. destructible_demo_rig.gd's bomb): it would
+		// bounce off every time and never register a hit.
+		ps->body_attach_object_instance_id(body, get_instance_id());
 		ps->body_set_mode(body, PhysicsServer3D::BODY_MODE_RIGID);
 		ps->body_add_shape(body, shape);
 		ps->body_set_param(body, PhysicsServer3D::BODY_PARAM_MASS, _chunk_mass(p_chunk_index));

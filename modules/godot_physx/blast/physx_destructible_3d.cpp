@@ -125,16 +125,19 @@ PhysXDestructible3D::~PhysXDestructible3D() {
 void PhysXDestructible3D::set_asset_path(const String &p_path) {
 	asset_path = p_path;
 	update_configuration_warnings();
+	_reload();
 }
 
 void PhysXDestructible3D::set_chunks_path(const String &p_path) {
 	chunks_path = p_path;
 	update_configuration_warnings();
+	_reload();
 }
 
 void PhysXDestructible3D::set_blast_asset(const Ref<PhysXBlastAsset> &p_asset) {
 	blast_asset = p_asset;
 	update_configuration_warnings();
+	_reload();
 }
 
 void PhysXDestructible3D::set_material_override(const Ref<Material> &p_material) {
@@ -304,6 +307,39 @@ bool PhysXDestructible3D::_load() {
 	}
 
 	return true;
+}
+
+void PhysXDestructible3D::_reload() {
+	_free_all_pieces();
+	if (family_mem) {
+		aligned_free_16(family_mem);
+		family_mem = nullptr;
+	}
+	if (asset_mem) {
+		aligned_free_16(asset_mem);
+		asset_mem = nullptr;
+	}
+	family = nullptr;
+	live_actors.clear();
+	asset_chunk_count = 0;
+	asset_bond_count = 0;
+	chunk_points.clear();
+	loaded = false;
+	fractured = false;
+
+	if (!is_inside_world()) {
+		// Not in the tree/world yet -- NOTIFICATION_ENTER_WORLD will load and
+		// spawn once it is, same as before this method existed.
+		return;
+	}
+
+	loaded = _load();
+	if (loaded && pieces.is_empty()) {
+		_spawn_intact();
+		if (dynamic && !Engine::get_singleton()->is_editor_hint()) {
+			set_physics_process_internal(true);
+		}
+	}
 }
 
 void PhysXDestructible3D::_spawn_intact() {

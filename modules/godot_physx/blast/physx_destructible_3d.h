@@ -171,6 +171,13 @@ private:
 
 	bool _load();
 	bool _load_asset_bytes(const PackedByteArray &p_bytes);
+	// Tears down any existing family/pieces and, if already inside the world,
+	// immediately re-loads and re-spawns from whatever asset_path/chunks_path/
+	// blast_asset now point at -- called from those setters so assigning a
+	// new asset (or dragging one onto an empty node already in the tree)
+	// shows up right away instead of only on the next time the node enters
+	// the tree (e.g. reopening the scene).
+	void _reload();
 	void _spawn_intact();
 	// p_physics: create a PhysicsServer3D body+shape for this piece too, not
 	// just its RenderingServer mesh instance. False in the editor (no physics

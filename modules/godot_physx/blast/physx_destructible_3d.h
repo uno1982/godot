@@ -118,6 +118,15 @@ public:
 	void set_impact_radius(float p_radius) { impact_radius = p_radius; }
 	float get_impact_radius() const { return impact_radius; }
 
+	// A piece (fractured debris, or the intact body if dynamic) whose world Y
+	// falls below this is freed automatically -- bounds memory/body count for
+	// a scene where debris can fall indefinitely (no floor everywhere, a
+	// gap, missing the pile entirely) instead of accumulating forever.
+	// Default is low enough not to trigger on an ordinary scene; set it to
+	// match this scene's actual floor/void.
+	void set_kill_y(float p_y) { kill_y = p_y; }
+	float get_kill_y() const { return kill_y; }
+
 	// p_world_position: world-space damage origin (converted to this node's
 	// local space internally, since chunk geometry is authored local-space).
 	// Returns how many new rigid-body pieces this call produced. Each new
@@ -145,6 +154,7 @@ private:
 	float impact_strength = 5.0f;
 	float impact_damage_scale = 1.0f;
 	float impact_radius = 5.0f;
+	float kill_y = -1000.0f;
 
 	void *asset_mem = nullptr;
 	void *family_mem = nullptr;

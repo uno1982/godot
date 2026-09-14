@@ -93,6 +93,8 @@ void PhysXDestructible3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_impact_damage_scale"), &PhysXDestructible3D::get_impact_damage_scale);
 	ClassDB::bind_method(D_METHOD("set_impact_radius", "radius"), &PhysXDestructible3D::set_impact_radius);
 	ClassDB::bind_method(D_METHOD("get_impact_radius"), &PhysXDestructible3D::get_impact_radius);
+	ClassDB::bind_method(D_METHOD("set_kill_y", "y"), &PhysXDestructible3D::set_kill_y);
+	ClassDB::bind_method(D_METHOD("get_kill_y"), &PhysXDestructible3D::get_kill_y);
 	ClassDB::bind_method(D_METHOD("apply_radial_damage", "world_position", "damage", "min_radius", "max_radius"), &PhysXDestructible3D::apply_radial_damage);
 
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "asset_path", PROPERTY_HINT_FILE, "*.asset"), "set_asset_path", "get_asset_path");
@@ -106,6 +108,7 @@ void PhysXDestructible3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_strength", PROPERTY_HINT_RANGE, "0,200,0.1"), "set_impact_strength", "get_impact_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_damage_scale", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_impact_damage_scale", "get_impact_damage_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_radius", PROPERTY_HINT_RANGE, "0.1,50,0.1"), "set_impact_radius", "get_impact_radius");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "kill_y", PROPERTY_HINT_RANGE, "-10000,100,1,or_less,or_greater"), "set_kill_y", "get_kill_y");
 }
 
 PhysXDestructible3D::PhysXDestructible3D() {
@@ -221,10 +224,17 @@ void PhysXDestructible3D::_notification(int p_what) {
 				PhysicsDirectBodyState3D *state = PhysicsServer3D::get_singleton()->body_get_direct_state(pieces[0].body);
 				if (state) {
 					const Transform3D t = state->get_transform();
-					set_global_transform(t);
-					RenderingServer::get_singleton()->instance_set_transform(pieces[0].instance, t);
+					if (t.origin.y < kill_y) {
+						// Fell out of the scene before ever taking a hit -- same
+						// cleanup _sync_transforms() does for fractured debris,
+						// just for the still-intact single piece.
+						_free_all_pieces();
+					} else {
+						set_global_transform(t);
+						RenderingServer::get_singleton()->instance_set_transform(pieces[0].instance, t);
+						_check_impact_fracture();
+					}
 				}
-				_check_impact_fracture();
 			}
 		} break;
 	}
@@ -465,11 +475,29 @@ void PhysXDestructible3D::_free_all_pieces() {
 void PhysXDestructible3D::_sync_transforms() {
 	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
 	RenderingServer *rs = RenderingServer::get_singleton();
-	for (const ChunkVisual &piece : pieces) {
+	// Backwards so remove_at_unordered() (swaps in the last element) doesn't
+	// skip the piece it just moved into the current slot.
+	for (int64_t i = (int64_t)pieces.size() - 1; i >= 0; i--) {
+		const ChunkVisual &piece = pieces[i];
 		PhysicsDirectBodyState3D *state = ps->body_get_direct_state(piece.body);
-		if (state) {
-			rs->instance_set_transform(piece.instance, state->get_transform());
+		if (!state) {
+			continue;
 		}
+		const Transform3D t = state->get_transform();
+		if (t.origin.y < kill_y) {
+			// Nothing else was ever going to free a piece that's just fallen
+			// out of the scene entirely (there's no owning Node a kill-floor
+			// Area3D could catch it with -- these are raw PhysicsServer3D
+			// RIDs) -- without this, debris that misses the level keeps
+			// simulating and consuming memory forever.
+			ps->free_rid(piece.body);
+			ps->free_rid(piece.shape);
+			rs->free_rid(piece.instance);
+			rs->free_rid(piece.mesh);
+			pieces.remove_at_unordered((uint32_t)i);
+			continue;
+		}
+		rs->instance_set_transform(piece.instance, t);
 	}
 }
 

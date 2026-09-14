@@ -83,6 +83,8 @@ void PhysXDestructible3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_material_override"), &PhysXDestructible3D::get_material_override);
 	ClassDB::bind_method(D_METHOD("set_shatter_speed", "speed"), &PhysXDestructible3D::set_shatter_speed);
 	ClassDB::bind_method(D_METHOD("get_shatter_speed"), &PhysXDestructible3D::get_shatter_speed);
+	ClassDB::bind_method(D_METHOD("set_mass", "mass"), &PhysXDestructible3D::set_mass);
+	ClassDB::bind_method(D_METHOD("get_mass"), &PhysXDestructible3D::get_mass);
 	ClassDB::bind_method(D_METHOD("set_dynamic", "dynamic"), &PhysXDestructible3D::set_dynamic);
 	ClassDB::bind_method(D_METHOD("get_dynamic"), &PhysXDestructible3D::get_dynamic);
 	ClassDB::bind_method(D_METHOD("set_health", "health"), &PhysXDestructible3D::set_health);
@@ -103,6 +105,7 @@ void PhysXDestructible3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material_override", PROPERTY_HINT_RESOURCE_TYPE, "Material"), "set_material_override", "get_material_override");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shatter_speed", PROPERTY_HINT_RANGE, "0,50,0.1"), "set_shatter_speed", "get_shatter_speed");
 	ADD_GROUP("Physics", "");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mass", PROPERTY_HINT_RANGE, "0.001,1000,0.001,or_greater,exp"), "set_mass", "get_mass");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dynamic"), "set_dynamic", "get_dynamic");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "health", PROPERTY_HINT_RANGE, "0.01,20,0.01"), "set_health", "get_health");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_strength", PROPERTY_HINT_RANGE, "0,200,0.1"), "set_impact_strength", "get_impact_strength");
@@ -281,6 +284,7 @@ bool PhysXDestructible3D::_load() {
 		for (int i = 0; i < points.size(); i++) {
 			chunk_points[i] = points[i];
 		}
+		_compute_chunk_volumes();
 		return true;
 	}
 
@@ -320,7 +324,48 @@ bool PhysXDestructible3D::_load() {
 		chunk_points[chunk_index] = points;
 	}
 
+	_compute_chunk_volumes();
 	return true;
+}
+
+void PhysXDestructible3D::_compute_chunk_volumes() {
+	// Divergence-theorem volume of a closed triangle soup: sum each
+	// triangle's signed tetrahedron volume against the origin
+	// (a . (b x c) / 6); abs() makes it winding-independent, and object-
+	// local space (chunk geometry is already authored there) means no
+	// transform is needed. Used to distribute mass across pieces
+	// proportional to their actual size (see set_mass()) instead of every
+	// piece getting the same flat default regardless of how big it is --
+	// found missing here by checking how Unreal's own Blast integration
+	// handles it (BlastMeshComponent.cpp: IdealChunkMass = RootChunkMass *
+	// ThisChunkVolume / TotalVolume).
+	chunk_volumes.resize(chunk_points.size());
+	total_leaf_volume = 0.0;
+	for (uint32_t c = 0; c < chunk_points.size(); c++) {
+		const PackedVector3Array &points = chunk_points[c];
+		double v6 = 0.0;
+		for (int t = 0; t + 2 < points.size(); t += 3) {
+			v6 += (double)points[t].dot(points[t + 1].cross(points[t + 2]));
+		}
+		const double volume = Math::abs(v6) / 6.0;
+		chunk_volumes[c] = volume;
+		if (c != 0) { // chunk 0 is the whole unfractured mesh, not a leaf
+			total_leaf_volume += volume;
+		}
+	}
+}
+
+float PhysXDestructible3D::_chunk_mass(uint32_t p_chunk_index) const {
+	if (p_chunk_index == 0 || p_chunk_index >= chunk_volumes.size() || total_leaf_volume <= 0.0) {
+		return mass;
+	}
+	// Minimum floor so a sliver chunk doesn't end up with a near-zero mass
+	// that misbehaves in the solver -- same reasoning as Unreal's own 0.5kg
+	// floor (FMath::Max(IdealChunkMass, 0.5f)), scaled down since this
+	// module's demo assets are much smaller than Unreal's typical world
+	// scale (see this class's own shatter_speed/health defaults).
+	const float ideal = (float)(mass * chunk_volumes[p_chunk_index] / total_leaf_volume);
+	return MAX(ideal, 0.05f);
 }
 
 void PhysXDestructible3D::_reload() {
@@ -338,6 +383,8 @@ void PhysXDestructible3D::_reload() {
 	asset_chunk_count = 0;
 	asset_bond_count = 0;
 	chunk_points.clear();
+	chunk_volumes.clear();
+	total_leaf_volume = 0.0;
 	loaded = false;
 	fractured = false;
 
@@ -393,6 +440,7 @@ void PhysXDestructible3D::_spawn_piece(uint32_t p_chunk_index, const Transform3D
 		body = ps->body_create();
 		ps->body_set_mode(body, PhysicsServer3D::BODY_MODE_RIGID);
 		ps->body_add_shape(body, shape);
+		ps->body_set_param(body, PhysicsServer3D::BODY_PARAM_MASS, _chunk_mass(p_chunk_index));
 		ps->body_set_state(body, PhysicsServer3D::BODY_STATE_TRANSFORM, p_transform);
 		ps->body_set_state(body, PhysicsServer3D::BODY_STATE_LINEAR_VELOCITY, p_linear_velocity);
 		if (is_inside_world() && get_world_3d().is_valid()) {

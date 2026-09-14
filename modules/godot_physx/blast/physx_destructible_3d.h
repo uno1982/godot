@@ -81,6 +81,17 @@ public:
 	void set_shatter_speed(float p_speed) { shatter_speed = p_speed; }
 	float get_shatter_speed() const { return shatter_speed; }
 
+	// The whole intact object's mass (same meaning as RigidBody3D.mass).
+	// Every piece used to get PhysicsServer3D's own flat default (1.0)
+	// regardless of size -- checked how Unreal's own Blast integration
+	// handles this (BlastMeshComponent.cpp) and it distributes mass across
+	// split pieces proportional to each one's actual volume, conserving the
+	// intact object's total mass; this does the same (see
+	// _compute_chunk_volumes()/_chunk_mass()) rather than giving a huge
+	// remaining chunk and a tiny sliver the same weight.
+	void set_mass(float p_mass) { mass = MAX(p_mass, 0.001f); }
+	float get_mass() const { return mass; }
+
 	// If true, the intact piece is a real dynamic (BODY_MODE_RIGID) body --
 	// it falls under gravity and collides normally, like any other physics
 	// object, instead of hanging in place until something explicitly calls
@@ -149,6 +160,7 @@ private:
 	Ref<PhysXBlastAsset> blast_asset;
 	Ref<Material> material_override_res;
 	float shatter_speed = 8.0f;
+	float mass = 1.0f;
 	bool dynamic = false;
 	float health = 1.0f;
 	float impact_strength = 5.0f;
@@ -168,6 +180,14 @@ private:
 	// GodotPhysXBlastProbe uses -- see that class's header for the format.
 	LocalVector<PackedVector3Array> chunk_points;
 
+	// chunk_volumes[chunk_index] = that chunk's volume (object-local space,
+	// so no transform/scale applied); total_leaf_volume = sum of every leaf
+	// chunk's volume (excludes chunk 0, the whole unfractured mesh). Both
+	// computed once in _compute_chunk_volumes(), called from _load(). See
+	// set_mass() for why.
+	LocalVector<double> chunk_volumes;
+	double total_leaf_volume = 0.0;
+
 	struct ChunkVisual {
 		RID body;
 		RID shape;
@@ -181,6 +201,11 @@ private:
 
 	bool _load();
 	bool _load_asset_bytes(const PackedByteArray &p_bytes);
+	void _compute_chunk_volumes();
+	// mass distributed proportional to p_chunk_index's share of
+	// total_leaf_volume (floored so a sliver never gets a near-zero mass),
+	// except chunk 0 (the whole intact mesh), which just gets `mass` itself.
+	float _chunk_mass(uint32_t p_chunk_index) const;
 	// Tears down any existing family/pieces and, if already inside the world,
 	// immediately re-loads and re-spawns from whatever asset_path/chunks_path/
 	// blast_asset now point at -- called from those setters so assigning a

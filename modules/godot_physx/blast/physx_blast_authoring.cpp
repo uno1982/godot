@@ -32,15 +32,19 @@
 
 #include "../godot_physx_server_3d.h"
 
+#include "core/io/image.h"
 #include "core/object/class_db.h"
 #include "scene/resources/mesh.h"
+#include "scene/resources/texture.h"
 
 #include <NvBlast.h>
 #include <NvBlastExtAuthoring.h>
 #include <NvBlastExtAuthoringBondGenerator.h>
 #include <NvBlastExtAuthoringConvexMeshBuilder.h>
+#include <NvBlastExtAuthoringCutout.h>
 #include <NvBlastExtAuthoringFractureTool.h>
 #include <NvBlastExtAuthoringMesh.h>
+#include <NvBlastExtAuthoringMeshCleaner.h>
 #include <NvBlastExtAuthoringTypes.h>
 #include <NvBlastTypes.h>
 #include <PxPhysicsAPI.h>
@@ -152,16 +156,115 @@ public:
 	float getRandomValue() override { return (float)std::rand() / (float)RAND_MAX; }
 };
 
+// Pre-flight check for PATTERN_CUTOUT patterns, added after two different
+// real crashes deep inside NvBlastExtAuthoringFractureToolImpl::cutout()
+// (SweepingAccelerator construction) -- both traced to the same cause: a
+// crack/wall shape that doesn't reach the pattern's edge leaves the fill
+// region wrapping around it with a hole in the middle (unlike a real broken
+// pane, where every shard is a closed polygon and every crack reaches a
+// boundary). Confirmed by fixing exactly that -- extending the crack lines
+// to the image edge -- and nothing else, which made an otherwise-identical
+// pattern fracture cleanly.
+//
+// Rule enforced here, directly from that finding: every connected wall
+// (crack-line) shape must touch the image boundary somewhere. A wall
+// component with zero boundary-touching pixels is a "floating island" --
+// the exact topology that crashed. Uses the same weighted-RGB threshold
+// NvBlastExtAuthoringCutoutImpl.cpp's own createCutoutSet() applies (see
+// PhysXBlastAuthoring::fracture_mesh()'s own comment on why it's 3 bytes/
+// pixel, not the 1-byte/pixel the public header claims) so this reads the
+// pattern exactly the way the SDK itself will.
+bool cutout_pattern_has_floating_wall_island(const PackedByteArray &p_gray, uint32_t p_w, uint32_t p_h) {
+	const int64_t n = (int64_t)p_w * (int64_t)p_h;
+	if (n == 0) {
+		return false;
+	}
+
+	LocalVector<bool> is_wall;
+	is_wall.resize((uint32_t)n);
+	{
+		const uint8_t *g = p_gray.ptr();
+		for (int64_t i = 0; i < n; i++) {
+			const uint32_t pix = 16777216u * (uint32_t)g[i]; // (5033165+9898557+1845494) * gray, R=G=B
+			is_wall[(uint32_t)i] = (pix >> 28) != 0;
+		}
+	}
+
+	LocalVector<int32_t> visited; // -1 = unvisited wall pixel, else already assigned to a checked component
+	visited.resize((uint32_t)n);
+	for (uint32_t i = 0; i < (uint32_t)n; i++) {
+		visited[i] = -1;
+	}
+
+	LocalVector<uint32_t> stack;
+	for (uint32_t y = 0; y < p_h; y++) {
+		for (uint32_t x = 0; x < p_w; x++) {
+			const uint32_t start = y * p_w + x;
+			if (!is_wall[start] || visited[start] != -1) {
+				continue;
+			}
+
+			bool touches_border = false;
+			stack.clear();
+			stack.push_back(start);
+			visited[start] = 1;
+			while (!stack.is_empty()) {
+				const uint32_t cur = stack[stack.size() - 1];
+				stack.remove_at(stack.size() - 1);
+				const uint32_t cx = cur % p_w;
+				const uint32_t cy = cur / p_w;
+				if (cx == 0 || cx == p_w - 1 || cy == 0 || cy == p_h - 1) {
+					touches_border = true;
+				}
+				if (cx > 0) {
+					const uint32_t nb = cur - 1;
+					if (is_wall[nb] && visited[nb] == -1) {
+						visited[nb] = 1;
+						stack.push_back(nb);
+					}
+				}
+				if (cx + 1 < p_w) {
+					const uint32_t nb = cur + 1;
+					if (is_wall[nb] && visited[nb] == -1) {
+						visited[nb] = 1;
+						stack.push_back(nb);
+					}
+				}
+				if (cy > 0) {
+					const uint32_t nb = cur - p_w;
+					if (is_wall[nb] && visited[nb] == -1) {
+						visited[nb] = 1;
+						stack.push_back(nb);
+					}
+				}
+				if (cy + 1 < p_h) {
+					const uint32_t nb = cur + p_w;
+					if (is_wall[nb] && visited[nb] == -1) {
+						visited[nb] = 1;
+						stack.push_back(nb);
+					}
+				}
+			}
+
+			if (!touches_border) {
+				return true; // a floating island -- reject the whole pattern
+			}
+		}
+	}
+	return false;
+}
+
 } //namespace
 
 void PhysXBlastAuthoring::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("fracture_mesh", "mesh", "site_count", "seed", "pattern"), &PhysXBlastAuthoring::fracture_mesh, DEFVAL(PATTERN_VORONOI));
+	ClassDB::bind_method(D_METHOD("fracture_mesh", "mesh", "site_count", "seed", "pattern", "cutout_pattern"), &PhysXBlastAuthoring::fracture_mesh, DEFVAL(PATTERN_VORONOI), DEFVAL(Ref<Texture2D>()));
 
 	BIND_ENUM_CONSTANT(PATTERN_VORONOI);
 	BIND_ENUM_CONSTANT(PATTERN_SLICING);
+	BIND_ENUM_CONSTANT(PATTERN_CUTOUT);
 }
 
-Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh, int p_site_count, int p_seed, FracturePattern p_pattern) {
+Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh, int p_site_count, int p_seed, FracturePattern p_pattern, const Ref<Texture2D> &p_cutout_pattern) {
 	ERR_FAIL_COND_V_MSG(p_mesh.is_null() || p_mesh->get_surface_count() < 1, Ref<PhysXBlastAsset>(),
 			"PhysXBlastAuthoring: mesh is null or has no surfaces.");
 	PxPhysics *physics = GodotPhysXServer3D::get_singleton() ? GodotPhysXServer3D::get_singleton()->get_px_physics() : nullptr;
@@ -203,9 +306,25 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 		}
 	}
 
-	Nv::Blast::Mesh *blast_mesh = NvBlastExtAuthoringCreateMesh(positions.ptr(), normals.ptr(), uvs.ptr(),
+	Nv::Blast::Mesh *raw_mesh = NvBlastExtAuthoringCreateMesh(positions.ptr(), normals.ptr(), uvs.ptr(),
 			(uint32_t)positions.size(), indices.ptr(), (uint32_t)indices.size());
-	ERR_FAIL_NULL_V_MSG(blast_mesh, Ref<PhysXBlastAsset>(), "PhysXBlastAuthoring: NvBlastExtAuthoringCreateMesh failed.");
+	ERR_FAIL_NULL_V_MSG(raw_mesh, Ref<PhysXBlastAsset>(), "PhysXBlastAuthoring: NvBlastExtAuthoringCreateMesh failed.");
+
+	// FractureTool requires a closed (watertight), self-intersection-free,
+	// open-edge-free mesh (NvBlastExtAuthoringMeshCleaner.h) -- a Godot
+	// PrimitiveMesh like BoxMesh doesn't weld vertices across face
+	// boundaries (24 verts for 6 faces, not 8 shared corners), which reads
+	// as "open edges" to Blast. Voronoi/Slicing tolerated that in practice;
+	// Cutout's boolean CSG did not (crashed/produced a 1-chunk degenerate
+	// result with "Not equal number of starting and ending vertices" until
+	// this was added) -- clean unconditionally rather than special-case it
+	// per pattern, since a strictly-valid mesh can only help the others too.
+	Nv::Blast::MeshCleaner *mesh_cleaner = NvBlastExtAuthoringCreateMeshCleaner();
+	Nv::Blast::Mesh *cleaned_mesh = mesh_cleaner->cleanMesh(raw_mesh);
+	Nv::Blast::Mesh *blast_mesh = cleaned_mesh ? cleaned_mesh : raw_mesh;
+	if (!cleaned_mesh) {
+		ERR_PRINT("PhysXBlastAuthoring: MeshCleaner::cleanMesh failed, fracturing the raw mesh as-is.");
+	}
 
 	Nv::Blast::FractureTool *fTool = NvBlastExtAuthoringCreateFractureTool();
 	const Nv::Blast::Mesh *src_meshes[1] = { blast_mesh };
@@ -239,6 +358,84 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 		if (frac_result != 0) {
 			ERR_PRINT(vformat("PhysXBlastAuthoring: slicing failed, code=%d.", frac_result));
 		}
+	} else if (p_pattern == PATTERN_CUTOUT) {
+		// Unlike Voronoi/Slicing, NvBlast doesn't generate this pattern itself
+		// -- same as Unreal's own Blast integration, the caller supplies a
+		// grayscale bitmap (see this class's header for why) and
+		// NvBlastExtAuthoringBuildCutoutSet segments it into per-region loops.
+		if (p_cutout_pattern.is_null()) {
+			ERR_PRINT("PhysXBlastAuthoring: PATTERN_CUTOUT requires a cutout_pattern texture.");
+			frac_result = -1;
+		} else {
+			Ref<Image> pattern_img = p_cutout_pattern->get_image();
+			if (pattern_img.is_null() || pattern_img->is_empty()) {
+				ERR_PRINT("PhysXBlastAuthoring: cutout_pattern texture has no image data.");
+				frac_result = -1;
+			} else {
+				if (pattern_img->is_compressed()) {
+					pattern_img->decompress();
+				}
+				// NvBlastExtAuthoringCutout.h's own doc comment claims "each
+				// pixel is represented by one byte," but this SDK build's
+				// actual createCutoutSet() (NvBlastExtAuthoringCutoutImpl.cpp)
+				// reads 3 bytes/pixel -- a weighted RGB luminance, thresholded
+				// near-binary (roughly: value below ~1/16 of max is interior/
+				// fill, anything brighter is a wall/crack line). Confirmed by
+				// reading that source directly after the stale 1-byte-per-
+				// pixel assumption crashed with an out-of-bounds read -- it
+				// walks 3 bytes per pixel regardless of what the header says.
+				// Matches Unreal's own Blast integration, which independently
+				// packs the same 3-bytes-per-pixel format for the same call.
+				pattern_img->convert(Image::FORMAT_L8);
+				const PackedByteArray gray = pattern_img->get_data();
+				const uint32_t pw = (uint32_t)pattern_img->get_width();
+				const uint32_t ph = (uint32_t)pattern_img->get_height();
+				PackedByteArray pixels;
+				pixels.resize((int64_t)pw * ph * 3);
+				{
+					uint8_t *dst = pixels.ptrw();
+					const uint8_t *src = gray.ptr();
+					const int64_t n = (int64_t)pw * ph;
+					for (int64_t i = 0; i < n; i++) {
+						dst[i * 3 + 0] = src[i];
+						dst[i * 3 + 1] = src[i];
+						dst[i * 3 + 2] = src[i];
+					}
+				}
+
+				// Refuse rather than risk the crash a floating (edge-
+				// unreached) crack island caused twice while building this
+				// pattern -- see cutout_pattern_has_floating_wall_island()'s
+				// own comment for the full story. A native SDK crash can't
+				// be caught from here (it takes the whole process down), so
+				// this has to be ruled out before ever calling cutout().
+				if (cutout_pattern_has_floating_wall_island(gray, pw, ph)) {
+					ERR_PRINT("PhysXBlastAuthoring: cutout_pattern rejected -- it has a crack/wall shape that "
+							  "doesn't reach the image edge (a 'floating island'). Every crack line needs to "
+							  "reach the pattern's boundary, the same way a real broken pane's cracks do -- "
+							  "otherwise the fill region wraps around it with a hole in the middle, which is "
+							  "known to crash the underlying Blast SDK's Cutout code rather than fail cleanly.");
+					frac_result = -1;
+				} else {
+					Nv::Blast::CutoutSet *cutout_set = NvBlastExtAuthoringCreateCutoutSet();
+					NvBlastExtAuthoringBuildCutoutSet(*cutout_set, pixels.ptr(), pw, ph,
+							/*segmentationErrorThreshold*/ 1e-3f, /*snapThreshold*/ 1.0f,
+							/*periodic*/ false, /*expandGaps*/ false);
+
+					Nv::Blast::CutoutConfiguration conf;
+					conf.cutoutSet = cutout_set;
+					// Defaults otherwise: scale (-1,-1) auto-fits the pattern
+					// to the chunk's own AABB, isRelativeTransform=true
+					// centers it on the chunk -- exactly what a "just works"
+					// first pass wants without per-mesh sizing math of our own.
+					frac_result = fTool->cutout(0, conf, false, &rng);
+					if (frac_result != 0) {
+						ERR_PRINT(vformat("PhysXBlastAuthoring: cutout failed, code=%d.", frac_result));
+					}
+					cutout_set->release();
+				}
+			}
+		}
 	} else {
 		sites_gen = NvBlastExtAuthoringCreateVoronoiSitesGenerator(blast_mesh, &rng);
 		sites_gen->uniformlyGenerateSitesInMesh((uint32_t)MAX(p_site_count, 1));
@@ -256,7 +453,11 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 		GodotConvexMeshBuilder collision_builder(physics);
 		Nv::Blast::BlastBondGenerator *bond_gen = NvBlastExtAuthoringCreateBondGenerator(&collision_builder);
 		Nv::Blast::ConvexDecompositionParams cparams;
-		cparams.maximumNumberOfHulls = 1; // chunks are already convex (both Voronoi cells and slicing planes of a convex source stay convex)
+		// Voronoi cells and slicing planes of a convex source stay convex,
+		// but a cutout region can easily be concave (an L-shaped brick, a
+		// crack loop that isn't itself convex) -- allow real decomposition
+		// there instead of silently producing a wrong/degenerate hull.
+		cparams.maximumNumberOfHulls = (p_pattern == PATTERN_CUTOUT) ? 8 : 1;
 
 		Nv::Blast::AuthoringResult *ares = NvBlastExtAuthoringProcessFracture(*fTool, *bond_gen, collision_builder, cparams);
 		if (!ares) {
@@ -296,6 +497,10 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 		sites_gen->release();
 	}
 	fTool->release();
-	blast_mesh->release();
+	if (cleaned_mesh) {
+		cleaned_mesh->release();
+	}
+	raw_mesh->release();
+	mesh_cleaner->release();
 	return result;
 }

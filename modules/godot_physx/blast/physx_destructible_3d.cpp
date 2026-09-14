@@ -624,30 +624,22 @@ void PhysXDestructible3D::_check_impact_fracture() {
 		return;
 	}
 
-	// apply_radial_damage() commits to "fractured" (drops the intact
-	// placeholder body) on the first call regardless of whether the damage
-	// actually breaks any bonds -- a damage value too close to health can
-	// leave nothing behind (known sharp edge at exactly damage == health, see
-	// PhysXBlastAuthoring's own notes). Once an impact clears impact_strength
-	// at all, guarantee real overkill rather than risk the object silently
-	// vanishing on a borderline hit; impact_damage_scale still lets a much
-	// harder impact scale damage further above that floor.
+	// apply_radial_damage() no longer commits to "fractured" until it
+	// confirms real chunks actually broke off, so a too-weak hit now safely
+	// no-ops instead of vanishing the object -- but a damage value too close
+	// to health can still leave nothing behind on this particular impact
+	// (known sharp edge at exactly damage == health, see
+	// PhysXBlastAuthoring's own notes), which would silently swallow an
+	// impact that visibly looked hard enough to break something. Once an
+	// impact clears impact_strength at all, guarantee real overkill rather
+	// than risk that; impact_damage_scale still lets a much harder impact
+	// scale damage further above this floor.
 	const float damage = MAX((float)(max_impulse - impact_strength) * impact_damage_scale, health * 1.5f);
 	apply_radial_damage(impact_position, damage, 0.0f, impact_radius);
 }
 
 int PhysXDestructible3D::apply_radial_damage(const Vector3 &p_world_position, float p_damage, float p_min_radius, float p_max_radius) {
 	ERR_FAIL_NULL_V_MSG(family, 0, "PhysXDestructible3D: node not loaded (missing/invalid asset_path or chunks_path?).");
-
-	if (!fractured) {
-		// First hit: the intact single piece is about to potentially split --
-		// drop its placeholder body/visual regardless of whether this
-		// particular hit actually breaks anything, since from here on pieces
-		// are tracked per-actor, not as one intact whole.
-		_free_all_pieces();
-		fractured = true;
-		set_physics_process_internal(true);
-	}
 
 	const Vector3 local_position = get_global_transform().affine_inverse().xform(p_world_position);
 
@@ -736,6 +728,36 @@ int PhysXDestructible3D::apply_radial_damage(const Vector3 &p_world_position, fl
 				spawned++;
 			}
 		}
+	}
+
+	// Only now -- having confirmed real chunks actually broke off -- retire
+	// the intact placeholder body/visual and commit to "fractured". Doing
+	// this unconditionally on the *first call* (the old behavior) meant any
+	// hit that reached the object at all, even one whose falloff-scaled
+	// damage was too weak to break a single bond, silently destroyed the
+	// intact piece and spawned nothing: the object would vanish with no
+	// body and no visual, yet `fractured` was already true so it could never
+	// be re-spawned, only (maybe) surfaced later once accumulated bond
+	// damage from a subsequent hit finally cleared a split -- exactly the
+	// "bounces off, then randomly disappears or breaks" behavior reported
+	// against a single static sphere. `pieces[0]` is guaranteed to still be
+	// exactly that placeholder here: nothing else could have been in
+	// `pieces` before this call while `!fractured`.
+	if (!fractured && spawned > 0) {
+		PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
+		RenderingServer *rs = RenderingServer::get_singleton();
+		const ChunkVisual &placeholder = pieces[0];
+		if (placeholder.body.is_valid()) {
+			ps->free_rid(placeholder.body);
+		}
+		if (placeholder.shape.is_valid()) {
+			ps->free_rid(placeholder.shape);
+		}
+		rs->free_rid(placeholder.instance);
+		rs->free_rid(placeholder.mesh);
+		pieces.remove_at_unordered(0);
+		fractured = true;
+		set_physics_process_internal(true);
 	}
 
 	return spawned;

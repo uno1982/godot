@@ -185,14 +185,18 @@ void PhysXDestructible3D::_notification(int p_what) {
 			_free_all_pieces();
 		} break;
 		case NOTIFICATION_TRANSFORM_CHANGED: {
-			if (!fractured && pieces.size() == 1 && !dynamic) {
-				// Still intact and static -- the single "piece" IS this node, so
-				// keep its body/visual glued to wherever the node itself moves.
-				// Skipped once dynamic: physics owns that body's transform from
-				// here (falling, colliding), so forcing the node's placement onto
-				// it on every notification would fight the simulation. The body
-				// is also RID() in the editor (see _spawn_intact()), so skip it
-				// there regardless of `dynamic`.
+			// !dynamic || editor: keep the single intact piece's body/visual
+			// glued to wherever the node itself moves. Only skipped for a
+			// dynamic piece actually simulating at runtime, where physics owns
+			// that body's transform from here (falling, colliding) and forcing
+			// the node's placement onto it on every notification would fight
+			// the simulation -- see NOTIFICATION_INTERNAL_PHYSICS_PROCESS's own
+			// node<-body sync for that case. In the editor there is no
+			// simulation to fight regardless of `dynamic` (the body is RID()
+			// there too, see _spawn_intact()), so moving/rotating the node in
+			// the viewport or Inspector must still update the visual -- this
+			// used to unconditionally skip on `dynamic` and broke exactly that.
+			if (!fractured && pieces.size() == 1 && (!dynamic || Engine::get_singleton()->is_editor_hint())) {
 				if (pieces[0].body.is_valid()) {
 					PhysicsServer3D::get_singleton()->body_set_state(pieces[0].body, PhysicsServer3D::BODY_STATE_TRANSFORM, get_global_transform());
 				}

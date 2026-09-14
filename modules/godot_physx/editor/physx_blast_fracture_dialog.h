@@ -34,6 +34,7 @@
 
 #include "scene/gui/dialogs.h"
 
+class EditorResourcePicker;
 class Label;
 class Mesh;
 class MeshEditor;
@@ -73,6 +74,10 @@ class PhysXBlastFractureDialog : public ConfirmationDialog {
 	MeshEditor *preview = nullptr;
 	OptionButton *pattern_option = nullptr;
 	SpinBox *site_count_spin = nullptr;
+	// Only shown for PATTERN_CUTOUT -- that pattern doesn't generate itself
+	// (see PhysXBlastAuthoring's own notes on why), the caller supplies a
+	// grayscale bitmap directly.
+	EditorResourcePicker *cutout_pattern_picker = nullptr;
 	Label *chunk_count_label = nullptr;
 
 	int seed = 1;

@@ -44,6 +44,7 @@
 #include "editor/editor_string_names.h"
 #include "editor/editor_undo_redo_manager.h"
 #include "editor/file_system/editor_file_system.h"
+#include "editor/inspector/editor_resource_picker.h"
 #include "editor/scene/3d/mesh_editor_plugin.h"
 #include "editor/themes/editor_scale.h"
 #include "scene/3d/mesh_instance_3d.h"
@@ -54,6 +55,7 @@
 #include "scene/gui/option_button.h"
 #include "scene/gui/spin_box.h"
 #include "scene/resources/mesh.h"
+#include "scene/resources/texture.h"
 #include "scene/scene_string_names.h"
 
 void PhysXBlastFractureDialog::_start(const Ref<Mesh> &p_mesh) {
@@ -66,15 +68,36 @@ void PhysXBlastFractureDialog::_start(const Ref<Mesh> &p_mesh) {
 void PhysXBlastFractureDialog::_regenerate() {
 	seed += 1;
 	const int site_count = site_count_spin ? (int)site_count_spin->get_value() : 12;
-	const PhysXBlastAuthoring::FracturePattern pattern = (pattern_option && pattern_option->get_selected_id() == 1) ? PhysXBlastAuthoring::PATTERN_SLICING : PhysXBlastAuthoring::PATTERN_VORONOI;
+	const int pattern_id = pattern_option ? pattern_option->get_selected_id() : 0;
+	PhysXBlastAuthoring::FracturePattern pattern = PhysXBlastAuthoring::PATTERN_VORONOI;
+	if (pattern_id == 1) {
+		pattern = PhysXBlastAuthoring::PATTERN_SLICING;
+	} else if (pattern_id == 2) {
+		pattern = PhysXBlastAuthoring::PATTERN_CUTOUT;
+	}
+	if (cutout_pattern_picker) {
+		cutout_pattern_picker->set_visible(pattern == PhysXBlastAuthoring::PATTERN_CUTOUT);
+	}
+	if (site_count_spin) {
+		site_count_spin->set_visible(pattern != PhysXBlastAuthoring::PATTERN_CUTOUT); // Cutout ignores it entirely
+	}
+
+	Ref<Texture2D> cutout_pattern;
+	if (pattern == PhysXBlastAuthoring::PATTERN_CUTOUT && cutout_pattern_picker) {
+		cutout_pattern = cutout_pattern_picker->get_edited_resource();
+	}
 
 	Ref<PhysXBlastAuthoring> authoring;
 	authoring.instantiate();
-	authored_asset = authoring->fracture_mesh(source_mesh, site_count, seed, pattern);
+	authored_asset = authoring->fracture_mesh(source_mesh, site_count, seed, pattern, cutout_pattern);
 
 	if (authored_asset.is_null()) {
 		if (chunk_count_label) {
-			chunk_count_label->set_text(TTR("Fracture failed -- check the mesh has real geometry."));
+			if (pattern == PhysXBlastAuthoring::PATTERN_CUTOUT && cutout_pattern.is_null()) {
+				chunk_count_label->set_text(TTR("Cutout needs a pattern texture -- pick one above."));
+			} else {
+				chunk_count_label->set_text(TTR("Fracture failed -- check the mesh has real geometry."));
+			}
 		}
 		get_ok_button()->set_disabled(true);
 		return;
@@ -180,6 +203,7 @@ PhysXBlastFractureDialog::PhysXBlastFractureDialog() {
 	pattern_option = memnew(OptionButton);
 	pattern_option->add_item(TTR("Voronoi"), 0);
 	pattern_option->add_item(TTR("Slicing"), 1);
+	pattern_option->add_item(TTR("Cutout"), 2);
 	pattern_option->connect(SceneStringName(item_selected), callable_mp(this, &PhysXBlastFractureDialog::_regenerate).unbind(1));
 	controls->add_child(pattern_option);
 
@@ -201,6 +225,20 @@ PhysXBlastFractureDialog::PhysXBlastFractureDialog() {
 	chunk_count_label->set_h_size_flags(Control::SIZE_EXPAND_FILL);
 	chunk_count_label->set_horizontal_alignment(HORIZONTAL_ALIGNMENT_RIGHT);
 	controls->add_child(chunk_count_label);
+
+	// Second row, only relevant (visible) for PATTERN_CUTOUT -- that
+	// pattern doesn't generate its own crack shape the way Voronoi/Slicing
+	// do (see PhysXBlastAuthoring's own notes on why), the caller supplies
+	// a grayscale pattern bitmap directly.
+	HBoxContainer *cutout_row = memnew(HBoxContainer);
+	root->add_child(cutout_row);
+	cutout_row->add_child(memnew(Label(TTR("Cutout Pattern:"))));
+	cutout_pattern_picker = memnew(EditorResourcePicker);
+	cutout_pattern_picker->set_base_type("Texture2D");
+	cutout_pattern_picker->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	cutout_pattern_picker->connect(SNAME("resource_changed"), callable_mp(this, &PhysXBlastFractureDialog::_regenerate).unbind(1));
+	cutout_pattern_picker->set_visible(false); // default pattern is Voronoi
+	cutout_row->add_child(cutout_pattern_picker);
 
 	set_ok_button_text(TTR("Accept"));
 }

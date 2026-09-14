@@ -115,6 +115,26 @@ public:
 
 #ifdef GODOT_PHYSX_BLAST
 class PhysXBlastFractureDialog;
+
+// Viewport gizmo for PhysXDestructible3D -- registers real per-triangle
+// collision geometry (PhysXDestructible3D::generate_triangle_mesh(), same
+// mechanism MeshInstance3DGizmoPlugin uses) so it can be clicked directly in
+// the viewport like a real mesh, not just via the Scene dock. Draws nothing
+// of its own -- the object already renders its own real, visible geometry
+// through its own RenderingServer instances (see _spawn_piece()), so an
+// extra wireframe outline would be redundant (matches
+// MeshInstance3DGizmoPlugin's own redraw(), which also registers collision
+// triangles only, no lines).
+class PhysXDestructible3DGizmoPlugin : public EditorNode3DGizmoPlugin {
+	GDCLASS(PhysXDestructible3DGizmoPlugin, EditorNode3DGizmoPlugin);
+
+public:
+	bool has_gizmo(Node3D *p_spatial) override;
+	String get_gizmo_name() const override;
+	int get_priority() const override;
+	bool is_selectable_when_hidden() const override;
+	void redraw(EditorNode3DGizmo *p_gizmo) override;
+};
 #endif
 
 class PhysXEditorPlugin : public EditorPlugin {

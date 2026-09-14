@@ -35,6 +35,7 @@
 #include "../nodes/physx_gas_emitter_3d.h"
 #include "../nodes/physx_particle_fluid_3d.h"
 #ifdef GODOT_PHYSX_BLAST
+#include "../blast/physx_destructible_3d.h"
 #include "physx_blast_asset_inspector_plugin.h"
 #include "physx_blast_context_menu_plugin.h"
 #include "physx_blast_fracture_dialog.h"
@@ -465,6 +466,33 @@ void PhysXGasEmitter3DGizmoPlugin::redraw(EditorNode3DGizmo *p_gizmo) {
 	_add_velocity_arrow(p_gizmo, emitter->get_velocity(), get_material("velocity", p_gizmo));
 }
 
+#ifdef GODOT_PHYSX_BLAST
+bool PhysXDestructible3DGizmoPlugin::has_gizmo(Node3D *p_spatial) {
+	return Object::cast_to<PhysXDestructible3D>(p_spatial) != nullptr;
+}
+
+String PhysXDestructible3DGizmoPlugin::get_gizmo_name() const {
+	return "PhysXDestructible3D";
+}
+
+int PhysXDestructible3DGizmoPlugin::get_priority() const {
+	return -1;
+}
+
+bool PhysXDestructible3DGizmoPlugin::is_selectable_when_hidden() const {
+	return true;
+}
+
+void PhysXDestructible3DGizmoPlugin::redraw(EditorNode3DGizmo *p_gizmo) {
+	PhysXDestructible3D *destructible = Object::cast_to<PhysXDestructible3D>(p_gizmo->get_node_3d());
+	p_gizmo->clear();
+	const Ref<TriangleMesh> tm = destructible->generate_triangle_mesh();
+	if (tm.is_valid()) {
+		p_gizmo->add_collision_triangles(tm);
+	}
+}
+#endif
+
 PhysXEditorPlugin::PhysXEditorPlugin() {
 	Ref<PhysXParticleFluid3DGizmoPlugin> fluid_gizmo;
 	fluid_gizmo.instantiate();
@@ -483,6 +511,10 @@ PhysXEditorPlugin::PhysXEditorPlugin() {
 	Node3DEditor::get_singleton()->add_gizmo_plugin(gas_emitter_gizmo);
 
 #ifdef GODOT_PHYSX_BLAST
+	Ref<PhysXDestructible3DGizmoPlugin> destructible_gizmo;
+	destructible_gizmo.instantiate();
+	Node3DEditor::get_singleton()->add_gizmo_plugin(destructible_gizmo);
+
 	blast_fracture_dialog = memnew(PhysXBlastFractureDialog);
 	EditorNode::get_singleton()->get_gui_base()->add_child(blast_fracture_dialog);
 

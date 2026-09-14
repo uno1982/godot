@@ -85,10 +85,6 @@ void PhysXDestructible3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_shatter_speed"), &PhysXDestructible3D::get_shatter_speed);
 	ClassDB::bind_method(D_METHOD("set_mass", "mass"), &PhysXDestructible3D::set_mass);
 	ClassDB::bind_method(D_METHOD("get_mass"), &PhysXDestructible3D::get_mass);
-	ClassDB::bind_method(D_METHOD("set_auto_mass", "auto_mass"), &PhysXDestructible3D::set_auto_mass);
-	ClassDB::bind_method(D_METHOD("get_auto_mass"), &PhysXDestructible3D::get_auto_mass);
-	ClassDB::bind_method(D_METHOD("set_density", "density"), &PhysXDestructible3D::set_density);
-	ClassDB::bind_method(D_METHOD("get_density"), &PhysXDestructible3D::get_density);
 	ClassDB::bind_method(D_METHOD("set_dynamic", "dynamic"), &PhysXDestructible3D::set_dynamic);
 	ClassDB::bind_method(D_METHOD("get_dynamic"), &PhysXDestructible3D::get_dynamic);
 	ClassDB::bind_method(D_METHOD("set_health", "health"), &PhysXDestructible3D::set_health);
@@ -109,8 +105,6 @@ void PhysXDestructible3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material_override", PROPERTY_HINT_RESOURCE_TYPE, "Material"), "set_material_override", "get_material_override");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shatter_speed", PROPERTY_HINT_RANGE, "0,50,0.1"), "set_shatter_speed", "get_shatter_speed");
 	ADD_GROUP("Physics", "");
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "auto_mass"), "set_auto_mass", "get_auto_mass");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "density", PROPERTY_HINT_RANGE, "0.001,20000,0.001,or_greater,exp"), "set_density", "get_density");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mass", PROPERTY_HINT_RANGE, "0.001,1000,0.001,or_greater,exp"), "set_mass", "get_mass");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dynamic"), "set_dynamic", "get_dynamic");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "health", PROPERTY_HINT_RANGE, "0.01,20,0.01"), "set_health", "get_health");
@@ -122,44 +116,6 @@ void PhysXDestructible3D::_bind_methods() {
 
 PhysXDestructible3D::PhysXDestructible3D() {
 	set_notify_transform(true);
-}
-
-void PhysXDestructible3D::set_mass(float p_mass) {
-	mass = MAX(p_mass, 0.001f);
-	// An explicit set is an override, by any path (script or, after
-	// toggling auto_mass off first, the Inspector) -- never let a later
-	// auto-recompute (reload, density change) silently destroy it.
-	auto_mass = false;
-}
-
-void PhysXDestructible3D::_recompute_auto_mass() {
-	if (auto_mass && chunk_volumes.size() > 0) {
-		mass = MAX((float)(density * chunk_volumes[0]), 0.001f);
-	}
-}
-
-void PhysXDestructible3D::set_auto_mass(bool p_auto) {
-	auto_mass = p_auto;
-	// Recompute right away rather than waiting for the next load/reload --
-	// same live-editing expectation this module's other properties already
-	// set (see _reload()'s own note on why).
-	_recompute_auto_mass();
-}
-
-void PhysXDestructible3D::set_density(float p_density) {
-	density = MAX(p_density, 0.001f);
-	_recompute_auto_mass();
-}
-
-void PhysXDestructible3D::_validate_property(PropertyInfo &p_property) const {
-	// Same "sensible auto default, read-only until you opt out" pattern
-	// RigidBody3D itself already uses for center_of_mass_mode
-	// (CENTER_OF_MASS_MODE_AUTO hides center_of_mass entirely) -- mass stays
-	// visible here instead of hidden, since seeing what the auto-computed
-	// value actually came out to is the useful part of having it.
-	if (auto_mass && p_property.name == "mass") {
-		p_property.usage |= PROPERTY_USAGE_READ_ONLY;
-	}
 }
 
 PhysXDestructible3D::~PhysXDestructible3D() {
@@ -398,7 +354,17 @@ void PhysXDestructible3D::_compute_chunk_volumes() {
 		}
 	}
 
-	_recompute_auto_mass();
+	// Seed a sensible starting mass from the intact mesh's real volume the
+	// first time an asset loads (a fixed internal density -- not exposed as
+	// its own property, see set_mass()'s own note on why) -- but only while
+	// mass is still sitting at its untouched compile-time default. Once it
+	// isn't, by any path (a script, or the Inspector), it's an explicit
+	// value and this never overwrites it again, including on a later
+	// reload -- there's no separate "auto" flag to accidentally leave on.
+	if (mass == 1.0f && chunk_volumes.size() > 0) {
+		const double default_density = 2200.0; // roughly concrete/stone
+		mass = MAX((float)(default_density * chunk_volumes[0]), 0.001f);
+	}
 }
 
 float PhysXDestructible3D::_chunk_mass(uint32_t p_chunk_index) const {

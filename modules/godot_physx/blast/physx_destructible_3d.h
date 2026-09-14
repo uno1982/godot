@@ -61,6 +61,7 @@ class PhysXDestructible3D : public Node3D {
 protected:
 	static void _bind_methods();
 	void _notification(int p_what);
+	void _validate_property(PropertyInfo &p_property) const;
 
 public:
 	void set_asset_path(const String &p_path);
@@ -89,8 +90,31 @@ public:
 	// intact object's total mass; this does the same (see
 	// _compute_chunk_volumes()/_chunk_mass()) rather than giving a huge
 	// remaining chunk and a tiny sliver the same weight.
-	void set_mass(float p_mass) { mass = MAX(p_mass, 0.001f); }
+	//
+	// mass itself is auto-computed (density * the intact mesh's own volume)
+	// whenever auto_mass is true (the default, read-only in the Inspector
+	// then -- see _validate_property()) -- unlike plain RigidBody3D, which
+	// always defaults to a flat 1.0 regardless of the shape's actual size.
+	//
+	// Calling set_mass() -- from a script directly, not just the Inspector
+	// (whose own read-only lock only stops accidental *editor* edits) --
+	// always turns auto_mass off first. Otherwise an explicit override set
+	// this way would just get silently overwritten the next time something
+	// recomputes the auto value (a reload, a density change): once you set
+	// mass yourself, by any path, it stays exactly what you set it to until
+	// you explicitly turn auto_mass back on.
+	void set_mass(float p_mass);
 	float get_mass() const { return mass; }
+
+	void set_auto_mass(bool p_auto);
+	bool get_auto_mass() const { return auto_mass; }
+
+	// kg per cubic world-unit, used for the auto_mass computation above --
+	// meaningless when auto_mass is false. Default is roughly concrete/
+	// stone (~2200 kg/m^3), a reasonable generic default for destructible
+	// rubble.
+	void set_density(float p_density);
+	float get_density() const { return density; }
 
 	// If true, the intact piece is a real dynamic (BODY_MODE_RIGID) body --
 	// it falls under gravity and collides normally, like any other physics
@@ -161,6 +185,8 @@ private:
 	Ref<Material> material_override_res;
 	float shatter_speed = 8.0f;
 	float mass = 1.0f;
+	bool auto_mass = true;
+	float density = 2200.0f;
 	bool dynamic = false;
 	float health = 1.0f;
 	float impact_strength = 5.0f;
@@ -202,6 +228,7 @@ private:
 	bool _load();
 	bool _load_asset_bytes(const PackedByteArray &p_bytes);
 	void _compute_chunk_volumes();
+	void _recompute_auto_mass();
 	// mass distributed proportional to p_chunk_index's share of
 	// total_leaf_volume (floored so a sliver never gets a near-zero mass),
 	// except chunk 0 (the whole intact mesh), which just gets `mass` itself.

@@ -35,6 +35,7 @@
 #include "../nodes/physx_gas_emitter_3d.h"
 #include "../nodes/physx_particle_fluid_3d.h"
 #ifdef GODOT_PHYSX_BLAST
+#include "physx_blast_asset_inspector_plugin.h"
 #include "physx_blast_context_menu_plugin.h"
 #include "physx_blast_fracture_dialog.h"
 #endif
@@ -488,5 +489,9 @@ PhysXEditorPlugin::PhysXEditorPlugin() {
 
 	Ref<PhysXBlastFractureMenuPlugin> blast_filesystem_menu = Ref<PhysXBlastFractureMenuPlugin>(memnew(PhysXBlastFractureMenuPlugin(EditorContextMenuPlugin::CONTEXT_SLOT_FILESYSTEM, blast_fracture_dialog)));
 	EditorContextMenuPluginManager::get_singleton()->add_plugin(EditorContextMenuPlugin::CONTEXT_SLOT_FILESYSTEM, blast_filesystem_menu);
+
+	Ref<EditorInspectorPluginPhysXBlastAsset> blast_asset_inspector;
+	blast_asset_inspector.instantiate();
+	add_inspector_plugin(blast_asset_inspector);
 #endif
 }

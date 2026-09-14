@@ -93,6 +93,29 @@ elif env["platform"] == "linuxbsd":
     # above needs the literal ".lib" suffix.
     env.Append(LIBS=physx_libs)
 
+
+# Copy a required runtime DLL next to the built binary automatically, instead
+# of a manual `copy` step the README used to document -- SCons has no
+# explicit Default() target anywhere in this repo (see SConstruct), so a
+# plain `scons ...` already builds every Command() defined in any SConscript,
+# this included, with no extra Depends()/Default() wiring needed to make it
+# part of a normal build. Only re-copies when the source DLL actually
+# changes (a real SCons dependency, not an unconditional copy every build).
+def _godot_physx_copy_runtime_dll(src_path, dst_name):
+    if not os.path.isfile(src_path):
+        return
+    env.Command(env.File("#bin/" + dst_name), src_path, Copy("$TARGET", "$SOURCE"))
+
+
+if env["platform"] == "windows" and physx_gpu:
+    _godot_physx_copy_runtime_dll(os.path.join(physx_lib, "PhysXGpu_64.dll"), "PhysXGpu_64.dll")
+elif env["platform"] == "linuxbsd" and physx_gpu:
+    # UNVERIFIED, same caveat as the GPU link mechanism above -- whether this
+    # even needs a copied .so (vs. an rpath/LD_LIBRARY_PATH entry, or a pure
+    # dlopen with no on-disk convention to match) hasn't been confirmed
+    # against a real Linux GPU build.
+    pass
+
 # --- Blast SDK location (optional) ------------------------------------------------
 # Blast (NvBlast + extensions) is a separate, optional SDK on top of PhysX --
 # runtime mesh fracture/destruction. Point the build at a built Blast SDK
@@ -142,6 +165,11 @@ if blast_sdk:
     env.Append(LIBPATH=[blast_lib_dir])
     if env["platform"] == "windows":
         env.Append(LINKFLAGS=[x + ".lib" for x in blast_libs])
+        # Auto-copy each runtime DLL next to the built binary -- see
+        # _godot_physx_copy_runtime_dll's own note above, defined earlier in
+        # this file right after the PhysX GPU section.
+        for _blast_lib_name in blast_libs:
+            _godot_physx_copy_runtime_dll(os.path.join(blast_lib_dir, _blast_lib_name + ".dll"), _blast_lib_name + ".dll")
     elif env["platform"] == "linuxbsd":
         env.Append(LIBS=blast_libs)
 

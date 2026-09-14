@@ -9,18 +9,20 @@ CMake build, and prints the path to pass to scons as physx_sdk=.
     python modules/godot_physx/misc/build_physx.py [--gpu] [--blast]
     scons platform=windows target=editor physx_sdk=<printed path> [physx_gpu=yes] [blast_sdk=<printed path>]
 
-The GPU build additionally needs the CUDA Toolkit installed (CUDA_PATH set) and
-copies nothing automatically -- PhysXGpu_64.dll from the install's bin/ must sit
-next to the Godot binary at runtime.
+The GPU build additionally needs the CUDA Toolkit installed (CUDA_PATH set).
+PhysXGpu_64.dll must sit next to the Godot binary at runtime -- on Windows,
+SCsub copies it there automatically as part of the scons build printed below
+(a real SCons dependency, not a one-time thing you have to remember); on
+Linux this is still unverified/manual, see README.md's Linux section.
 
 --blast additionally builds the Blast SDK (runtime mesh fracture/destruction,
-NvBlast + extensions) from this same checkout's blast/ subdirectory -- it's
-version-locked to the same NVIDIA-Omniverse/PhysX release train as PhysX
-itself, so no separate clone or ref pin is needed. Unlike PhysX, Blast ships
-as DLLs, not static libs; the printed NvBlast*.dll files must sit next to the
-Godot binary at runtime, same as PhysXGpu_64.dll already does for physx_gpu.
-This module does not yet contain any Blast-using C++ (no PhysX bridge ships
-with Blast itself -- see NOTES.md) -- blast_sdk= is currently plumbing only.
+NvBlast + extensions, backing PhysXDestructible3D and its in-editor fracture
+dialog) from this same checkout's blast/ subdirectory -- it's version-locked
+to the same NVIDIA-Omniverse/PhysX release train as PhysX itself, so no
+separate clone or ref pin is needed. Unlike PhysX, Blast ships as DLLs, not
+static libs; on Windows, SCsub copies all four next to the Godot binary
+automatically too, same mechanism as PhysXGpu_64.dll -- on Linux this is
+also still unverified/manual.
 
 Run this script on the machine you're building the module for -- --platform
 defaults to the host OS (windows / linuxbsd). The Linux presets
@@ -158,13 +160,15 @@ def main():
     )
     if args.gpu:
         if args.platform == "windows":
-            dll = os.path.join(sdk, "bin", "win.x86_64.vc143.mt", args.config, "PhysXGpu_64.dll")
             print()
-            print("Then copy the GPU runtime next to the Godot binary:")
-            print("    copy %s bin\\" % dll)
+            print("SCsub copies PhysXGpu_64.dll next to the Godot binary automatically -- nothing more to do.")
         else:
             # UNVERIFIED bin/ subdirectory name -- see linux64-godot-gpu.xml's
             # header comment; check the actual install output and adjust.
+            # Also UNVERIFIED whether Linux even needs a copied .so the way
+            # Windows needs the DLL (vs. an rpath/LD_LIBRARY_PATH entry, or a
+            # pure dlopen with no on-disk convention to match) -- SCsub does
+            # not auto-copy anything here yet.
             so = os.path.join(sdk, "bin", "linux.clang.x86_64", args.config, "libPhysXGpu_64.so")
             print()
             print("Then copy the GPU runtime next to the Godot binary (path above is a guess -- verify it):")
@@ -206,11 +210,18 @@ def main():
             )
         )
         print()
-        print("Blast ships as DLLs (not static libs, unlike PhysX) -- copy these next to the Godot binary too:")
-        blast_bin = os.path.join(blast_sdk, "bin")
-        for name in ("NvBlast", "NvBlastGlobals", "NvBlastExtAuthoring"):
-            runtime = os.path.join(blast_bin, name + (".dll" if is_windows else ".so"))
-            print(("    copy %s bin\\" if is_windows else "    cp %s bin/") % runtime)
+        if is_windows:
+            print("Blast ships as DLLs (not static libs, unlike PhysX) -- SCsub copies all four next to")
+            print("the Godot binary automatically (NvBlast, NvBlastGlobals, NvBlastExtAuthoring,")
+            print("NvBlastExtShaders) -- nothing more to do.")
+        else:
+            # UNVERIFIED, same as the GPU .so case above -- SCsub does not
+            # auto-copy anything on Linux yet.
+            print("Blast ships as DLLs (not static libs, unlike PhysX) -- copy these next to the Godot binary too:")
+            blast_bin = os.path.join(blast_sdk, "bin")
+            for name in ("NvBlast", "NvBlastGlobals", "NvBlastExtAuthoring", "NvBlastExtShaders"):
+                runtime = os.path.join(blast_bin, name + ".so")
+                print("    cp %s bin/" % runtime)
 
 
 if __name__ == "__main__":

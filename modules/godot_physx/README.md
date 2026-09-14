@@ -87,11 +87,9 @@ scons platform=windows target=editor physx_sdk=<path from step 1>            # C
 scons platform=windows target=editor physx_sdk=<path> physx_gpu=yes          # GPU
 ```
 
-For a **GPU** build, also copy the CUDA runtime next to the built binary:
-
-```
-copy <sdk>\bin\win.x86_64.vc143.mt\release\PhysXGpu_64.dll bin\
-```
+For a **GPU** build, `SCsub` also copies `PhysXGpu_64.dll` next to the built
+binary automatically (a real SCons dependency, keyed on `physx_sdk=`'s own
+DLL — it only re-copies when that changes, not on every build).
 
 At startup a GPU build logs `PhysX: CUDA context ready on device '...'`; if no
 usable CUDA device is found it warns and falls back to CPU simulation.
@@ -105,6 +103,42 @@ GPU dynamics is several times slower.
 
 To confirm a stock build is unaffected, build with
 `module_godot_physx_enabled=no` (or simply without an SDK configured).
+
+### Optional — Blast SDK (`PhysXDestructible3D`)
+
+Runtime mesh fracture/destruction (`PhysXDestructible3D`, the in-editor
+fracture dialog) needs a second, separate SDK on top of PhysX: NVIDIA's
+[NvBlast](https://github.com/NVIDIA-Omniverse/PhysX/tree/main/blast). It lives
+in the *same* checkout `build_physx.py` clones for PhysX itself (a `blast/`
+subdirectory of that monorepo, version-locked to the same release), builds
+with its own premake5-based build system, and is entirely optional — the
+module is skipped (again with a one-line notice) unless `blast_sdk=` is also
+set, so a PhysX build without it is unaffected.
+
+```
+python modules/godot_physx/misc/build_physx.py --blast          # + CPU-only PhysX
+python modules/godot_physx/misc/build_physx.py --gpu --blast    # + GPU PhysX
+```
+
+This builds PhysX as usual, then also runs Blast's own `build.bat`/`build.sh`
+and prints the resulting SDK path plus the exact `scons` command for step 2.
+Unlike PhysX's static libraries, Blast ships as DLLs (`NvBlast`,
+`NvBlastGlobals`, `NvBlastExtAuthoring`, `NvBlastExtShaders`) — `SCsub` copies
+all four next to the built binary automatically when `blast_sdk=` is set,
+the same way it does for `PhysXGpu_64.dll` above.
+
+```
+scons platform=windows target=editor physx_sdk=<path> blast_sdk=<path from --blast>            # CPU
+scons platform=windows target=editor physx_sdk=<path> physx_gpu=yes blast_sdk=<path from --blast>  # GPU
+```
+
+To build the SDK by hand instead: point scons at the Blast install directory
+(the one containing `include/` and `bin/`) with `blast_sdk=<path>` or the
+`BLAST_SDK` environment variable.
+
+To confirm a Blast-less build still works, build with `physx_sdk=` set but no
+`blast_sdk=` — `PhysXDestructible3D` and the fracture dialog simply won't be
+registered.
 
 ## Selecting the backend
 
@@ -300,6 +334,39 @@ burst or continuous: past it, the oldest chunks are freed to make room. `lifetim
 additionally recycles a chunk after it's been alive that long even under budget,
 so chunks never linger forever.
 
+## Destruction — `PhysXDestructible3D`
+
+Real runtime mesh fracture via NVIDIA's [NvBlast](https://github.com/NVIDIA-Omniverse/PhysX/tree/main/blast)
+(needs the separate `blast_sdk=` build — see Building above). Select a
+`MeshInstance3D` and use **Mesh → Fracture with Blast** (or right-click a
+`Mesh` resource in the FileSystem dock) to open a live in-viewport authoring
+dialog: pick a fracture pattern, tune it, and Accept replaces the node with a
+`PhysXDestructible3D` using the result.
+
+Three fracture patterns: **Voronoi** (random cells, the default), **Slicing**
+(brick-like, evenly spaced planes per axis), and **Cutout** (a caller-supplied
+grayscale pattern texture extruded through the mesh — glass/tile-style
+breaks; needs cracks that reach the image edge, like a real broken pane, or
+the fracture is rejected before ever touching the native SDK).
+
+While intact, a `PhysXDestructible3D` renders and collides as the whole
+unfractured mesh. `apply_radial_damage(world_position, damage, min_radius,
+max_radius)` breaks it explicitly (an explosion, a weapon hit) — each newly
+detached chunk becomes its own rigid body with a cooked convex hull and a
+`shatter_speed`-scaled outward kick from the damage origin. `dynamic = true`
+additionally makes the intact object fall/collide like any other rigid body
+and auto-fractures it from a hard enough physical impact
+(`impact_strength`/`impact_damage_scale`), the way stacked destructible props
+behave in Unreal's own Blast integration; `dynamic = false` (the default)
+keeps it a fixed prop that only ever breaks from an explicit
+`apply_radial_damage()` call. `mass` auto-computes from the mesh's volume
+(uncheck `auto_mass` for a true override) and is distributed across split
+pieces proportional to each one's own volume. `gi_mode` controls VoxelGI
+static/dynamic baking per piece (defaults to Static, matching a plain
+`MeshInstance3D`'s default — opt into Dynamic per-node, since a single
+fracture can spawn many pieces at once and a VoxelGI's dynamic-object
+tracking cost scales with how many it has to follow).
+
 ## Determinism and multiplayer
 
 - **GPU dynamics is never deterministic** — GPU solver scheduling varies run to
@@ -381,7 +448,8 @@ For deterministic lockstep multiplayer, use the Jolt backend.
 | `joints/` | all `Joint3D` types |
 | `cloth/` | the CPU (XPBD) cloth solver — no PhysX dependency |
 | `nodes/` | `PhysXParticleFluid3D`, `PhysXCloth3D`, `PhysXChunkEmitter3D` |
-| `editor/` | viewport gizmos for the fluid and cloth nodes |
+| `blast/` | `PhysXDestructible3D`, `PhysXBlastAsset`, and the NvBlast fracture-authoring bridge — optional, gated on `blast_sdk=` (see Building above) |
+| `editor/` | viewport gizmos for the fluid and cloth nodes; the Blast fracture dialog and its FileSystem/Inspector plugins |
 
 ## License
 
@@ -401,3 +469,11 @@ With `physx_gpu=yes` the build also depends on `PhysXGpu_64.dll` (same PhysX
 SDK, same BSD-3-Clause license, built from its GPU source) and, at runtime, on
 an NVIDIA driver's CUDA library (`nvcuda.dll`) — the CUDA toolkit is only
 needed to *build* the SDK, not to ship it.
+
+With `blast_sdk=` set, the build also links **NvBlast**
+(<https://github.com/NVIDIA-Omniverse/PhysX/tree/main/blast>) — the same
+`NVIDIA-Omniverse/PhysX` repository as PhysX itself, so the same
+BSD-3-Clause license in `PHYSX-LICENSE.md` covers it too. Unlike PhysX's
+static libraries, Blast ships as DLLs (`NvBlast`, `NvBlastGlobals`,
+`NvBlastExtAuthoring`, `NvBlastExtShaders`) that must ship next to the Godot
+binary — see Building above.

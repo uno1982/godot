@@ -81,6 +81,43 @@ public:
 	void set_shatter_speed(float p_speed) { shatter_speed = p_speed; }
 	float get_shatter_speed() const { return shatter_speed; }
 
+	// If true, the intact piece is a real dynamic (BODY_MODE_RIGID) body --
+	// it falls under gravity and collides normally, like any other physics
+	// object, instead of hanging in place until something explicitly calls
+	// apply_radial_damage() on it. Also enables impact_strength/
+	// impact_damage_scale: a hard enough collision auto-triggers fracture,
+	// the same way it does not just gravity, matching stacked destructible
+	// props in UE's Blast integration. False keeps the original behavior
+	// (static intact placeholder, fracture only ever explicit) so existing
+	// scenes built around that don't change under them.
+	void set_dynamic(bool p_dynamic) { dynamic = p_dynamic; }
+	bool get_dynamic() const { return dynamic; }
+
+	// Initial NvBlast bond/chunk health (both, uniformly) -- how much
+	// cumulative damage the support structure can absorb before bonds start
+	// breaking. Higher health needs more damage (a harder impact, or more of
+	// them) to fracture the same object.
+	void set_health(float p_health) { health = p_health; }
+	float get_health() const { return health; }
+
+	// dynamic-only: the minimum contact impulse magnitude (mass * velocity
+	// change, in Godot's physics units) that counts as an impact at all --
+	// below this, collisions (landing softly, gentle bumps) are ignored.
+	void set_impact_strength(float p_strength) { impact_strength = p_strength; }
+	float get_impact_strength() const { return impact_strength; }
+
+	// dynamic-only: damage fed into apply_radial_damage() per unit of
+	// impulse magnitude above impact_strength -- how readily an impact that
+	// does exceed the threshold actually breaks bonds.
+	void set_impact_damage_scale(float p_scale) { impact_damage_scale = p_scale; }
+	float get_impact_damage_scale() const { return impact_damage_scale; }
+
+	// dynamic-only: max_radius passed to the auto-triggered apply_radial_damage
+	// call, centered on the contact point -- how far a hard impact's damage
+	// reaches into the rest of the object.
+	void set_impact_radius(float p_radius) { impact_radius = p_radius; }
+	float get_impact_radius() const { return impact_radius; }
+
 	// p_world_position: world-space damage origin (converted to this node's
 	// local space internally, since chunk geometry is authored local-space).
 	// Returns how many new rigid-body pieces this call produced. Each new
@@ -103,6 +140,11 @@ private:
 	Ref<PhysXBlastAsset> blast_asset;
 	Ref<Material> material_override_res;
 	float shatter_speed = 8.0f;
+	bool dynamic = false;
+	float health = 1.0f;
+	float impact_strength = 5.0f;
+	float impact_damage_scale = 1.0f;
+	float impact_radius = 5.0f;
 
 	void *asset_mem = nullptr;
 	void *family_mem = nullptr;
@@ -138,4 +180,8 @@ private:
 	Vector3 _chunk_centroid_local(uint32_t p_chunk_index) const;
 	void _free_all_pieces();
 	void _sync_transforms();
+	// dynamic-only, called every physics tick while still intact: reads the
+	// intact body's reported contacts and auto-triggers apply_radial_damage()
+	// if any single contact's impulse exceeds impact_strength.
+	void _check_impact_fracture();
 };

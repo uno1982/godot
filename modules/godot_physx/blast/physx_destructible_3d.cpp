@@ -83,6 +83,16 @@ void PhysXDestructible3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_material_override"), &PhysXDestructible3D::get_material_override);
 	ClassDB::bind_method(D_METHOD("set_shatter_speed", "speed"), &PhysXDestructible3D::set_shatter_speed);
 	ClassDB::bind_method(D_METHOD("get_shatter_speed"), &PhysXDestructible3D::get_shatter_speed);
+	ClassDB::bind_method(D_METHOD("set_dynamic", "dynamic"), &PhysXDestructible3D::set_dynamic);
+	ClassDB::bind_method(D_METHOD("get_dynamic"), &PhysXDestructible3D::get_dynamic);
+	ClassDB::bind_method(D_METHOD("set_health", "health"), &PhysXDestructible3D::set_health);
+	ClassDB::bind_method(D_METHOD("get_health"), &PhysXDestructible3D::get_health);
+	ClassDB::bind_method(D_METHOD("set_impact_strength", "strength"), &PhysXDestructible3D::set_impact_strength);
+	ClassDB::bind_method(D_METHOD("get_impact_strength"), &PhysXDestructible3D::get_impact_strength);
+	ClassDB::bind_method(D_METHOD("set_impact_damage_scale", "scale"), &PhysXDestructible3D::set_impact_damage_scale);
+	ClassDB::bind_method(D_METHOD("get_impact_damage_scale"), &PhysXDestructible3D::get_impact_damage_scale);
+	ClassDB::bind_method(D_METHOD("set_impact_radius", "radius"), &PhysXDestructible3D::set_impact_radius);
+	ClassDB::bind_method(D_METHOD("get_impact_radius"), &PhysXDestructible3D::get_impact_radius);
 	ClassDB::bind_method(D_METHOD("apply_radial_damage", "world_position", "damage", "min_radius", "max_radius"), &PhysXDestructible3D::apply_radial_damage);
 
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "asset_path", PROPERTY_HINT_FILE, "*.asset"), "set_asset_path", "get_asset_path");
@@ -90,6 +100,12 @@ void PhysXDestructible3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "blast_asset", PROPERTY_HINT_RESOURCE_TYPE, "PhysXBlastAsset"), "set_blast_asset", "get_blast_asset");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material_override", PROPERTY_HINT_RESOURCE_TYPE, "Material"), "set_material_override", "get_material_override");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shatter_speed", PROPERTY_HINT_RANGE, "0,50,0.1"), "set_shatter_speed", "get_shatter_speed");
+	ADD_GROUP("Physics", "");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dynamic"), "set_dynamic", "get_dynamic");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "health", PROPERTY_HINT_RANGE, "0.01,20,0.01"), "set_health", "get_health");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_strength", PROPERTY_HINT_RANGE, "0,200,0.1"), "set_impact_strength", "get_impact_strength");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_damage_scale", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_impact_damage_scale", "get_impact_damage_scale");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_radius", PROPERTY_HINT_RANGE, "0.1,50,0.1"), "set_impact_radius", "get_impact_radius");
 }
 
 PhysXDestructible3D::PhysXDestructible3D() {
@@ -152,16 +168,28 @@ void PhysXDestructible3D::_notification(int p_what) {
 			}
 			if (loaded && !fractured && pieces.is_empty()) {
 				_spawn_intact();
+				// dynamic: the intact body falls/collides on its own from here,
+				// so its visual needs syncing every tick even before anything
+				// fractures, and contacts need checking for an auto-fracture-
+				// worthy impact. Not in the editor -- _spawn_intact() never
+				// creates a physics body there, so there's nothing to sync/check.
+				if (dynamic && !Engine::get_singleton()->is_editor_hint()) {
+					set_physics_process_internal(true);
+				}
 			}
 		} break;
 		case NOTIFICATION_EXIT_WORLD: {
 			_free_all_pieces();
 		} break;
 		case NOTIFICATION_TRANSFORM_CHANGED: {
-			if (!fractured && pieces.size() == 1) {
-				// Still intact -- the single "piece" IS this node, so keep its
-				// body/visual glued to wherever the node itself moves. The body
-				// is RID() in the editor (see _spawn_intact()), so skip it there.
+			if (!fractured && pieces.size() == 1 && !dynamic) {
+				// Still intact and static -- the single "piece" IS this node, so
+				// keep its body/visual glued to wherever the node itself moves.
+				// Skipped once dynamic: physics owns that body's transform from
+				// here (falling, colliding), so forcing the node's placement onto
+				// it on every notification would fight the simulation. The body
+				// is also RID() in the editor (see _spawn_intact()), so skip it
+				// there regardless of `dynamic`.
 				if (pieces[0].body.is_valid()) {
 					PhysicsServer3D::get_singleton()->body_set_state(pieces[0].body, PhysicsServer3D::BODY_STATE_TRANSFORM, get_global_transform());
 				}
@@ -171,6 +199,25 @@ void PhysXDestructible3D::_notification(int p_what) {
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
 			if (fractured) {
 				_sync_transforms();
+			} else if (dynamic && pieces.size() == 1) {
+				// Keep the node's own Transform3D following the falling body too
+				// (not just its RenderingServer instance, which _sync_transforms()
+				// alone would update) -- apply_radial_damage() converts its
+				// world-space position through get_global_transform(), and
+				// _check_impact_fracture() calls it using the node's own
+				// transform implicitly via that conversion, so a stale node
+				// transform (still sitting wherever it was originally placed)
+				// would compute a local damage position nowhere near the actual
+				// chunk geometry once the body has moved away from it. The
+				// NOTIFICATION_TRANSFORM_CHANGED handler above only pushes
+				// node->body when !dynamic, so this doesn't loop back on itself.
+				PhysicsDirectBodyState3D *state = PhysicsServer3D::get_singleton()->body_get_direct_state(pieces[0].body);
+				if (state) {
+					const Transform3D t = state->get_transform();
+					set_global_transform(t);
+					RenderingServer::get_singleton()->instance_set_transform(pieces[0].instance, t);
+				}
+				_check_impact_fracture();
 			}
 		} break;
 	}
@@ -193,9 +240,9 @@ bool PhysXDestructible3D::_load_asset_bytes(const PackedByteArray &p_bytes) {
 	ERR_FAIL_NULL_V_MSG(family, false, "PhysXDestructible3D: NvBlastAssetCreateFamily failed.");
 
 	NvBlastActorDesc actor_desc;
-	actor_desc.uniformInitialBondHealth = 1.0f;
+	actor_desc.uniformInitialBondHealth = health;
 	actor_desc.initialBondHealths = nullptr;
-	actor_desc.uniformInitialLowerSupportChunkHealth = 1.0f;
+	actor_desc.uniformInitialLowerSupportChunkHealth = health;
 	actor_desc.initialSupportChunkHealths = nullptr;
 
 	const size_t scratch_size = NvBlastFamilyGetRequiredScratchForCreateFirstActor(family, blast_log);
@@ -268,7 +315,15 @@ void PhysXDestructible3D::_spawn_intact() {
 	const bool physics = !Engine::get_singleton()->is_editor_hint();
 	_spawn_piece(0, get_global_transform(), Vector3(), physics);
 	if (physics) {
-		PhysicsServer3D::get_singleton()->body_set_mode(pieces[0].body, PhysicsServer3D::BODY_MODE_STATIC);
+		PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
+		if (dynamic) {
+			// A real falling/colliding body, not a fixed prop -- and contact
+			// reporting so _check_impact_fracture() can see what it hit.
+			ps->body_set_mode(pieces[0].body, PhysicsServer3D::BODY_MODE_RIGID);
+			ps->body_set_max_contacts_reported(pieces[0].body, 8);
+		} else {
+			ps->body_set_mode(pieces[0].body, PhysicsServer3D::BODY_MODE_STATIC);
+		}
 	}
 }
 
@@ -376,6 +431,44 @@ void PhysXDestructible3D::_sync_transforms() {
 			rs->instance_set_transform(piece.instance, state->get_transform());
 		}
 	}
+}
+
+void PhysXDestructible3D::_check_impact_fracture() {
+	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
+	PhysicsDirectBodyState3D *state = ps->body_get_direct_state(pieces[0].body);
+	if (!state) {
+		return;
+	}
+
+	// The hardest single contact this tick, not the sum of all of them --
+	// resting on a flat floor with several contact points shouldn't add up
+	// to "impact" just because there are multiple points of an otherwise
+	// gentle landing.
+	real_t max_impulse = 0.0;
+	Vector3 impact_position = get_global_transform().origin;
+	const int contact_count = state->get_contact_count();
+	for (int i = 0; i < contact_count; i++) {
+		const real_t impulse_len = state->get_contact_impulse(i).length();
+		if (impulse_len > max_impulse) {
+			max_impulse = impulse_len;
+			impact_position = state->get_contact_local_position(i);
+		}
+	}
+
+	if (max_impulse <= (real_t)impact_strength) {
+		return;
+	}
+
+	// apply_radial_damage() commits to "fractured" (drops the intact
+	// placeholder body) on the first call regardless of whether the damage
+	// actually breaks any bonds -- a damage value too close to health can
+	// leave nothing behind (known sharp edge at exactly damage == health, see
+	// PhysXBlastAuthoring's own notes). Once an impact clears impact_strength
+	// at all, guarantee real overkill rather than risk the object silently
+	// vanishing on a borderline hit; impact_damage_scale still lets a much
+	// harder impact scale damage further above that floor.
+	const float damage = MAX((float)(max_impulse - impact_strength) * impact_damage_scale, health * 1.5f);
+	apply_radial_damage(impact_position, damage, 0.0f, impact_radius);
 }
 
 int PhysXDestructible3D::apply_radial_damage(const Vector3 &p_world_position, float p_damage, float p_min_radius, float p_max_radius) {

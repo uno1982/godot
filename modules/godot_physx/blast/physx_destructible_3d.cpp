@@ -84,6 +84,8 @@ void PhysXDestructible3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_shatter_speed", "speed"), &PhysXDestructible3D::set_shatter_speed);
 	ClassDB::bind_method(D_METHOD("get_shatter_speed"), &PhysXDestructible3D::get_shatter_speed);
 	ClassDB::bind_method(D_METHOD("set_mass", "mass"), &PhysXDestructible3D::set_mass);
+	ClassDB::bind_method(D_METHOD("set_auto_mass", "auto_mass"), &PhysXDestructible3D::set_auto_mass);
+	ClassDB::bind_method(D_METHOD("get_auto_mass"), &PhysXDestructible3D::get_auto_mass);
 	ClassDB::bind_method(D_METHOD("get_mass"), &PhysXDestructible3D::get_mass);
 	ClassDB::bind_method(D_METHOD("set_dynamic", "dynamic"), &PhysXDestructible3D::set_dynamic);
 	ClassDB::bind_method(D_METHOD("get_dynamic"), &PhysXDestructible3D::get_dynamic);
@@ -105,7 +107,13 @@ void PhysXDestructible3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material_override", PROPERTY_HINT_RESOURCE_TYPE, "Material"), "set_material_override", "get_material_override");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shatter_speed", PROPERTY_HINT_RANGE, "0,50,0.1"), "set_shatter_speed", "get_shatter_speed");
 	ADD_GROUP("Physics", "");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mass", PROPERTY_HINT_RANGE, "0.001,1000,0.001,or_greater,exp"), "set_mass", "get_mass");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "auto_mass"), "set_auto_mass", "get_auto_mass");
+	// Widened well past a typical auto-computed value (density * volume
+	// easily lands in the thousands for a wall-sized object) -- or_greater
+	// alone doesn't stop the slider/typed-value UI from reading as "capped"
+	// once the actual value exceeds the printed max, so give it real
+	// headroom instead of relying on that alone.
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mass", PROPERTY_HINT_RANGE, "0.001,1000000,0.001,or_greater,exp"), "set_mass", "get_mass");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dynamic"), "set_dynamic", "get_dynamic");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "health", PROPERTY_HINT_RANGE, "0.01,20,0.01"), "set_health", "get_health");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_strength", PROPERTY_HINT_RANGE, "0,200,0.1"), "set_impact_strength", "get_impact_strength");
@@ -116,6 +124,36 @@ void PhysXDestructible3D::_bind_methods() {
 
 PhysXDestructible3D::PhysXDestructible3D() {
 	set_notify_transform(true);
+}
+
+void PhysXDestructible3D::set_mass(float p_mass) {
+	mass = MAX(p_mass, 0.001f);
+	if (auto_mass) {
+		auto_mass = false;
+		notify_property_list_changed();
+	}
+}
+
+void PhysXDestructible3D::set_auto_mass(bool p_auto) {
+	auto_mass = p_auto;
+	if (auto_mass) {
+		// Recompute right away rather than waiting for the next load/reload
+		// -- same live-editing expectation this module's other properties
+		// already set (see _reload()'s own note on why).
+		_compute_chunk_volumes();
+	}
+	// The actual bug in the first version of this: without this call, the
+	// Inspector never re-checks _validate_property() for `mass` after
+	// auto_mass changes, so it stayed visually read-only (or visually
+	// editable but silently reverting) regardless of which way you'd just
+	// toggled it.
+	notify_property_list_changed();
+}
+
+void PhysXDestructible3D::_validate_property(PropertyInfo &p_property) const {
+	if (auto_mass && p_property.name == "mass") {
+		p_property.usage |= PROPERTY_USAGE_READ_ONLY;
+	}
 }
 
 PhysXDestructible3D::~PhysXDestructible3D() {
@@ -354,14 +392,13 @@ void PhysXDestructible3D::_compute_chunk_volumes() {
 		}
 	}
 
-	// Seed a sensible starting mass from the intact mesh's real volume the
-	// first time an asset loads (a fixed internal density -- not exposed as
-	// its own property, see set_mass()'s own note on why) -- but only while
-	// mass is still sitting at its untouched compile-time default. Once it
-	// isn't, by any path (a script, or the Inspector), it's an explicit
-	// value and this never overwrites it again, including on a later
-	// reload -- there's no separate "auto" flag to accidentally leave on.
-	if (mass == 1.0f && chunk_volumes.size() > 0) {
+	// While auto_mass is true, recompute mass from the intact mesh's real
+	// volume (a fixed internal density -- not its own exposed property, see
+	// set_mass()'s own note on why) every time this runs -- a load, a
+	// reload, or auto_mass being checked again after an override. Once
+	// auto_mass is false, this is a no-op and whatever mass was explicitly
+	// set stays exactly that.
+	if (auto_mass && chunk_volumes.size() > 0) {
 		const double default_density = 2200.0; // roughly concrete/stone
 		mass = MAX((float)(default_density * chunk_volumes[0]), 0.001f);
 	}

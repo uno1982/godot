@@ -61,6 +61,7 @@ class PhysXDestructible3D : public Node3D {
 protected:
 	static void _bind_methods();
 	void _notification(int p_what);
+	void _validate_property(PropertyInfo &p_property) const;
 
 public:
 	void set_asset_path(const String &p_path);
@@ -90,21 +91,33 @@ public:
 	// _compute_chunk_volumes()/_chunk_mass()) rather than giving a huge
 	// remaining chunk and a tiny sliver the same weight.
 	//
-	// A first pass at this also added density/auto_mass properties (an
-	// Unreal-style "auto-compute from density unless overridden" toggle) --
-	// dropped after checking that neither Godot nor Unreal actually expose
-	// raw density as a per-component number the way that added it (Godot
-	// has no density concept anywhere; Unreal's lives on a shared
-	// PhysicalMaterial asset, not a float on the component itself), and it
-	// needed a confusing read-only-until-you-flip-a-switch Inspector lock
-	// to avoid fighting a live user edit. Simpler answer: mass just starts
-	// at a sensible value computed from the intact mesh's real volume
-	// (a fixed internal density, not exposed) the first time an asset
-	// loads, then behaves like any other plain editable float from there --
-	// no lock, no toggle, no risk of a later reload silently overwriting
-	// whatever you've set it to.
-	void set_mass(float p_mass) { mass = MAX(p_mass, 0.001f); }
+	// mass is auto-computed (a fixed internal density, not its own exposed
+	// property -- neither Godot nor Unreal actually expose raw density as a
+	// per-component number; Unreal's lives on a shared PhysicalMaterial
+	// asset, and Godot has no density concept anywhere) from the intact
+	// mesh's real volume while auto_mass is true (the default) -- read-only
+	// in the Inspector then, so it reads as "here's what the object would
+	// weigh," not an editable field. Uncheck auto_mass for a true override:
+	// mass becomes a plain editable value, exactly what you set it to,
+	// until you check auto_mass again (which recomputes fresh and locks it
+	// back to read-only) -- see set_auto_mass()'s own note on the one real
+	// bug this went through before landing here (the Inspector not
+	// noticing auto_mass had changed).
+	// A script calling this directly (not through the Inspector, which is
+	// read-only whenever auto_mass is true and so can't reach this in the
+	// first place) still counts as an explicit override -- turns auto_mass
+	// off too, so it can't get silently overwritten by a later reload.
+	void set_mass(float p_mass);
 	float get_mass() const { return mass; }
+
+	// See set_mass()'s note. Calls notify_property_list_changed() --
+	// without it, the Inspector never re-checks whether `mass` should still
+	// be read-only after this toggles, so unchecking auto_mass looked like
+	// it did nothing (the field stayed visually grayed out even though the
+	// underlying state was correct) -- the actual bug in the first version
+	// of this, not the read-only-while-auto design itself.
+	void set_auto_mass(bool p_auto);
+	bool get_auto_mass() const { return auto_mass; }
 
 	// If true, the intact piece is a real dynamic (BODY_MODE_RIGID) body --
 	// it falls under gravity and collides normally, like any other physics
@@ -175,6 +188,7 @@ private:
 	Ref<Material> material_override_res;
 	float shatter_speed = 8.0f;
 	float mass = 1.0f;
+	bool auto_mass = true;
 	bool dynamic = false;
 	float health = 1.0f;
 	float impact_strength = 5.0f;

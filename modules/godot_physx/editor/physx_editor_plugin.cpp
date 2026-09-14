@@ -38,6 +38,7 @@
 #include "physx_blast_asset_inspector_plugin.h"
 #include "physx_blast_context_menu_plugin.h"
 #include "physx_blast_fracture_dialog.h"
+#include "physx_blast_icons.h"
 #endif
 
 #include "editor/editor_undo_redo_manager.h"
@@ -46,6 +47,7 @@
 #include "scene/3d/physics/area_3d.h"
 #ifdef GODOT_PHYSX_BLAST
 #include "editor/editor_node.h"
+#include "editor/editor_string_names.h"
 #include "editor/inspector/editor_context_menu_plugin.h"
 #endif
 
@@ -493,5 +495,13 @@ PhysXEditorPlugin::PhysXEditorPlugin() {
 	Ref<EditorInspectorPluginPhysXBlastAsset> blast_asset_inspector;
 	blast_asset_inspector.instantiate();
 	add_inspector_plugin(blast_asset_inspector);
+
+	// Otherwise PhysXBlastAsset falls back to the engine's generic
+	// Resource/"blank paper" icon everywhere (FileSystem dock, Inspector
+	// header) since nothing in the editor theme matches its class name.
+	Ref<Texture2D> blast_asset_icon = physx_blast_asset_make_icon();
+	if (blast_asset_icon.is_valid()) {
+		EditorNode::get_singleton()->get_editor_theme()->set_icon("PhysXBlastAsset", EditorStringName(EditorIcons), blast_asset_icon);
+	}
 #endif
 }

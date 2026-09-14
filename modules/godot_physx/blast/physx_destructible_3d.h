@@ -257,6 +257,20 @@ private:
 	bool loaded = false;
 	bool fractured = false;
 
+	// PxTransform (a physics body's pose) never carries scale -- confirmed
+	// directly: a real repro with a (20, 10, 1) scaled destructible showed
+	// the node's own global_transform basis reduced to identity after just
+	// a few physics ticks. Every place that pushes a physics-read transform
+	// onto the node or a piece's RenderingServer instance (the dynamic
+	// intact body's own sync, and _sync_transforms() for fractured debris)
+	// only has a scale-free rotation to work with at that point -- this is
+	// the scale to re-apply on top of it, captured fresh whenever the
+	// intact piece is (re)spawned or its transform is pushed by something
+	// other than physics (see _spawn_intact()/NOTIFICATION_TRANSFORM_CHANGED),
+	// i.e. always from a moment before physics has had any chance to
+	// overwrite it.
+	Vector3 spawn_scale = Vector3(1, 1, 1);
+
 	bool _load();
 	bool _load_asset_bytes(const PackedByteArray &p_bytes);
 	void _compute_chunk_volumes();

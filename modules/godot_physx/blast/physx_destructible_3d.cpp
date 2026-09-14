@@ -265,6 +265,11 @@ void PhysXDestructible3D::_notification(int p_what) {
 			// the viewport or Inspector must still update the visual -- this
 			// used to unconditionally skip on `dynamic` and broke exactly that.
 			if (!fractured && pieces.size() == 1 && (!dynamic || Engine::get_singleton()->is_editor_hint())) {
+				// This is a real (non-physics-driven) transform push -- e.g. an
+				// editor edit before Play -- so it's also a good, cheap moment
+				// to keep spawn_scale current for whenever physics does start
+				// owning this piece's transform later (see spawn_scale's note).
+				spawn_scale = get_global_transform().basis.get_scale();
 				if (pieces[0].body.is_valid()) {
 					PhysicsServer3D::get_singleton()->body_set_state(pieces[0].body, PhysicsServer3D::BODY_STATE_TRANSFORM, get_global_transform());
 				}
@@ -288,13 +293,17 @@ void PhysXDestructible3D::_notification(int p_what) {
 				// node->body when !dynamic, so this doesn't loop back on itself.
 				PhysicsDirectBodyState3D *state = PhysicsServer3D::get_singleton()->body_get_direct_state(pieces[0].body);
 				if (state) {
-					const Transform3D t = state->get_transform();
+					Transform3D t = state->get_transform();
 					if (t.origin.y < kill_y) {
 						// Fell out of the scene before ever taking a hit -- same
 						// cleanup _sync_transforms() does for fractured debris,
 						// just for the still-intact single piece.
 						_free_all_pieces();
 					} else {
+						// t.basis is a pure rotation here (see spawn_scale's own
+						// note) -- re-apply the real scale in the object's own
+						// local axes before this goes anywhere, or it's lost.
+						t.basis = t.basis.scaled_local(spawn_scale);
 						set_global_transform(t);
 						RenderingServer::get_singleton()->instance_set_transform(pieces[0].instance, t);
 						_check_impact_fracture();
@@ -395,12 +404,16 @@ void PhysXDestructible3D::_compute_chunk_volumes() {
 	// triangle's signed tetrahedron volume against the origin
 	// (a . (b x c) / 6); abs() makes it winding-independent, and object-
 	// local space (chunk geometry is already authored there) means no
-	// transform is needed. Used to distribute mass across pieces
-	// proportional to their actual size (see set_mass()) instead of every
-	// piece getting the same flat default regardless of how big it is --
-	// found missing here by checking how Unreal's own Blast integration
-	// handles it (BlastMeshComponent.cpp: IdealChunkMass = RootChunkMass *
-	// ThisChunkVolume / TotalVolume).
+	// per-chunk transform is needed -- every chunk shares the node's own
+	// scale equally, so it's fine (in fact necessary, see below) for
+	// chunk_volumes[] itself to stay unscaled: _chunk_mass() only ever uses
+	// it as a ratio against total_leaf_volume, and a shared scale factor
+	// cancels out of that ratio exactly, uniform or not. Used to distribute
+	// mass across pieces proportional to their actual size (see set_mass())
+	// instead of every piece getting the same flat default regardless of
+	// how big it is -- found missing here by checking how Unreal's own
+	// Blast integration handles it (BlastMeshComponent.cpp: IdealChunkMass =
+	// RootChunkMass * ThisChunkVolume / TotalVolume).
 	chunk_volumes.resize(chunk_points.size());
 	total_leaf_volume = 0.0;
 	for (uint32_t c = 0; c < chunk_points.size(); c++) {
@@ -422,9 +435,18 @@ void PhysXDestructible3D::_compute_chunk_volumes() {
 	// reload, or auto_mass being checked again after an override. Once
 	// auto_mass is false, this is a no-op and whatever mass was explicitly
 	// set stays exactly that.
+	//
+	// Unlike the per-chunk ratio above, this is an *absolute* value, so the
+	// node's actual scale matters here and has to be applied explicitly --
+	// chunk_volumes[0] alone is the unscaled local mesh volume, and a
+	// heavily scaled destructible (e.g. 20x10x1, a real reported case) would
+	// otherwise get a default mass computed as if it were still original
+	// size, off by the product of the scale factors (200x too light there).
 	if (auto_mass && chunk_volumes.size() > 0) {
 		const double default_density = 2200.0; // roughly concrete/stone
-		mass = MAX((float)(default_density * chunk_volumes[0]), 0.001f);
+		const Vector3 scale = get_global_transform().basis.get_scale();
+		const double scaled_volume = chunk_volumes[0] * (double)scale.x * (double)scale.y * (double)scale.z;
+		mass = MAX((float)(default_density * scaled_volume), 0.001f);
 	}
 }
 
@@ -483,6 +505,10 @@ void PhysXDestructible3D::_spawn_intact() {
 	// an approximation. No physics body in the editor -- nothing simulates
 	// there, and the render-only piece is enough for authoring/placement.
 	const bool physics = !Engine::get_singleton()->is_editor_hint();
+	// See spawn_scale's own note -- this is the last point before physics
+	// could ever own this piece's transform, so it's the last clean read of
+	// the node's real intended scale.
+	spawn_scale = get_global_transform().basis.get_scale();
 	_spawn_piece(0, get_global_transform(), Vector3(), physics);
 	if (physics) {
 		PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
@@ -617,7 +643,7 @@ void PhysXDestructible3D::_sync_transforms() {
 		if (!state) {
 			continue;
 		}
-		const Transform3D t = state->get_transform();
+		Transform3D t = state->get_transform();
 		if (t.origin.y < kill_y) {
 			// Nothing else was ever going to free a piece that's just fallen
 			// out of the scene entirely (there's no owning Node a kill-floor
@@ -631,6 +657,10 @@ void PhysXDestructible3D::_sync_transforms() {
 			pieces.remove_at_unordered((uint32_t)i);
 			continue;
 		}
+		// t.basis is a pure rotation (see spawn_scale's own note) -- every
+		// piece was authored from the same intact mesh at the same original
+		// scale, so the same spawn_scale applies to all of them here too.
+		t.basis = t.basis.scaled_local(spawn_scale);
 		rs->instance_set_transform(piece.instance, t);
 	}
 }

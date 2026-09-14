@@ -39,6 +39,8 @@ def get_doc_classes():
         "PhysXParticleFluid3D",
         "PhysXCloth3D",
         "PhysXChunkEmitter3D",
+        "PhysXDestructible3D",
+        "PhysXBlastAsset",
     ]
 
 

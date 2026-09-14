@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXDestructible3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A mesh that fractures into real rigid-body debris at runtime, provided by the PhysX module's NvBlast integration.
+	</brief_description>
+	<description>
+		Author one by selecting a [MeshInstance3D] and using [b]Mesh → Fracture with Blast[/b] (or right-clicking a [Mesh] resource in the FileSystem dock) -- a live in-viewport dialog lets you pick a fracture pattern and Accept replaces the node with a [PhysXDestructible3D] using the result, saved as a [member blast_asset] resource next to the scene.
+		While intact, it renders and collides as the whole unfractured mesh through one [PhysicsServer3D] body. [method apply_radial_damage] breaks it explicitly -- an explosion, a weapon hit -- and each newly detached piece becomes its own real rigid body with a cooked convex collision hull, kicked outward from the damage origin at [member shatter_speed]. [member dynamic] additionally makes the intact object fall and collide like any other rigid body, and lets a hard enough physical impact fracture it on its own via [member impact_strength] / [member impact_damage_scale] / [member impact_radius], the way stacked destructible props behave in other engines' Blast integrations.
+		[b]How damage, health, and radius actually interact:[/b] every bond holding two pieces of the mesh together starts with [member health] "hit points." A single [method apply_radial_damage] call applies its [code]damage[/code] amount [i]in full[/i] to every bond within [code]min_radius[/code] of the hit, falling off linearly to zero by [code]max_radius[/code] (nothing beyond that radius is touched at all). A bond breaks once the damage it has received -- from one hit or accumulated across several -- reaches its [member health]. So [code]damage &gt;= health[/code] at full strength (inside [code]min_radius[/code]) breaks that bond outright in one hit; a weaker or more distant hit only chips at it, leaving it standing until a harder or closer follow-up (or several weaker ones) finishes the job. A piece only visibly detaches once every bond connecting it to the rest of the structure has broken -- a hit that weakens several bonds without fully breaking any of them can leave the object looking untouched even though it took real damage.
+		[member dynamic]'s auto-fracture path feeds the exact same pipeline: a collision whose impulse clears [member impact_strength] is converted to [code]damage = (impulse - impact_strength) * impact_damage_scale[/code] (floored so it always at least matches [member health] × 1.5, guaranteeing a real break rather than a hit that looked hard but silently did nothing) and applied via [method apply_radial_damage] at the contact point with [code]min_radius = 0[/code] and [code]max_radius = [/code][member impact_radius].
+		[b]Mass:[/b] [member auto_mass] computes a default from the intact mesh's real volume × a fixed internal density (~2200 kg/m³, roughly concrete) -- read-only in the Inspector while it's on, so it shows what the object would actually weigh. Uncheck it for a true, freely-editable override. Either way, [member mass] is the [i]whole intact object's[/i] mass; once fractured, each piece gets a share of it proportional to its own volume, not a flat split.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="apply_radial_damage">
+			<return type="int" />
+			<param index="0" name="world_position" type="Vector3" />
+			<param index="1" name="damage" type="float" />
+			<param index="2" name="min_radius" type="float" />
+			<param index="3" name="max_radius" type="float" />
+			<description>
+				Applies [param damage] to every bond within [param max_radius] of [param world_position], at full strength inside [param min_radius] and falling off linearly to zero at [param max_radius]. A bond breaks once its cumulative received damage reaches [member health]; a piece detaches (spawning a real rigid body) once every bond connecting it to the rest of the structure has broken. Works identically whether [member dynamic] is [code]true[/code] or [code]false[/code] -- it doesn't require the object to be falling or moving, so a fixed static prop is fully breakable this way (see [member dynamic]'s own note). Returns how many new pieces this call actually detached; [code]0[/code] means the hit landed (in range) but wasn't enough to break anything.
+				Each newly detached piece gets a real outward velocity -- radial direction from [param world_position] to that piece's own centroid, scaled by [member shatter_speed] and the same distance falloff the damage itself used, plus a slight upward bias.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="asset_path" type="String" setter="set_asset_path" getter="get_asset_path" default="&quot;&quot;">
+			Legacy loading path: a [code].asset[/code] file (raw [code]NvBlastAsset[/code] bytes), paired with [member chunks_path]. Prefer [member blast_asset] for anything authored through the in-editor fracture dialog; this remains only for assets authored before [PhysXBlastAsset] existed as a real [Resource] type.
+		</member>
+		<member name="auto_mass" type="bool" setter="set_auto_mass" getter="get_auto_mass" default="true">
+			When [code]true[/code], [member mass] is recomputed from the intact mesh's real volume (times its node scale) every time the asset (re)loads, and shown read-only in the Inspector -- "here's what this object would actually weigh." Uncheck it for a true, freely-editable override that survives reloads; checking it again immediately recomputes fresh and discards that override.
+		</member>
+		<member name="blast_asset" type="PhysXBlastAsset" setter="set_blast_asset" getter="get_blast_asset">
+			The fractured mesh data to use, saved by the in-editor fracture dialog (or [PhysXBlastAuthoring] directly). Preferred over [member asset_path] / [member chunks_path] when set.
+		</member>
+		<member name="chunks_path" type="String" setter="set_chunks_path" getter="get_chunks_path" default="&quot;&quot;">
+			Legacy loading path: a [code].chunks[/code] text file (per-chunk render-mesh triangle soup), paired with [member asset_path]. See [member asset_path]'s own note.
+		</member>
+		<member name="dynamic" type="bool" setter="set_dynamic" getter="get_dynamic" default="false">
+			When [code]true[/code], the intact object is a real falling/colliding rigid body instead of a fixed prop, and a hard enough physical collision auto-fractures it (see [member impact_strength] / [member impact_damage_scale] / [member impact_radius]). When [code]false[/code] (the default), it stays a fixed prop that only ever breaks from an explicit [method apply_radial_damage] call -- including from an explosion or weapon script, so a static object is still fully breakable, it just can't fracture itself by physically colliding into something.
+		</member>
+		<member name="gi_mode" type="int" setter="set_gi_mode" getter="get_gi_mode" enum="PhysXDestructible3D.GIMode" default="1">
+			Controls VoxelGI baking for every piece's render mesh, the same two settings as [member GeometryInstance3D.gi_mode]. Defaults to [constant GI_MODE_STATIC], matching a plain [MeshInstance3D]'s default. Consider [constant GI_MODE_DYNAMIC] for an object that's expected to move once fractured -- but a single fracture can spawn many pieces at once, and a VoxelGI's dynamic-object tracking cost scales with how many it has to follow every frame, so it isn't the default.
+		</member>
+		<member name="health" type="float" setter="set_health" getter="get_health" default="1.0">
+			How much cumulative damage each bond in the fracture structure can absorb before it breaks -- see the class description's "How damage, health, and radius actually interact" section for the full picture. Higher [member health] needs more damage (a harder hit, a closer one, or several weaker ones added together) to break the same bond.
+		</member>
+		<member name="impact_damage_scale" type="float" setter="set_impact_damage_scale" getter="get_impact_damage_scale" default="1.0">
+			[member dynamic]-only. Once a collision's impulse clears [member impact_strength], this scales how much extra damage the excess produces: [code]damage = (impulse - impact_strength) * impact_damage_scale[/code] (before the [member health] × 1.5 floor -- see [method apply_radial_damage]'s note). Raise it so impacts that do clear the threshold break things more decisively; it has no effect on whether an impact counts as a hit at all, only on how much damage a qualifying one deals.
+		</member>
+		<member name="impact_radius" type="float" setter="set_impact_radius" getter="get_impact_radius" default="5.0">
+			[member dynamic]-only. The [code]max_radius[/code] passed to the auto-triggered [method apply_radial_damage] call on a qualifying impact, centered on the contact point ([code]min_radius[/code] is always [code]0[/code] for this path -- full damage right at the contact, falling off to [member impact_radius]). How far a hard impact's damage reaches into the rest of the object, not how hard the impact needs to be.
+		</member>
+		<member name="impact_strength" type="float" setter="set_impact_strength" getter="get_impact_strength" default="5.0">
+			[member dynamic]-only. The minimum contact impulse (roughly mass × velocity change, in Godot's physics units) that counts as an impact worth reacting to at all -- landing softly or a gentle bump below this is ignored entirely, no damage applied. Raise it to make the object tolerate harder knocks before it can self-fracture; it has no effect on how much damage a qualifying impact deals (see [member impact_damage_scale] for that).
+		</member>
+		<member name="kill_y" type="float" setter="set_kill_y" getter="get_kill_y" default="-1000.0">
+			A piece (fractured debris, or the intact body itself if [member dynamic]) whose world-space Y position falls below this is freed automatically. Bounds memory/body count for a scene where something can fall indefinitely -- no floor everywhere, a gap, missing the pile entirely -- instead of debris simulating forever off in the void. The default is low enough not to trigger in an ordinary scene; set it to match this scene's actual floor or void.
+		</member>
+		<member name="mass" type="float" setter="set_mass" getter="get_mass" default="1.0">
+			The whole intact object's mass, same meaning as [member RigidBody3D.mass]. Read-only while [member auto_mass] is on (see its own note). Once fractured, each piece gets a share of this proportional to its own volume -- a large remaining chunk and a tiny sliver don't get the same weight.
+		</member>
+		<member name="material_override" type="Material" setter="set_material_override" getter="get_material_override">
+			Material applied to every piece's render mesh, intact or fractured, in place of the source mesh's own materials (which aren't carried over by the fracture process).
+		</member>
+		<member name="shatter_speed" type="float" setter="set_shatter_speed" getter="get_shatter_speed" default="8.0">
+			Speed (m/s, before falloff) each newly detached piece is kicked away from the damage origin -- see [method apply_radial_damage]'s own note on the exact direction/falloff shape. Purely a "how violently does debris scatter on break" feel knob, not a physically derived value.
+		</member>
+	</members>
+	<constants>
+		<constant name="GI_MODE_DISABLED" value="0" enum="GIMode">
+			Pieces neither receive nor are captured by baked or dynamic GI.
+		</constant>
+		<constant name="GI_MODE_STATIC" value="1" enum="GIMode">
+			Pieces are treated as static geometry for GI purposes, matching a plain [MeshInstance3D]'s default. The default for [member gi_mode].
+		</constant>
+		<constant name="GI_MODE_DYNAMIC" value="2" enum="GIMode">
+			Pieces are tracked as dynamic objects by a [VoxelGI] as they move. See [member gi_mode]'s own note on the cost tradeoff before enabling this broadly.
+		</constant>
+	</constants>
+</class>

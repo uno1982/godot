@@ -128,6 +128,51 @@ public:
 	void set_gi_mode(GIMode p_mode);
 	GIMode get_gi_mode() const { return gi_mode; }
 
+	// The rest of these mirror GeometryInstance3D's own equivalent
+	// properties (same names/values/RenderingServer calls) for the exact
+	// same reason gi_mode does -- this class isn't one, so nothing else
+	// ever applied them to any piece's real instance. Each pushes straight
+	// to every existing piece on set, same as material_override/gi_mode.
+	enum ShadowCastingSetting {
+		SHADOW_CASTING_SETTING_OFF,
+		SHADOW_CASTING_SETTING_ON,
+		SHADOW_CASTING_SETTING_DOUBLE_SIDED,
+		SHADOW_CASTING_SETTING_SHADOWS_ONLY,
+	};
+	void set_cast_shadow(ShadowCastingSetting p_setting);
+	ShadowCastingSetting get_cast_shadow() const { return cast_shadow; }
+
+	void set_transparency(float p_transparency);
+	float get_transparency() const { return transparency; }
+
+	void set_material_overlay(const Ref<Material> &p_material);
+	Ref<Material> get_material_overlay() const { return material_overlay_res; }
+
+	void set_extra_cull_margin(float p_margin);
+	float get_extra_cull_margin() const { return extra_cull_margin; }
+
+	void set_lod_bias(float p_bias);
+	float get_lod_bias() const { return lod_bias; }
+
+	void set_ignore_occlusion_culling(bool p_ignore);
+	bool get_ignore_occlusion_culling() const { return ignore_occlusion_culling; }
+
+	enum VisibilityRangeFadeMode {
+		VISIBILITY_RANGE_FADE_DISABLED,
+		VISIBILITY_RANGE_FADE_SELF,
+		VISIBILITY_RANGE_FADE_DEPENDENCIES,
+	};
+	void set_visibility_range_begin(float p_distance);
+	float get_visibility_range_begin() const { return visibility_range_begin; }
+	void set_visibility_range_end(float p_distance);
+	float get_visibility_range_end() const { return visibility_range_end; }
+	void set_visibility_range_begin_margin(float p_distance);
+	float get_visibility_range_begin_margin() const { return visibility_range_begin_margin; }
+	void set_visibility_range_end_margin(float p_distance);
+	float get_visibility_range_end_margin() const { return visibility_range_end_margin; }
+	void set_visibility_range_fade_mode(VisibilityRangeFadeMode p_mode);
+	VisibilityRangeFadeMode get_visibility_range_fade_mode() const { return visibility_range_fade_mode; }
+
 	void set_shatter_speed(float p_speed) { shatter_speed = p_speed; }
 	float get_shatter_speed() const { return shatter_speed; }
 
@@ -273,6 +318,17 @@ private:
 	Ref<PhysXBlastAsset> blast_asset;
 	Ref<Material> material_override_res;
 	GIMode gi_mode = GI_MODE_STATIC;
+	ShadowCastingSetting cast_shadow = SHADOW_CASTING_SETTING_ON;
+	float transparency = 0.0f;
+	Ref<Material> material_overlay_res;
+	float extra_cull_margin = 0.0f;
+	float lod_bias = 1.0f;
+	bool ignore_occlusion_culling = false;
+	float visibility_range_begin = 0.0f;
+	float visibility_range_end = 0.0f;
+	float visibility_range_begin_margin = 0.0f;
+	float visibility_range_end_margin = 0.0f;
+	VisibilityRangeFadeMode visibility_range_fade_mode = VISIBILITY_RANGE_FADE_DISABLED;
 	float shatter_speed = 8.0f;
 	uint32_t collision_layer = 1;
 	uint32_t collision_mask = 1;
@@ -352,6 +408,16 @@ private:
 	void _spawn_piece(uint32_t p_chunk_index, const Transform3D &p_transform, const Vector3 &p_linear_velocity, bool p_physics = true);
 	// See set_gi_mode()'s own note on why this is needed at all.
 	void _apply_gi_mode(RenderingServer *p_rs, RID p_instance) const;
+	// Same idea as _apply_gi_mode(), covering the rest of the
+	// GeometryInstance3D-equivalent properties added above (cast_shadow,
+	// transparency, material_overlay, extra_cull_margin, lod_bias,
+	// ignore_occlusion_culling, visibility_range_*) in one place rather than
+	// seven near-identical one-off pushes.
+	void _apply_extra_render_settings(RenderingServer *p_rs, RID p_instance) const;
+	// The visibility_range_* setters each only change one of five values
+	// that all get pushed together in a single RenderingServer call --
+	// shared so none of them has to repeat the other four.
+	void _apply_visibility_range(RenderingServer *p_rs, RID p_instance) const;
 	Vector3 _chunk_centroid_local(uint32_t p_chunk_index) const;
 	void _free_all_pieces();
 	void _sync_transforms();
@@ -362,3 +428,5 @@ private:
 };
 
 VARIANT_ENUM_CAST(PhysXDestructible3D::GIMode);
+VARIANT_ENUM_CAST(PhysXDestructible3D::ShadowCastingSetting);
+VARIANT_ENUM_CAST(PhysXDestructible3D::VisibilityRangeFadeMode);

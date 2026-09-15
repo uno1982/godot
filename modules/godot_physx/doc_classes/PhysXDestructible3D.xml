@@ -35,6 +35,9 @@
 		<member name="blast_asset" type="PhysXBlastAsset" setter="set_blast_asset" getter="get_blast_asset">
 			The fractured mesh data to use, saved by the in-editor fracture dialog (or [PhysXBlastAuthoring] directly). Preferred over [member asset_path] / [member chunks_path] when set.
 		</member>
+		<member name="cast_shadow" type="int" setter="set_cast_shadow" getter="get_cast_shadow" enum="PhysXDestructible3D.ShadowCastingSetting" default="1">
+			Shadow-casting behavior for every piece's render mesh, the same four settings as [member GeometryInstance3D.cast_shadow]. Applies uniformly, intact or fractured -- changing it re-pushes to every already-existing piece immediately.
+		</member>
 		<member name="chunks_path" type="String" setter="set_chunks_path" getter="get_chunks_path" default="&quot;&quot;">
 			Legacy loading path: a [code].chunks[/code] text file (per-chunk render-mesh triangle soup), paired with [member asset_path]. See [member asset_path]'s own note.
 		</member>
@@ -47,11 +50,17 @@
 		<member name="dynamic" type="bool" setter="set_dynamic" getter="get_dynamic" default="false">
 			When [code]true[/code], the intact object is a real falling/colliding rigid body instead of a fixed prop, and a hard enough physical collision auto-fractures it (see [member impact_strength] / [member impact_damage_scale] / [member impact_radius]). When [code]false[/code] (the default), it stays a fixed prop that only ever breaks from an explicit [method apply_radial_damage] call -- including from an explosion or weapon script, so a static object is still fully breakable, it just can't fracture itself by physically colliding into something.
 		</member>
+		<member name="extra_cull_margin" type="float" setter="set_extra_cull_margin" getter="get_extra_cull_margin" default="0.0">
+			Widens the bounds used for frustum culling on every piece, the same as [member GeometryInstance3D.extra_cull_margin]. Raise it if a fast-moving piece pops in/out of view near the screen edge.
+		</member>
 		<member name="gi_mode" type="int" setter="set_gi_mode" getter="get_gi_mode" enum="PhysXDestructible3D.GIMode" default="1">
 			Controls VoxelGI baking for every piece's render mesh, the same two settings as [member GeometryInstance3D.gi_mode]. Defaults to [constant GI_MODE_STATIC], matching a plain [MeshInstance3D]'s default. Consider [constant GI_MODE_DYNAMIC] for an object that's expected to move once fractured -- but a single fracture can spawn many pieces at once, and a VoxelGI's dynamic-object tracking cost scales with how many it has to follow every frame, so it isn't the default.
 		</member>
 		<member name="health" type="float" setter="set_health" getter="get_health" default="1.0">
 			How much cumulative damage each bond in the fracture structure can absorb before it breaks -- see the class description's "How damage, health, and radius actually interact" section for the full picture. Higher [member health] needs more damage (a harder hit, a closer one, or several weaker ones added together) to break the same bond.
+		</member>
+		<member name="ignore_occlusion_culling" type="bool" setter="set_ignore_occlusion_culling" getter="get_ignore_occlusion_culling" default="false">
+			When [code]true[/code], every piece is exempt from occlusion culling, the same as [member GeometryInstance3D.ignore_occlusion_culling].
 		</member>
 		<member name="impact_damage_scale" type="float" setter="set_impact_damage_scale" getter="get_impact_damage_scale" default="1.0">
 			[member dynamic]-only. Once a collision's impulse clears [member impact_strength], this scales how much extra damage the excess produces: [code]damage = (impulse - impact_strength) * impact_damage_scale[/code] (before the [member health] × 1.5 floor -- see [method apply_radial_damage]'s note). Raise it so impacts that do clear the threshold break things more decisively; it has no effect on whether an impact counts as a hit at all, only on how much damage a qualifying one deals.
@@ -65,14 +74,35 @@
 		<member name="kill_y" type="float" setter="set_kill_y" getter="get_kill_y" default="-1000.0">
 			A piece (fractured debris, or the intact body itself if [member dynamic]) whose world-space Y position falls below this is freed automatically. Bounds memory/body count for a scene where something can fall indefinitely -- no floor everywhere, a gap, missing the pile entirely -- instead of debris simulating forever off in the void. The default is low enough not to trigger in an ordinary scene; set it to match this scene's actual floor or void.
 		</member>
+		<member name="lod_bias" type="float" setter="set_lod_bias" getter="get_lod_bias" default="1.0">
+			Mesh LOD selection bias for every piece, the same as [member GeometryInstance3D.lod_bias]. Higher values keep more detail at a distance.
+		</member>
 		<member name="mass" type="float" setter="set_mass" getter="get_mass" default="1.0">
 			The whole intact object's mass, same meaning as [member RigidBody3D.mass]. Read-only while [member auto_mass] is on (see its own note). Once fractured, each piece gets a share of this proportional to its own volume -- a large remaining chunk and a tiny sliver don't get the same weight.
+		</member>
+		<member name="material_overlay" type="Material" setter="set_material_overlay" getter="get_material_overlay">
+			A second material layered on top of every piece's render mesh, the same as [member GeometryInstance3D.material_overlay] -- decals, damage overlays, and the like, without replacing the base material the way [member material_override] does.
 		</member>
 		<member name="material_override" type="Material" setter="set_material_override" getter="get_material_override">
 			Material applied to every piece's render mesh, intact or fractured, in place of the source mesh's own materials (which aren't carried over by the fracture process).
 		</member>
 		<member name="shatter_speed" type="float" setter="set_shatter_speed" getter="get_shatter_speed" default="8.0">
 			Speed (m/s, before falloff) each newly detached piece is kicked away from the damage origin -- see [method apply_radial_damage]'s own note on the exact direction/falloff shape. Purely a "how violently does debris scatter on break" feel knob, not a physically derived value.
+		</member>
+		<member name="visibility_range_begin" type="float" setter="set_visibility_range_begin" getter="get_visibility_range_begin" default="0.0">
+			Distance from the camera at which every piece starts being visible, the same as [member GeometryInstance3D.visibility_range_begin]. [code]0.0[/code] disables the near limit.
+		</member>
+		<member name="visibility_range_begin_margin" type="float" setter="set_visibility_range_begin_margin" getter="get_visibility_range_begin_margin" default="0.0">
+			Fade transition distance for [member visibility_range_begin], the same as [member GeometryInstance3D.visibility_range_begin_margin]. Only has an effect when [member visibility_range_fade_mode] isn't [constant VISIBILITY_RANGE_FADE_DISABLED].
+		</member>
+		<member name="visibility_range_end" type="float" setter="set_visibility_range_end" getter="get_visibility_range_end" default="0.0">
+			Distance from the camera beyond which every piece stops being visible, the same as [member GeometryInstance3D.visibility_range_end]. [code]0.0[/code] disables the far limit.
+		</member>
+		<member name="visibility_range_end_margin" type="float" setter="set_visibility_range_end_margin" getter="get_visibility_range_end_margin" default="0.0">
+			Fade transition distance for [member visibility_range_end], the same as [member GeometryInstance3D.visibility_range_end_margin]. See [member visibility_range_begin_margin]'s own note.
+		</member>
+		<member name="visibility_range_fade_mode" type="int" setter="set_visibility_range_fade_mode" getter="get_visibility_range_fade_mode" enum="PhysXDestructible3D.VisibilityRangeFadeMode" default="0">
+			How pieces fade in/out at the edges of [member visibility_range_begin]/[member visibility_range_end], the same as [member GeometryInstance3D.visibility_range_fade_mode].
 		</member>
 	</members>
 	<constants>
@@ -84,6 +114,27 @@
 		</constant>
 		<constant name="GI_MODE_DYNAMIC" value="2" enum="GIMode">
 			Pieces are tracked as dynamic objects by a [VoxelGI] as they move. See [member gi_mode]'s own note on the cost tradeoff before enabling this broadly.
+		</constant>
+		<constant name="SHADOW_CASTING_SETTING_OFF" value="0" enum="ShadowCastingSetting">
+			Pieces don't cast shadows.
+		</constant>
+		<constant name="SHADOW_CASTING_SETTING_ON" value="1" enum="ShadowCastingSetting">
+			Pieces cast normal shadows. The default for [member cast_shadow].
+		</constant>
+		<constant name="SHADOW_CASTING_SETTING_DOUBLE_SIDED" value="2" enum="ShadowCastingSetting">
+			Pieces cast shadows from both faces, as if double-sided, regardless of the mesh's actual winding.
+		</constant>
+		<constant name="SHADOW_CASTING_SETTING_SHADOWS_ONLY" value="3" enum="ShadowCastingSetting">
+			Pieces are invisible themselves but still cast shadows.
+		</constant>
+		<constant name="VISIBILITY_RANGE_FADE_DISABLED" value="0" enum="VisibilityRangeFadeMode">
+			No fade -- pieces simply pop in/out at [member visibility_range_begin]/[member visibility_range_end]. The default for [member visibility_range_fade_mode].
+		</constant>
+		<constant name="VISIBILITY_RANGE_FADE_SELF" value="1" enum="VisibilityRangeFadeMode">
+			Each piece fades its own alpha in/out at the visibility range edges.
+		</constant>
+		<constant name="VISIBILITY_RANGE_FADE_DEPENDENCIES" value="2" enum="VisibilityRangeFadeMode">
+			Pieces this object is visually linked to (via a shared LOD group) fade together instead of independently.
 		</constant>
 	</constants>
 </class>

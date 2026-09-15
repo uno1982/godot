@@ -84,6 +84,28 @@ void PhysXDestructible3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_material_override"), &PhysXDestructible3D::get_material_override);
 	ClassDB::bind_method(D_METHOD("set_gi_mode", "mode"), &PhysXDestructible3D::set_gi_mode);
 	ClassDB::bind_method(D_METHOD("get_gi_mode"), &PhysXDestructible3D::get_gi_mode);
+	ClassDB::bind_method(D_METHOD("set_cast_shadow", "setting"), &PhysXDestructible3D::set_cast_shadow);
+	ClassDB::bind_method(D_METHOD("get_cast_shadow"), &PhysXDestructible3D::get_cast_shadow);
+	ClassDB::bind_method(D_METHOD("set_transparency", "transparency"), &PhysXDestructible3D::set_transparency);
+	ClassDB::bind_method(D_METHOD("get_transparency"), &PhysXDestructible3D::get_transparency);
+	ClassDB::bind_method(D_METHOD("set_material_overlay", "material"), &PhysXDestructible3D::set_material_overlay);
+	ClassDB::bind_method(D_METHOD("get_material_overlay"), &PhysXDestructible3D::get_material_overlay);
+	ClassDB::bind_method(D_METHOD("set_extra_cull_margin", "margin"), &PhysXDestructible3D::set_extra_cull_margin);
+	ClassDB::bind_method(D_METHOD("get_extra_cull_margin"), &PhysXDestructible3D::get_extra_cull_margin);
+	ClassDB::bind_method(D_METHOD("set_lod_bias", "bias"), &PhysXDestructible3D::set_lod_bias);
+	ClassDB::bind_method(D_METHOD("get_lod_bias"), &PhysXDestructible3D::get_lod_bias);
+	ClassDB::bind_method(D_METHOD("set_ignore_occlusion_culling", "ignore"), &PhysXDestructible3D::set_ignore_occlusion_culling);
+	ClassDB::bind_method(D_METHOD("get_ignore_occlusion_culling"), &PhysXDestructible3D::get_ignore_occlusion_culling);
+	ClassDB::bind_method(D_METHOD("set_visibility_range_begin", "distance"), &PhysXDestructible3D::set_visibility_range_begin);
+	ClassDB::bind_method(D_METHOD("get_visibility_range_begin"), &PhysXDestructible3D::get_visibility_range_begin);
+	ClassDB::bind_method(D_METHOD("set_visibility_range_end", "distance"), &PhysXDestructible3D::set_visibility_range_end);
+	ClassDB::bind_method(D_METHOD("get_visibility_range_end"), &PhysXDestructible3D::get_visibility_range_end);
+	ClassDB::bind_method(D_METHOD("set_visibility_range_begin_margin", "distance"), &PhysXDestructible3D::set_visibility_range_begin_margin);
+	ClassDB::bind_method(D_METHOD("get_visibility_range_begin_margin"), &PhysXDestructible3D::get_visibility_range_begin_margin);
+	ClassDB::bind_method(D_METHOD("set_visibility_range_end_margin", "distance"), &PhysXDestructible3D::set_visibility_range_end_margin);
+	ClassDB::bind_method(D_METHOD("get_visibility_range_end_margin"), &PhysXDestructible3D::get_visibility_range_end_margin);
+	ClassDB::bind_method(D_METHOD("set_visibility_range_fade_mode", "mode"), &PhysXDestructible3D::set_visibility_range_fade_mode);
+	ClassDB::bind_method(D_METHOD("get_visibility_range_fade_mode"), &PhysXDestructible3D::get_visibility_range_fade_mode);
 	ClassDB::bind_method(D_METHOD("set_shatter_speed", "speed"), &PhysXDestructible3D::set_shatter_speed);
 	ClassDB::bind_method(D_METHOD("get_shatter_speed"), &PhysXDestructible3D::get_shatter_speed);
 	ClassDB::bind_method(D_METHOD("set_collision_layer", "layer"), &PhysXDestructible3D::set_collision_layer);
@@ -112,7 +134,20 @@ void PhysXDestructible3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "chunks_path", PROPERTY_HINT_FILE, "*.chunks"), "set_chunks_path", "get_chunks_path");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "blast_asset", PROPERTY_HINT_RESOURCE_TYPE, "PhysXBlastAsset"), "set_blast_asset", "get_blast_asset");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material_override", PROPERTY_HINT_RESOURCE_TYPE, "Material"), "set_material_override", "get_material_override");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material_overlay", PROPERTY_HINT_RESOURCE_TYPE, "BaseMaterial3D,ShaderMaterial"), "set_material_overlay", "get_material_overlay");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "transparency", PROPERTY_HINT_RANGE, "0.0,1.0,0.01"), "set_transparency", "get_transparency");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "cast_shadow", PROPERTY_HINT_ENUM, "Off,On,Double-Sided,Shadows Only"), "set_cast_shadow", "get_cast_shadow");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "gi_mode", PROPERTY_HINT_ENUM, "Disabled,Static,Dynamic"), "set_gi_mode", "get_gi_mode");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "extra_cull_margin", PROPERTY_HINT_RANGE, "0,16384,0.01,suffix:m"), "set_extra_cull_margin", "get_extra_cull_margin");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lod_bias", PROPERTY_HINT_RANGE, "0.001,128,0.001"), "set_lod_bias", "get_lod_bias");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "ignore_occlusion_culling"), "set_ignore_occlusion_culling", "get_ignore_occlusion_culling");
+	ADD_GROUP("Visibility Range", "visibility_range_");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "visibility_range_begin", PROPERTY_HINT_RANGE, "0.0,4096.0,0.01,or_greater,suffix:m"), "set_visibility_range_begin", "get_visibility_range_begin");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "visibility_range_begin_margin", PROPERTY_HINT_RANGE, "0.0,4096.0,0.01,or_greater,suffix:m"), "set_visibility_range_begin_margin", "get_visibility_range_begin_margin");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "visibility_range_end", PROPERTY_HINT_RANGE, "0.0,4096.0,0.01,or_greater,suffix:m"), "set_visibility_range_end", "get_visibility_range_end");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "visibility_range_end_margin", PROPERTY_HINT_RANGE, "0.0,4096.0,0.01,or_greater,suffix:m"), "set_visibility_range_end_margin", "get_visibility_range_end_margin");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "visibility_range_fade_mode", PROPERTY_HINT_ENUM, "Disabled,Self,Dependencies"), "set_visibility_range_fade_mode", "get_visibility_range_fade_mode");
+	ADD_GROUP("", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shatter_speed", PROPERTY_HINT_RANGE, "0,50,0.1"), "set_shatter_speed", "get_shatter_speed");
 	ADD_GROUP("Physics", "");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "collision_layer", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_collision_layer", "get_collision_layer");
@@ -134,6 +169,15 @@ void PhysXDestructible3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(GI_MODE_DISABLED);
 	BIND_ENUM_CONSTANT(GI_MODE_STATIC);
 	BIND_ENUM_CONSTANT(GI_MODE_DYNAMIC);
+
+	BIND_ENUM_CONSTANT(SHADOW_CASTING_SETTING_OFF);
+	BIND_ENUM_CONSTANT(SHADOW_CASTING_SETTING_ON);
+	BIND_ENUM_CONSTANT(SHADOW_CASTING_SETTING_DOUBLE_SIDED);
+	BIND_ENUM_CONSTANT(SHADOW_CASTING_SETTING_SHADOWS_ONLY);
+
+	BIND_ENUM_CONSTANT(VISIBILITY_RANGE_FADE_DISABLED);
+	BIND_ENUM_CONSTANT(VISIBILITY_RANGE_FADE_SELF);
+	BIND_ENUM_CONSTANT(VISIBILITY_RANGE_FADE_DEPENDENCIES);
 }
 
 PhysXDestructible3D::PhysXDestructible3D() {
@@ -242,6 +286,112 @@ void PhysXDestructible3D::_apply_gi_mode(RenderingServer *p_rs, RID p_instance) 
 	// them without this.
 	p_rs->instance_geometry_set_flag(p_instance, RSE::INSTANCE_FLAG_USE_BAKED_LIGHT, gi_mode == GI_MODE_STATIC);
 	p_rs->instance_geometry_set_flag(p_instance, RSE::INSTANCE_FLAG_USE_DYNAMIC_GI, gi_mode == GI_MODE_DYNAMIC);
+}
+
+void PhysXDestructible3D::set_cast_shadow(ShadowCastingSetting p_setting) {
+	cast_shadow = p_setting;
+	RenderingServer *rs = RenderingServer::get_singleton();
+	for (const ChunkVisual &piece : pieces) {
+		rs->instance_geometry_set_cast_shadows_setting(piece.instance, (RSE::ShadowCastingSetting)cast_shadow);
+	}
+}
+
+void PhysXDestructible3D::set_transparency(float p_transparency) {
+	transparency = p_transparency;
+	RenderingServer *rs = RenderingServer::get_singleton();
+	for (const ChunkVisual &piece : pieces) {
+		rs->instance_geometry_set_transparency(piece.instance, transparency);
+	}
+}
+
+void PhysXDestructible3D::set_material_overlay(const Ref<Material> &p_material) {
+	material_overlay_res = p_material;
+	RenderingServer *rs = RenderingServer::get_singleton();
+	const RID mat_rid = material_overlay_res.is_valid() ? material_overlay_res->get_rid() : RID();
+	for (const ChunkVisual &piece : pieces) {
+		rs->instance_geometry_set_material_overlay(piece.instance, mat_rid);
+	}
+}
+
+void PhysXDestructible3D::set_extra_cull_margin(float p_margin) {
+	extra_cull_margin = p_margin;
+	RenderingServer *rs = RenderingServer::get_singleton();
+	for (const ChunkVisual &piece : pieces) {
+		rs->instance_set_extra_visibility_margin(piece.instance, extra_cull_margin);
+	}
+}
+
+void PhysXDestructible3D::set_lod_bias(float p_bias) {
+	lod_bias = p_bias;
+	RenderingServer *rs = RenderingServer::get_singleton();
+	for (const ChunkVisual &piece : pieces) {
+		rs->instance_geometry_set_lod_bias(piece.instance, lod_bias);
+	}
+}
+
+void PhysXDestructible3D::set_ignore_occlusion_culling(bool p_ignore) {
+	ignore_occlusion_culling = p_ignore;
+	RenderingServer *rs = RenderingServer::get_singleton();
+	for (const ChunkVisual &piece : pieces) {
+		rs->instance_geometry_set_flag(piece.instance, RSE::INSTANCE_FLAG_IGNORE_OCCLUSION_CULLING, ignore_occlusion_culling);
+	}
+}
+
+void PhysXDestructible3D::_apply_visibility_range(RenderingServer *p_rs, RID p_instance) const {
+	p_rs->instance_geometry_set_visibility_range(p_instance, visibility_range_begin, visibility_range_end,
+			visibility_range_begin_margin, visibility_range_end_margin, (RSE::VisibilityRangeFadeMode)visibility_range_fade_mode);
+}
+
+void PhysXDestructible3D::set_visibility_range_begin(float p_distance) {
+	visibility_range_begin = p_distance;
+	RenderingServer *rs = RenderingServer::get_singleton();
+	for (const ChunkVisual &piece : pieces) {
+		_apply_visibility_range(rs, piece.instance);
+	}
+}
+
+void PhysXDestructible3D::set_visibility_range_end(float p_distance) {
+	visibility_range_end = p_distance;
+	RenderingServer *rs = RenderingServer::get_singleton();
+	for (const ChunkVisual &piece : pieces) {
+		_apply_visibility_range(rs, piece.instance);
+	}
+}
+
+void PhysXDestructible3D::set_visibility_range_begin_margin(float p_distance) {
+	visibility_range_begin_margin = p_distance;
+	RenderingServer *rs = RenderingServer::get_singleton();
+	for (const ChunkVisual &piece : pieces) {
+		_apply_visibility_range(rs, piece.instance);
+	}
+}
+
+void PhysXDestructible3D::set_visibility_range_end_margin(float p_distance) {
+	visibility_range_end_margin = p_distance;
+	RenderingServer *rs = RenderingServer::get_singleton();
+	for (const ChunkVisual &piece : pieces) {
+		_apply_visibility_range(rs, piece.instance);
+	}
+}
+
+void PhysXDestructible3D::set_visibility_range_fade_mode(VisibilityRangeFadeMode p_mode) {
+	visibility_range_fade_mode = p_mode;
+	RenderingServer *rs = RenderingServer::get_singleton();
+	for (const ChunkVisual &piece : pieces) {
+		_apply_visibility_range(rs, piece.instance);
+	}
+}
+
+void PhysXDestructible3D::_apply_extra_render_settings(RenderingServer *p_rs, RID p_instance) const {
+	p_rs->instance_geometry_set_cast_shadows_setting(p_instance, (RSE::ShadowCastingSetting)cast_shadow);
+	p_rs->instance_geometry_set_transparency(p_instance, transparency);
+	if (material_overlay_res.is_valid()) {
+		p_rs->instance_geometry_set_material_overlay(p_instance, material_overlay_res->get_rid());
+	}
+	p_rs->instance_set_extra_visibility_margin(p_instance, extra_cull_margin);
+	p_rs->instance_geometry_set_lod_bias(p_instance, lod_bias);
+	p_rs->instance_geometry_set_flag(p_instance, RSE::INSTANCE_FLAG_IGNORE_OCCLUSION_CULLING, ignore_occlusion_culling);
+	_apply_visibility_range(p_rs, p_instance);
 }
 
 PackedStringArray PhysXDestructible3D::get_configuration_warnings() const {
@@ -648,6 +798,7 @@ void PhysXDestructible3D::_spawn_piece(uint32_t p_chunk_index, const Transform3D
 		rs->instance_geometry_set_material_override(instance, material_override_res->get_rid());
 	}
 	_apply_gi_mode(rs, instance);
+	_apply_extra_render_settings(rs, instance);
 
 	ChunkVisual piece;
 	piece.body = body;

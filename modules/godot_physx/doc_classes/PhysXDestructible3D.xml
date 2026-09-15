@@ -39,6 +39,12 @@
 		<member name="chunks_path" type="String" setter="set_chunks_path" getter="get_chunks_path" default="&quot;&quot;">
 			Legacy loading path: a [code].chunks[/code] text file (per-chunk render-mesh triangle soup), paired with [member asset_path]. See [member asset_path]'s own note.
 		</member>
+		<member name="collision_layer" type="int" setter="set_collision_layer" getter="get_collision_layer" default="1">
+			Physics layers this object (intact or fractured) occupies, same meaning as [member RigidBody3D.collision_layer]. Applies to every body this class creates -- unlike [member GeometryInstance3D.material_override] / [member GeometryInstance3D.gi_mode], changing this after pieces already exist immediately updates all of them, the same as a real [RigidBody3D] would.
+		</member>
+		<member name="collision_mask" type="int" setter="set_collision_mask" getter="get_collision_mask" default="1">
+			Physics layers this object (intact or fractured) collides with, same meaning as [member RigidBody3D.collision_mask]. See [member collision_layer]'s own note on when a change takes effect.
+		</member>
 		<member name="dynamic" type="bool" setter="set_dynamic" getter="get_dynamic" default="false">
 			When [code]true[/code], the intact object is a real falling/colliding rigid body instead of a fixed prop, and a hard enough physical collision auto-fractures it (see [member impact_strength] / [member impact_damage_scale] / [member impact_radius]). When [code]false[/code] (the default), it stays a fixed prop that only ever breaks from an explicit [method apply_radial_damage] call -- including from an explosion or weapon script, so a static object is still fully breakable, it just can't fracture itself by physically colliding into something.
 		</member>

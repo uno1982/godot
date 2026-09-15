@@ -111,6 +111,21 @@ public:
 	void set_shatter_speed(float p_speed) { shatter_speed = p_speed; }
 	float get_shatter_speed() const { return shatter_speed; }
 
+	// Same meaning as RigidBody3D/StaticBody3D/Area3D's own collision_layer/
+	// collision_mask -- this class had neither at all until now, so every
+	// body it created (intact placeholder or split-off piece) just used
+	// whatever PhysicsServer3D's own flat default happened to be, with zero
+	// user control. Applies uniformly to every body this class creates;
+	// unlike material_override/gi_mode (inherited from GeometryInstance3D,
+	// not virtual, so a live re-push isn't possible -- see that note),
+	// these are this class's own setters, so changing either does
+	// immediately re-push to every already-existing piece's body, same as
+	// a real RigidBody3D would.
+	void set_collision_layer(uint32_t p_layer);
+	uint32_t get_collision_layer() const { return collision_layer; }
+	void set_collision_mask(uint32_t p_mask);
+	uint32_t get_collision_mask() const { return collision_mask; }
+
 	// The whole intact object's mass (same meaning as RigidBody3D.mass).
 	// Every piece used to get PhysicsServer3D's own flat default (1.0)
 	// regardless of size -- checked how Unreal's own Blast integration
@@ -234,6 +249,8 @@ private:
 	String chunks_path;
 	Ref<PhysXBlastAsset> blast_asset;
 	float shatter_speed = 8.0f;
+	uint32_t collision_layer = 1;
+	uint32_t collision_mask = 1;
 	float mass = 1.0f;
 	bool auto_mass = true;
 	bool dynamic = false;

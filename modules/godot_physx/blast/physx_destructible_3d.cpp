@@ -82,6 +82,10 @@ void PhysXDestructible3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_blast_asset"), &PhysXDestructible3D::get_blast_asset);
 	ClassDB::bind_method(D_METHOD("set_shatter_speed", "speed"), &PhysXDestructible3D::set_shatter_speed);
 	ClassDB::bind_method(D_METHOD("get_shatter_speed"), &PhysXDestructible3D::get_shatter_speed);
+	ClassDB::bind_method(D_METHOD("set_collision_layer", "layer"), &PhysXDestructible3D::set_collision_layer);
+	ClassDB::bind_method(D_METHOD("get_collision_layer"), &PhysXDestructible3D::get_collision_layer);
+	ClassDB::bind_method(D_METHOD("set_collision_mask", "mask"), &PhysXDestructible3D::set_collision_mask);
+	ClassDB::bind_method(D_METHOD("get_collision_mask"), &PhysXDestructible3D::get_collision_mask);
 	ClassDB::bind_method(D_METHOD("set_mass", "mass"), &PhysXDestructible3D::set_mass);
 	ClassDB::bind_method(D_METHOD("set_auto_mass", "auto_mass"), &PhysXDestructible3D::set_auto_mass);
 	ClassDB::bind_method(D_METHOD("get_auto_mass"), &PhysXDestructible3D::get_auto_mass);
@@ -108,6 +112,8 @@ void PhysXDestructible3D::_bind_methods() {
 	// and this class's own note near _apply_gi_mode() on why).
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shatter_speed", PROPERTY_HINT_RANGE, "0,50,0.1"), "set_shatter_speed", "get_shatter_speed");
 	ADD_GROUP("Physics", "");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "collision_layer", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_collision_layer", "get_collision_layer");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_collision_mask", "get_collision_mask");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "auto_mass"), "set_auto_mass", "get_auto_mass");
 	// Widened well past a typical auto-computed value (density * volume
 	// easily lands in the thousands for a wall-sized object) -- or_greater
@@ -183,6 +189,26 @@ void PhysXDestructible3D::set_blast_asset(const Ref<PhysXBlastAsset> &p_asset) {
 	blast_asset = p_asset;
 	update_configuration_warnings();
 	_reload();
+}
+
+void PhysXDestructible3D::set_collision_layer(uint32_t p_layer) {
+	collision_layer = p_layer;
+	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
+	for (const ChunkVisual &piece : pieces) {
+		if (piece.body.is_valid()) {
+			ps->body_set_collision_layer(piece.body, collision_layer);
+		}
+	}
+}
+
+void PhysXDestructible3D::set_collision_mask(uint32_t p_mask) {
+	collision_mask = p_mask;
+	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
+	for (const ChunkVisual &piece : pieces) {
+		if (piece.body.is_valid()) {
+			ps->body_set_collision_mask(piece.body, collision_mask);
+		}
+	}
 }
 
 void PhysXDestructible3D::_apply_geometry_instance_settings(RenderingServer *p_rs, RID p_instance) {
@@ -607,6 +633,8 @@ void PhysXDestructible3D::_spawn_piece(uint32_t p_chunk_index, const Transform3D
 		ps->body_attach_object_instance_id(body, get_instance_id());
 		ps->body_set_mode(body, PhysicsServer3D::BODY_MODE_RIGID);
 		ps->body_add_shape(body, shape);
+		ps->body_set_collision_layer(body, collision_layer);
+		ps->body_set_collision_mask(body, collision_mask);
 		ps->body_set_param(body, PhysicsServer3D::BODY_PARAM_MASS, _chunk_mass(p_chunk_index));
 		ps->body_set_state(body, PhysicsServer3D::BODY_STATE_TRANSFORM, p_transform);
 		ps->body_set_state(body, PhysicsServer3D::BODY_STATE_LINEAR_VELOCITY, p_linear_velocity);

@@ -490,6 +490,26 @@ void PhysXDestructible3DGizmoPlugin::redraw(EditorNode3DGizmo *p_gizmo) {
 	if (tm.is_valid()) {
 		p_gizmo->add_collision_triangles(tm);
 	}
+	// Manual selection-box outline -- see this class's own header comment on
+	// why (not a VisualInstance3D, so the editor won't draw this on its own).
+	// is_selected() gate matches the real dashed selection box's own
+	// behavior (only visible while the node is actually selected) -- without
+	// it this drew unconditionally on every instance, all the time.
+	const AABB aabb = destructible->get_aabb();
+	if (p_gizmo->is_selected() && aabb.size != Vector3()) {
+		Vector<Vector3> lines;
+		for (int i = 0; i < 12; i++) {
+			Vector3 a, b;
+			aabb.get_edge(i, a, b);
+			lines.push_back(a);
+			lines.push_back(b);
+		}
+		p_gizmo->add_lines(lines, get_material("selection_box", p_gizmo));
+	}
+}
+
+PhysXDestructible3DGizmoPlugin::PhysXDestructible3DGizmoPlugin() {
+	create_material("selection_box", Color(1.0, 0.8, 0.2));
 }
 #endif
 

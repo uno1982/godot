@@ -119,12 +119,11 @@ class PhysXBlastFractureDialog;
 // Viewport gizmo for PhysXDestructible3D -- registers real per-triangle
 // collision geometry (PhysXDestructible3D::generate_triangle_mesh(), same
 // mechanism MeshInstance3DGizmoPlugin uses) so it can be clicked directly in
-// the viewport like a real mesh, not just via the Scene dock. Draws nothing
-// of its own -- the object already renders its own real, visible geometry
-// through its own RenderingServer instances (see _spawn_piece()), so an
-// extra wireframe outline would be redundant (matches
-// MeshInstance3DGizmoPlugin's own redraw(), which also registers collision
-// triangles only, no lines).
+// the viewport like a real mesh, not just via the Scene dock. Also draws the
+// selection-box outline itself (PhysXDestructible3D::get_aabb()) -- normally
+// a VisualInstance3D gets this automatically from the editor, but this class
+// deliberately isn't one (see its own class doc comment on why), so the
+// gizmo has to do it manually here instead.
 class PhysXDestructible3DGizmoPlugin : public EditorNode3DGizmoPlugin {
 	GDCLASS(PhysXDestructible3DGizmoPlugin, EditorNode3DGizmoPlugin);
 
@@ -134,6 +133,8 @@ public:
 	int get_priority() const override;
 	bool is_selectable_when_hidden() const override;
 	void redraw(EditorNode3DGizmo *p_gizmo) override;
+
+	PhysXDestructible3DGizmoPlugin();
 };
 #endif
 

@@ -33,13 +33,14 @@
 #include "physx_blast_asset.h"
 
 #include "core/templates/local_vector.h"
-#include "scene/3d/visual_instance_3d.h"
+#include "scene/3d/node_3d.h"
 #include "scene/resources/material.h"
 
 struct NvBlastAsset;
 struct NvBlastFamily;
 struct NvBlastActor;
 class RenderingServer;
+class TriangleMesh;
 
 // Real node wrapping the Blast runtime bridge proved out by
 // GodotPhysXBlastProbe (see godot_physx_blast_probe.h -- that class stays as
@@ -57,21 +58,26 @@ class RenderingServer;
 // mesh triangle soup), synced to the body's live transform every physics
 // tick once anything has broken off.
 //
-// GeometryInstance3D, not plain Node3D -- every other node in this module
-// that manages its own RenderingServer instances directly
-// (PhysXChunkEmitter3D, PhysXCloth3D, PhysXParticleFluid3D) already does
-// this too, but this class didn't, and paid for it: the editor's viewport
-// click-to-select and the dashed selection-box outline are both driven
-// entirely through a node's gizmo (Node3DGizmo::intersect_ray()) and
-// VisualInstance3D::get_aabb() -- neither of which a plain Node3D gets.
-// Without them, this node could only ever be selected via the Scene dock,
-// never by clicking it in the viewport, and had no scale-gizmo bounding
-// reference. The base class's own (empty, unused) RenderingServer instance
-// costs one extra lightweight instance_create() per node -- real rendering
-// still goes entirely through this class's own manually-managed per-piece
-// instances (see _spawn_piece()), unchanged.
-class PhysXDestructible3D : public GeometryInstance3D {
-	GDCLASS(PhysXDestructible3D, GeometryInstance3D);
+// Node3D, not GeometryInstance3D -- tried the GeometryInstance3D route
+// first (for the editor's viewport click-to-select and dashed selection-box
+// outline, both normally driven through VisualInstance3D::get_aabb()), but
+// a real A/B (a live in-editor Play session, profiled: PhysX GPU dynamics
+// stayed pegged at 2-3x its normal per-tick cost -- 16-20ms vs 5-7ms at a
+// matching piece/draw-call count -- for the entire time any pieces were
+// still settling, confirmed via the engine's own CPU Profiler tab, not just
+// a one-off spike) showed a real, reproducible, sustained physics-tick cost
+// increase from it, even though the base class's own RenderingServer
+// instance never receives a mesh and the per-tick code path
+// (_sync_transforms(), NOTIFICATION_INTERNAL_PHYSICS_PROCESS) is completely
+// unchanged either way -- so whatever the mechanism, it's real. Click-to-
+// select is kept (generate_triangle_mesh() + PhysXDestructible3DGizmoPlugin
+// registering real per-triangle collision geometry, same as before) since
+// that only needs the gizmo system, not VisualInstance3D; the dashed
+// selection-box outline is instead drawn manually by that same gizmo (see
+// its own redraw()), since Node3D has no get_aabb() for the editor to call
+// automatically.
+class PhysXDestructible3D : public Node3D {
+	GDCLASS(PhysXDestructible3D, Node3D);
 
 protected:
 	static void _bind_methods();
@@ -91,22 +97,36 @@ public:
 	void set_blast_asset(const Ref<PhysXBlastAsset> &p_asset);
 	Ref<PhysXBlastAsset> get_blast_asset() const { return blast_asset; }
 
-	// material_override and gi_mode used to be this class's own properties
-	// (added back when it was a plain Node3D, with none of GeometryInstance3D's
-	// own machinery available) -- now that it inherits GeometryInstance3D
-	// (see the class doc comment on why), those exact two properties (and
-	// every other GeometryInstance3D one -- cast_shadow, transparency,
-	// material_overlay, visibility_range, extra_cull_margin, lod_bias,
-	// ignore_occlusion_culling) already exist there natively, so this
-	// class's own material_override/gi_mode duplicates were removed
-	// (ClassDB flatly refuses two methods with the same name -- this isn't
-	// a style choice). None of GeometryInstance3D's own setters are virtual,
-	// so this class can't hook a live "re-push to every existing piece"
-	// reaction to any of them -- they're instead all read fresh every time a
-	// piece is (re)spawned (see _spawn_piece()/_apply_geometry_instance_settings()),
-	// so a value set before anything has fractured (the common case) still
-	// applies correctly everywhere; changing one mid-game, after pieces
-	// already exist, only affects pieces spawned from that point on.
+	void set_material_override(const Ref<Material> &p_material);
+	Ref<Material> get_material_override() const { return material_override_res; }
+
+	// Every piece's RenderingServer instance is created directly via
+	// instance_create2() (see _spawn_piece()), not through a real
+	// GeometryInstance3D node -- so unlike a MeshInstance3D, nothing was
+	// ever calling instance_geometry_set_flag(INSTANCE_FLAG_USE_BAKED_LIGHT/
+	// USE_DYNAMIC_GI), and a VoxelGI had no way to tell these pieces apart
+	// from ordinary invisible-to-GI geometry. Mirrors
+	// GeometryInstance3D::GIMode exactly (same enum, same two flags) so it's
+	// a drop-in familiar property.
+	//
+	// Defaults to Static, matching both GeometryInstance3D's own default
+	// and -- more importantly -- the RenderingServer Instance's built-in
+	// defaults before this property existed at all (baked_light = true,
+	// dynamic_gi = false; see renderer_scene_cull.h). Dynamic would make
+	// more physical sense for something that's often about to go tumbling
+	// as debris, but a single fracture can spawn a couple dozen pieces at
+	// once and a VoxelGI's dynamic-object tracking cost scales with how many
+	// of those it has to follow every frame -- opting a pile of debris into
+	// that by default risked being expensive well before anyone asked for
+	// it, and silently changing existing scenes' behavior underneath them.
+	// Opt into Dynamic per-node instead.
+	enum GIMode {
+		GI_MODE_DISABLED,
+		GI_MODE_STATIC,
+		GI_MODE_DYNAMIC,
+	};
+	void set_gi_mode(GIMode p_mode);
+	GIMode get_gi_mode() const { return gi_mode; }
 
 	void set_shatter_speed(float p_speed) { shatter_speed = p_speed; }
 	float get_shatter_speed() const { return shatter_speed; }
@@ -116,11 +136,9 @@ public:
 	// body it created (intact placeholder or split-off piece) just used
 	// whatever PhysicsServer3D's own flat default happened to be, with zero
 	// user control. Applies uniformly to every body this class creates;
-	// unlike material_override/gi_mode (inherited from GeometryInstance3D,
-	// not virtual, so a live re-push isn't possible -- see that note),
-	// these are this class's own setters, so changing either does
-	// immediately re-push to every already-existing piece's body, same as
-	// a real RigidBody3D would.
+	// unlike material_override/gi_mode (which this class's own setters
+	// already re-push to every existing piece too, see those setters'
+	// notes), these are just as immediate.
 	void set_collision_layer(uint32_t p_layer);
 	uint32_t get_collision_layer() const { return collision_layer; }
 	void set_collision_mask(uint32_t p_mask);
@@ -229,8 +247,12 @@ public:
 	// want; once genuinely fractured, pieces are scattered independently
 	// under live physics, where no single local-space box would mean much
 	// and these editor-only tools aren't in play anyway (nothing is
-	// mid-explosion while you're editing it in the Inspector).
-	virtual AABB get_aabb() const override;
+	// mid-explosion while you're editing it in the Inspector). Not an
+	// override of anything (this class isn't a VisualInstance3D) -- called
+	// directly by PhysXDestructible3DGizmoPlugin::redraw() to draw the
+	// selection-box outline manually, since Node3D has no get_aabb() the
+	// editor would call on its own.
+	AABB get_aabb() const;
 
 	// Real per-triangle collision geometry (chunk 0's, same scope as
 	// get_aabb()'s own note) for the editor's own gizmo plugin
@@ -238,8 +260,9 @@ public:
 	// via EditorNode3DGizmo::add_collision_triangles() -- exactly the same
 	// mechanism MeshInstance3DGizmoPlugin uses
 	// (mesh->generate_triangle_mesh()) for real per-triangle viewport
-	// click-to-select, not just a loose bounding-box hit test.
-	virtual Ref<TriangleMesh> generate_triangle_mesh() const override;
+	// click-to-select, not just a loose bounding-box hit test. Not an
+	// override either, same reason as get_aabb() above.
+	Ref<TriangleMesh> generate_triangle_mesh() const;
 
 	PhysXDestructible3D();
 	~PhysXDestructible3D();
@@ -248,6 +271,8 @@ private:
 	String asset_path;
 	String chunks_path;
 	Ref<PhysXBlastAsset> blast_asset;
+	Ref<Material> material_override_res;
+	GIMode gi_mode = GI_MODE_STATIC;
 	float shatter_speed = 8.0f;
 	uint32_t collision_layer = 1;
 	uint32_t collision_mask = 1;
@@ -325,13 +350,8 @@ private:
 	// simulation runs there anyway) so the node still shows *something* in
 	// the viewport -- ChunkVisual::body/shape stay RID() in that case.
 	void _spawn_piece(uint32_t p_chunk_index, const Transform3D &p_transform, const Vector3 &p_linear_velocity, bool p_physics = true);
-	// Pushes every inherited GeometryInstance3D setting (gi_mode,
-	// material_override, cast_shadow, ...) to one piece's own instance --
-	// see this method's own note in the .cpp for why this exists at all.
-	// Called for every piece at spawn time.
-	// Not const -- GeometryInstance3D::is_ignoring_occlusion_culling() isn't
-	// const either (an existing engine quirk, not something introduced here).
-	void _apply_geometry_instance_settings(RenderingServer *p_rs, RID p_instance);
+	// See set_gi_mode()'s own note on why this is needed at all.
+	void _apply_gi_mode(RenderingServer *p_rs, RID p_instance) const;
 	Vector3 _chunk_centroid_local(uint32_t p_chunk_index) const;
 	void _free_all_pieces();
 	void _sync_transforms();
@@ -340,3 +360,5 @@ private:
 	// if any single contact's impulse exceeds impact_strength.
 	void _check_impact_fracture();
 };
+
+VARIANT_ENUM_CAST(PhysXDestructible3D::GIMode);

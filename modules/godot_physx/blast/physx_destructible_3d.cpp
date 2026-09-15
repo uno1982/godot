@@ -80,6 +80,10 @@ void PhysXDestructible3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_chunks_path"), &PhysXDestructible3D::get_chunks_path);
 	ClassDB::bind_method(D_METHOD("set_blast_asset", "asset"), &PhysXDestructible3D::set_blast_asset);
 	ClassDB::bind_method(D_METHOD("get_blast_asset"), &PhysXDestructible3D::get_blast_asset);
+	ClassDB::bind_method(D_METHOD("set_material_override", "material"), &PhysXDestructible3D::set_material_override);
+	ClassDB::bind_method(D_METHOD("get_material_override"), &PhysXDestructible3D::get_material_override);
+	ClassDB::bind_method(D_METHOD("set_gi_mode", "mode"), &PhysXDestructible3D::set_gi_mode);
+	ClassDB::bind_method(D_METHOD("get_gi_mode"), &PhysXDestructible3D::get_gi_mode);
 	ClassDB::bind_method(D_METHOD("set_shatter_speed", "speed"), &PhysXDestructible3D::set_shatter_speed);
 	ClassDB::bind_method(D_METHOD("get_shatter_speed"), &PhysXDestructible3D::get_shatter_speed);
 	ClassDB::bind_method(D_METHOD("set_collision_layer", "layer"), &PhysXDestructible3D::set_collision_layer);
@@ -107,9 +111,8 @@ void PhysXDestructible3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "asset_path", PROPERTY_HINT_FILE, "*.asset"), "set_asset_path", "get_asset_path");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "chunks_path", PROPERTY_HINT_FILE, "*.chunks"), "set_chunks_path", "get_chunks_path");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "blast_asset", PROPERTY_HINT_RESOURCE_TYPE, "PhysXBlastAsset"), "set_blast_asset", "get_blast_asset");
-	// material_override/gi_mode are NOT registered here -- both are now
-	// inherited from GeometryInstance3D itself (see the class doc comment
-	// and this class's own note near _apply_gi_mode() on why).
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "material_override", PROPERTY_HINT_RESOURCE_TYPE, "Material"), "set_material_override", "get_material_override");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "gi_mode", PROPERTY_HINT_ENUM, "Disabled,Static,Dynamic"), "set_gi_mode", "get_gi_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shatter_speed", PROPERTY_HINT_RANGE, "0,50,0.1"), "set_shatter_speed", "get_shatter_speed");
 	ADD_GROUP("Physics", "");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "collision_layer", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_collision_layer", "get_collision_layer");
@@ -127,6 +130,10 @@ void PhysXDestructible3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_damage_scale", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_impact_damage_scale", "get_impact_damage_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_radius", PROPERTY_HINT_RANGE, "0.1,50,0.1"), "set_impact_radius", "get_impact_radius");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "kill_y", PROPERTY_HINT_RANGE, "-10000,100,1,or_less,or_greater"), "set_kill_y", "get_kill_y");
+
+	BIND_ENUM_CONSTANT(GI_MODE_DISABLED);
+	BIND_ENUM_CONSTANT(GI_MODE_STATIC);
+	BIND_ENUM_CONSTANT(GI_MODE_DYNAMIC);
 }
 
 PhysXDestructible3D::PhysXDestructible3D() {
@@ -211,43 +218,34 @@ void PhysXDestructible3D::set_collision_mask(uint32_t p_mask) {
 	}
 }
 
-void PhysXDestructible3D::_apply_geometry_instance_settings(RenderingServer *p_rs, RID p_instance) {
-	// Every GeometryInstance3D setter (set_material_override(),
-	// set_gi_mode(), set_cast_shadows_setting(), ...) writes to
-	// get_instance() -- the base class's own separate, empty RenderingServer
-	// instance (never given a mesh; real rendering goes entirely through
-	// this class's own manually-created per-piece instances, see
-	// _spawn_piece()). None of that was reaching pieces without this --
-	// found via material_override/gi_mode first, then confirmed a cast_shadow
-	// report was the exact same gap, then audited every other
-	// GeometryInstance3D setter in visual_instance_3d.cpp for the same
-	// pattern rather than fixing them one at a time as each got noticed.
-	//
-	// Deliberately NOT covered: instance_shader_parameter (a dynamic,
-	// per-parameter shader uniform map -- meaningful mainly for a single
-	// live-edited instance, rare enough here not to be worth the extra
-	// bookkeeping) and custom_aabb (would fight this class's own get_aabb()
-	// override, which already reports real, meaningful bounds).
-	const GeometryInstance3D::GIMode mode = get_gi_mode();
-	p_rs->instance_geometry_set_flag(p_instance, RSE::INSTANCE_FLAG_USE_BAKED_LIGHT, mode == GeometryInstance3D::GI_MODE_STATIC);
-	p_rs->instance_geometry_set_flag(p_instance, RSE::INSTANCE_FLAG_USE_DYNAMIC_GI, mode == GeometryInstance3D::GI_MODE_DYNAMIC);
-	p_rs->instance_geometry_set_flag(p_instance, RSE::INSTANCE_FLAG_IGNORE_OCCLUSION_CULLING, is_ignoring_occlusion_culling());
+void PhysXDestructible3D::set_material_override(const Ref<Material> &p_material) {
+	material_override_res = p_material;
+	RenderingServer *rs = RenderingServer::get_singleton();
+	const RID mat_rid = material_override_res.is_valid() ? material_override_res->get_rid() : RID();
+	for (const ChunkVisual &piece : pieces) {
+		rs->instance_geometry_set_material_override(piece.instance, mat_rid);
+	}
+}
 
-	const Ref<Material> mat_override = get_material_override();
-	p_rs->instance_geometry_set_material_override(p_instance, mat_override.is_valid() ? mat_override->get_rid() : RID());
-	const Ref<Material> mat_overlay = get_material_overlay();
-	p_rs->instance_geometry_set_material_overlay(p_instance, mat_overlay.is_valid() ? mat_overlay->get_rid() : RID());
+void PhysXDestructible3D::set_gi_mode(GIMode p_mode) {
+	gi_mode = p_mode;
+	RenderingServer *rs = RenderingServer::get_singleton();
+	for (const ChunkVisual &piece : pieces) {
+		_apply_gi_mode(rs, piece.instance);
+	}
+}
 
-	p_rs->instance_geometry_set_transparency(p_instance, get_transparency());
-	p_rs->instance_geometry_set_cast_shadows_setting(p_instance, (RSE::ShadowCastingSetting)get_cast_shadows_setting());
-	p_rs->instance_set_extra_visibility_margin(p_instance, get_extra_cull_margin());
-	p_rs->instance_geometry_set_lod_bias(p_instance, get_lod_bias());
-	p_rs->instance_geometry_set_visibility_range(p_instance, get_visibility_range_begin(), get_visibility_range_end(),
-			get_visibility_range_begin_margin(), get_visibility_range_end_margin(), (RSE::VisibilityRangeFadeMode)get_visibility_range_fade_mode());
+void PhysXDestructible3D::_apply_gi_mode(RenderingServer *p_rs, RID p_instance) const {
+	// Same two flags GeometryInstance3D::set_gi_mode() itself sets (see
+	// visual_instance_3d.cpp) -- every piece here is a raw instance_create2()
+	// call, not a real GeometryInstance3D node, so nothing was ever setting
+	// them without this.
+	p_rs->instance_geometry_set_flag(p_instance, RSE::INSTANCE_FLAG_USE_BAKED_LIGHT, gi_mode == GI_MODE_STATIC);
+	p_rs->instance_geometry_set_flag(p_instance, RSE::INSTANCE_FLAG_USE_DYNAMIC_GI, gi_mode == GI_MODE_DYNAMIC);
 }
 
 PackedStringArray PhysXDestructible3D::get_configuration_warnings() const {
-	PackedStringArray warnings = GeometryInstance3D::get_configuration_warnings();
+	PackedStringArray warnings = Node3D::get_configuration_warnings();
 	if (blast_asset.is_null() && (asset_path.is_empty() || chunks_path.is_empty())) {
 		warnings.push_back("PhysXDestructible3D needs either blast_asset, or both asset_path and chunks_path, to render or collide.");
 	}
@@ -305,34 +303,9 @@ void PhysXDestructible3D::_notification(int p_what) {
 					set_physics_process_internal(true);
 				}
 			}
-			// GeometryInstance3D's own setters (material_override, cast_shadow,
-			// transparency, ...) all write to get_instance() -- the base
-			// class's own separate, empty instance, not any of this class's
-			// real per-piece ones (see _apply_geometry_instance_settings()'s
-			// own note) -- and none of them are virtual, so there is no hook
-			// to catch a live Inspector edit and immediately re-push it, the
-			// way a real MeshInstance3D's own setters do for its single real
-			// instance. Physics is never running in the editor to provide any
-			// other route back into this class's own code either. This is
-			// the fallback: while intact and in the editor, catch up once a
-			// frame instead -- editor-only (never runs in a shipped game),
-			// and cheap even there (a handful of RenderingServer calls on one
-			// piece, not a hot loop over many).
-			if (Engine::get_singleton()->is_editor_hint()) {
-				set_process_internal(true);
-			}
 		} break;
 		case NOTIFICATION_EXIT_WORLD: {
 			_free_all_pieces();
-		} break;
-		case NOTIFICATION_INTERNAL_PROCESS: {
-			// See the set_process_internal(true) call in NOTIFICATION_ENTER_WORLD
-			// above for why this exists at all -- editor-only, and a no-op once
-			// something has actually fractured (nothing fractures in the editor
-			// anyway, since physics never runs there, but guarded regardless).
-			if (!fractured && pieces.size() == 1) {
-				_apply_geometry_instance_settings(RenderingServer::get_singleton(), pieces[0].instance);
-			}
 		} break;
 		case NOTIFICATION_TRANSFORM_CHANGED: {
 			// !dynamic || editor: keep the single intact piece's body/visual
@@ -669,20 +642,18 @@ void PhysXDestructible3D::_spawn_piece(uint32_t p_chunk_index, const Transform3D
 	arrays[RSE::ARRAY_NORMAL] = normals;
 	rs->mesh_add_surface_from_arrays(mesh, RSE::PRIMITIVE_TRIANGLES, arrays);
 
-	// Named piece_instance, not instance -- now that this class inherits
-	// GeometryInstance3D, `instance` would shadow VisualInstance3D's own
-	// private member of that name (the base class's separate, unused
-	// RenderingServer instance -- see the class doc comment on why this
-	// inherits GeometryInstance3D at all).
-	RID piece_instance = rs->instance_create2(mesh, get_world_3d().is_valid() ? get_world_3d()->get_scenario() : RID());
-	rs->instance_set_transform(piece_instance, p_transform);
-	_apply_geometry_instance_settings(rs, piece_instance);
+	RID instance = rs->instance_create2(mesh, get_world_3d().is_valid() ? get_world_3d()->get_scenario() : RID());
+	rs->instance_set_transform(instance, p_transform);
+	if (material_override_res.is_valid()) {
+		rs->instance_geometry_set_material_override(instance, material_override_res->get_rid());
+	}
+	_apply_gi_mode(rs, instance);
 
 	ChunkVisual piece;
 	piece.body = body;
 	piece.shape = shape;
 	piece.mesh = mesh;
-	piece.instance = piece_instance;
+	piece.instance = instance;
 	pieces.push_back(piece);
 }
 

@@ -506,23 +506,16 @@ void PhysXParticleFluid3D::_mpm_step(double p_delta) {
 		return;
 	}
 
-	// The solver packs world-space transforms; the MultiMesh is in node-local
-	// space, so shift each instance origin by the node inverse. (Basis stays
-	// identity -- the solver ignores domain rotation.)
+	// The solver packs world-space transforms, and multimesh now draws through
+	// particle_instance's own always-identity world-space instance (see
+	// _make_fluid) instead of this node's own live transform, so the buffer
+	// can be handed straight through with no per-frame local-space bake --
+	// nothing here goes stale if this node moves before the next update.
 	PackedFloat32Array buffer = mpm->get_multimesh_buffer();
 	const int n = mpm->get_particle_count();
 	const int cap = mpm->get_capacity();
 	if (buffer.size() < cap * 12) {
 		return;
-	}
-	const Transform3D inv = get_global_transform().affine_inverse();
-	float *b = buffer.ptrw();
-	for (int i = 0; i < n; i++) {
-		float *t = &b[i * 12];
-		const Vector3 local = inv.xform(Vector3(t[3], t[7], t[11]));
-		t[3] = local.x;
-		t[7] = local.y;
-		t[11] = local.z;
 	}
 	rs->multimesh_set_buffer(multimesh, buffer);
 	rs->multimesh_set_visible_instances(multimesh, n);
@@ -557,7 +550,18 @@ void PhysXParticleFluid3D::_make_fluid() {
 		rs->multimesh_allocate_data(multimesh, particle_count, RSE::MULTIMESH_TRANSFORM_3D);
 		rs->multimesh_set_mesh(multimesh, particle_mesh->get_rid());
 		rs->multimesh_set_visible_instances(multimesh, 0);
-		set_base(multimesh);
+		// World-space instance, not set_base(multimesh) -- the solver hands back
+		// world-space positions and this node itself moves every frame when
+		// mounted on a camera/weapon; drawing through this node's own live
+		// transform (the old approach) stales the moment it moves between the
+		// physics-tick bake and the next render, same bug class array_mesh_instance
+		// was already fixed for below.
+		particle_instance = rs->instance_create2(multimesh, get_world_3d()->get_scenario());
+		rs->instance_set_transform(particle_instance, Transform3D());
+		rs->instance_set_custom_aabb(particle_instance, AABB(Vector3(-100000, -100000, -100000), Vector3(200000, 200000, 200000)));
+		const Ref<Material> particle_override_mat = get_material_override();
+		rs->instance_geometry_set_material_override(particle_instance, particle_override_mat.is_valid() ? particle_override_mat->get_rid() : RID());
+		_apply_gi_mode(particle_instance);
 
 		if (surface_mesh) {
 			// Marching-tetrahedra mesh over the solver's density grid, drawn with a
@@ -623,7 +627,14 @@ void PhysXParticleFluid3D::_make_fluid() {
 	rs->multimesh_set_mesh(multimesh, particle_mesh->get_rid());
 	rs->multimesh_set_visible_instances(multimesh, 0);
 
-	set_base(multimesh);
+	// World-space instance, not set_base(multimesh) -- see the identical
+	// comment on the MPM path above; this node can move every frame too.
+	particle_instance = rs->instance_create2(multimesh, get_world_3d()->get_scenario());
+	rs->instance_set_transform(particle_instance, Transform3D());
+	rs->instance_set_custom_aabb(particle_instance, AABB(Vector3(-100000, -100000, -100000), Vector3(200000, 200000, 200000)));
+	const Ref<Material> pbd_particle_override_mat = get_material_override();
+	rs->instance_geometry_set_material_override(particle_instance, pbd_particle_override_mat.is_valid() ? pbd_particle_override_mat->get_rid() : RID());
+	_apply_gi_mode(particle_instance);
 
 	// Foam/spray/bubble particles: a second MultiMesh in its own world-space
 	// instance (particle positions come back in world space). Used only when the
@@ -729,8 +740,11 @@ void PhysXParticleFluid3D::_free_fluid() {
 	}
 
 	RenderingServer *rs = RenderingServer::get_singleton();
+	if (particle_instance.is_valid()) {
+		rs->free_rid(particle_instance);
+		particle_instance = RID();
+	}
 	if (multimesh.is_valid()) {
-		set_base(RID());
 		rs->free_rid(multimesh);
 		multimesh = RID();
 	}
@@ -982,28 +996,28 @@ void PhysXParticleFluid3D::_update_render() {
 		const Vector<Vector3> positions = server->particle_fluid_get_positions(fluid);
 		const int n = MIN(positions.size(), particle_count);
 
-		// MultiMesh is in this node's local space; particle positions are world.
-		const Transform3D inv = get_global_transform().affine_inverse();
-
+		// multimesh draws through particle_instance's own always-identity
+		// world-space instance (see _make_fluid), not this node's own live
+		// transform, so particle positions go straight in as world-space.
 		PackedFloat32Array buffer;
 		buffer.resize(particle_count * 12);
 		float *b = buffer.ptrw();
 		const Vector3 *p = positions.ptr();
 		for (int i = 0; i < n; i++) {
-			const Vector3 local = inv.xform(p[i]);
+			const Vector3 &w = p[i];
 			float *t = &b[i * 12];
 			t[0] = 1;
 			t[1] = 0;
 			t[2] = 0;
-			t[3] = local.x;
+			t[3] = w.x;
 			t[4] = 0;
 			t[5] = 1;
 			t[6] = 0;
-			t[7] = local.y;
+			t[7] = w.y;
 			t[8] = 0;
 			t[9] = 0;
 			t[10] = 1;
-			t[11] = local.z;
+			t[11] = w.z;
 		}
 		rs->multimesh_set_buffer(multimesh, buffer);
 		rs->multimesh_set_visible_instances(multimesh, n);

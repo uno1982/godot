@@ -71,6 +71,13 @@ protected:
 private:
 	RID fluid; // GodotPhysXServer3D particle-fluid RID
 	RID multimesh;
+	// World-space instance for the raw particle MultiMesh (see
+	// array_mesh_instance/foam_instance below) -- the solver hands back
+	// world-space positions, and this node itself can move every frame
+	// (mounted on a camera/weapon), so drawing through this node's own live
+	// transform stales the moment it moves between the physics-tick bake and
+	// the next render.
+	RID particle_instance;
 
 	SolverBackend solver = SOLVER_AUTO;
 	MPMFluidSolver *mpm = nullptr;

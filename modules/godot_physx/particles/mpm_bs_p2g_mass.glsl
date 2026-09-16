@@ -29,7 +29,14 @@ void main() {
 					continue;
 				}
 				float w = wx[i] * wy[j] * wz[k];
-				atomicAdd(grid_i[idx * 4 + 0], int(w * PMASS * FIXED));
+				// Encode in PMASS-independent "weight units", not raw mass -- see
+				// the matching decode in mpm_bs_grid.glsl/mpm_bs_p2g_mom.glsl.
+				// PMASS scales with the cube of particle spacing, but this int32
+				// atomic's range is fixed -- baking PMASS in here meant the safe
+				// headroom (particles piling into one cell before the atomic
+				// wraps) shrank as particle_size grew, even though the physics
+				// shouldn't behave differently at a different particle scale.
+				atomicAdd(grid_i[idx * 4 + 0], int(w * FIXED));
 			}
 		}
 	}

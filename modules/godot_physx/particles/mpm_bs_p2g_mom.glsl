@@ -36,7 +36,8 @@ void main() {
 					continue;
 				}
 				float w = wx[i] * wy[j] * wz[k];
-				mass_here += w * float(grid_i[idx * 4 + 0]) / FIXED;
+				// PMASS-independent encoding -- see mpm_bs_p2g_mass.glsl.
+				mass_here += w * float(grid_i[idx * 4 + 0]) / FIXED * PMASS;
 			}
 		}
 	}
@@ -63,7 +64,12 @@ void main() {
 				}
 				float w = wx[i] * wy[j] * wz[k];
 				vec3 dpos = (ORIGIN + vec3(node) * DX) - x;
-				vec3 contrib = w * (PMASS * v + affine * dpos);
+				// Same PMASS-independent encoding as the mass channel -- both
+				// PMASS*v and affine (which itself carries a PMASS factor
+				// throughout) scale linearly with PMASS, so dividing it back
+				// out here keeps this atomic's headroom tied to how many
+				// particles converge on a cell, not to particle_size.
+				vec3 contrib = w * (PMASS * v + affine * dpos) / max(PMASS, 1e-12);
 				atomicAdd(grid_i[idx * 4 + 1], int(contrib.x * FIXED));
 				atomicAdd(grid_i[idx * 4 + 2], int(contrib.y * FIXED));
 				atomicAdd(grid_i[idx * 4 + 3], int(contrib.z * FIXED));

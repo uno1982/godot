@@ -71,6 +71,19 @@ constexpr float IMP_FIXED = 1024.0f;
 constexpr uint32_t GROUP = 64;
 constexpr uint32_t TRI_BUDGET = 200000; // isosurface triangle cap
 constexpr int BCELLS = 64; // block-sparse: cells per 4^3 block
+constexpr float EOS_GAMMA = 7.0f; // mirrors GAMMA in mpm_block_inc.glsl -- keep in sync
+// Safety factor on the elastic-wave CFL below. Empirically bisected against
+// a real repro (see the stiffness clamp's own note), not derived from
+// theory alone -- a naive linear sound-speed estimate (0.4, matching real
+// fluids/MLS-MPM literature) put the safe ceiling at ~2100 for that repro's
+// particle_size/mpm_substeps, but stiffness=300 (let alone 2100) was still
+// visibly unstable; only ~200 and below held up. The gap is the EOS's own
+// nonlinearity this linear estimate doesn't capture (the density ratio's
+// hard clamp to 2.0 means pressure can still swing hard and fast near that
+// ceiling even though it never exceeds it) -- 0.12 reproduces the real
+// ~200 boundary with a small margin, at least for this repro; revisit if a
+// future repro at very different particle_size/substeps disagrees.
+constexpr float STIFFNESS_CFL_SAFETY = 0.12f;
 
 uint32_t groups_for(int p_count) {
 	return (uint32_t)((p_count + (int)GROUP - 1) / (int)GROUP);
@@ -719,8 +732,16 @@ void MPMFluidSolver::_compute_scales() {
 		// spread-out sheet or a churned splash reaches several times that, and a
 		// low particle count still spreads over real area -- so keep a generous
 		// floor. block_touch bails cleanly once the pool is full, so over-spread
-		// degrades locally instead of collapsing the whole grid.
-		const int64_t want = (int64_t)MAX(settings.particle_target, 1) / 4 + 4096;
+		// degrades locally instead of collapsing the whole grid -- but "locally"
+		// undersold it: the pool resets every substep (not cumulative over a
+		// scene's lifetime), so what matters is how many distinct blocks a
+		// spray touches at a single instant, not how much ground it's covered
+		// -- a stream swept across a wide area touches far more blocks at once
+		// than the same particle count held in one spot, and the old N/4+4096
+		// estimate (a splash-shaped "N particles over a blob" model) badly
+		// undersized that case. 2x + a much bigger floor, still nowhere near
+		// the 2^21 hard ceiling.
+		const int64_t want = (int64_t)MAX(settings.particle_target, 1) * 2 + 16384;
 		max_blocks = (int)CLAMP(want, (int64_t)4096, (int64_t)(1 << 21));
 		hash_slots = (int)next_pow2((uint32_t)MAX(max_blocks * 3, 1024));
 	} else {
@@ -821,7 +842,33 @@ void MPMFluidSolver::_pack_params(double p_dt, int p_ncol, PackedByteArray &r_by
 	put_i(40, grid_dims.z);
 	put_i(44, pcount);
 	put_f(48, settings.rest_density);
-	put_f(52, settings.stiffness);
+	// The fluid EOS's pressure response is only explicitly stable if a
+	// substep can't outrun the material's own sound speed over one grid
+	// cell -- otherwise dense pileup (continuous emission against a nearby
+	// collider, the common case for a flamethrower/hose-style stream)
+	// overshoots the pressure correction every substep instead of damping
+	// toward equilibrium, and the fluid explodes. Confirmed with a real
+	// repro: mpm_stiffness=6000 (this class's own default) against a
+	// close-range collider blew particles out in every direction and the
+	// isosurface march choked trying to mesh the resulting chaos; the same
+	// scene with stiffness clamped by this formula stayed a coherent,
+	// contained splash. Same shape as any explicit elastic-wave CFL
+	// condition: c_sound = sqrt(EOS_GAMMA * stiffness / rest_density),
+	// dt_sub * c_sound <= STIFFNESS_CFL_SAFETY * cell_size -- solved for the
+	// largest stiffness that still satisfies it at this dt_sub/cell_size.
+	// Granular runs a completely different (Drucker-Prager) constitutive
+	// model, not this EOS, so it's excluded.
+	float effective_stiffness = settings.stiffness;
+	if (!settings.granular) {
+		const double dt_sub = MAX(p_dt, 1e-6);
+		const float max_c = (float)(STIFFNESS_CFL_SAFETY * (double)dx / dt_sub);
+		const float max_stiffness = (max_c * max_c) * MAX(settings.rest_density, 1.0f) / EOS_GAMMA;
+		effective_stiffness = MIN(settings.stiffness, max_stiffness);
+		if (effective_stiffness < settings.stiffness - 1.0f) {
+			WARN_PRINT_ONCE(vformat("PhysX MPM fluid: mpm_stiffness (%.0f) is unstable at the current particle_size/mpm_substeps -- clamped to %.0f. Raise mpm_substeps, lower mpm_stiffness, or increase particle_size to use the full configured value.", settings.stiffness, max_stiffness));
+		}
+	}
+	put_f(52, effective_stiffness);
 	put_f(56, settings.viscosity);
 	put_f(60, pmass);
 	put_f(64, bmin.x);

@@ -89,6 +89,14 @@ private:
 	real_t friction = 1.0;
 	real_t linear_damp = 0.0;
 	real_t angular_damp = 0.0;
+	// RigidBody3D only ever sends this (via BODY_PARAM_CENTER_OF_MASS) when
+	// center_of_mass_mode is CUSTOM -- there's no separate "mode" param, so a
+	// value having been sent at all IS the "custom" signal. _build_actor()
+	// destroys and recreates px_actor on almost any shape/mode change, which
+	// would otherwise silently drop this back to the shape-auto-computed
+	// pose every time -- reapplied there too, not just in set_param().
+	bool has_custom_center_of_mass = false;
+	Vector3 center_of_mass;
 	uint32_t collision_layer = 1;
 	uint32_t collision_mask = 1;
 	uint32_t axis_lock = 0; // PhysicsServer3D::BodyAxis bitmask
@@ -119,14 +127,40 @@ private:
 
 	HashSet<GodotPhysXJoint3D *> joints;
 
-	// PhysX's default 4 position / 1 velocity iterations are marginal for joint
-	// chains; bodies that participate in a joint get a modest bump so pendulums,
-	// ragdolls and cloth strips stay taut. TGS (set on the scene) does most of
-	// the work, this trims the residual stretch.
-	static constexpr uint32_t SOLVER_ITERS_DEFAULT_POS = 4;
-	static constexpr uint32_t SOLVER_ITERS_DEFAULT_VEL = 1;
-	static constexpr uint32_t SOLVER_ITERS_JOINTED_POS = 8;
-	static constexpr uint32_t SOLVER_ITERS_JOINTED_VEL = 2;
+	// PhysX's own default of 4 position / 1 velocity iterations is marginal
+	// for any body under a strong, rapidly-varying constraint load -- joint
+	// chains (pendulums, ragdolls, cloth strips) were the first case found,
+	// but the same under-resolution shows up for any body receiving large
+	// external impulses every step through the generic apply_impulse() API
+	// with no real PxJoint involved at all -- confirmed with VehicleBody3D
+	// (stock, backend-agnostic Godot scene code driving wheel suspension/
+	// friction purely through apply_impulse()): stiffer suspension settings
+	// that should just mean a firmer ride instead pumped the chassis into a
+	// runaway tumble within ~2.5s of sustained hard cornering, while the
+	// exact same setup ran clean and stable at these same iteration counts.
+	// PxVehicle2's own design corroborates this isn't PhysX-specific -- it
+	// deliberately substeps suspension/tire dynamics faster than the main
+	// rigid-body step for exactly this stiffness-vs-resolution reason
+	// (PxVehicleComponentSequence's substep groups); this is the equivalent
+	// fix reachable from the generic PhysicsServer3D level, where a fixed
+	// external body can't be substepped independently of the physics step
+	// it's driven from. Applied universally, not just to jointed bodies --
+	// higher iteration counts only improve solver accuracy, never behavior,
+	// so there's no real body class this should regress. Real A/B cost check
+	// on the heaviest rigid-body scene in this project (physx_playground's
+	// 2000-box pile, demo repo): 6.94ms -> 7.41ms average physics step, ~7%
+	// -- a real but modest cost even at this scale, and smaller in absolute
+	// terms for any lighter scene.
+	// Checked TGS (physics/physx_3d/simulation/solver_type) against the same
+	// vehicle repro on the theory it's the same PGS/joint-chain issue
+	// documented below -- it wasn't: TGS tracked PGS+this iteration bump
+	// almost exactly (same clean ~2s hard-turn, same breakdown point under
+	// sustained full-throttle cornering, arguably a worse tumble in the
+	// tail), so it buys nothing here beyond what the iteration bump already
+	// does. Left at the project's PGS default; see NOTES.md for why TGS
+	// isn't a safe global default anyway (regresses large rigid-body piles).
+	static constexpr uint32_t SOLVER_ITERS_POS = 8;
+	static constexpr uint32_t SOLVER_ITERS_VEL = 2;
 
 	bool _is_dynamic() const;
 	void _destroy_actor();

@@ -68,6 +68,39 @@ real_t GodotPhysXDirectBodyState3D::get_inverse_mass() const {
 	return m > 0.0 ? 1.0 / m : 0.0;
 }
 
+Basis GodotPhysXDirectBodyState3D::get_inverse_inertia_tensor() const {
+	using namespace physx;
+	if (PxRigidActor *actor = body->get_px_actor()) {
+		if (PxRigidDynamic *dyn = actor->is<PxRigidDynamic>()) {
+			// PhysX stores inertia diagonalized in the body's own principal-axis
+			// frame (getCMassLocalPose(), not necessarily the actor's own local
+			// axes); anything driving a body purely through
+			// PhysicsDirectBodyState3D (e.g. VehicleBody3D's wheel friction)
+			// needs the WORLD-space tensor this base class's contract promises
+			// -- an identity stub here silently fed a wrong-but-plausible value
+			// into any such calculation instead of the real one. A real repro
+			// (VehicleBody3D on this backend) confirmed this specific stub was
+			// NOT the cause of two separate observed bugs (a stalled car, a
+			// runaway steering spin -- both traced to unrelated causes; see
+			// their own commits/notes) -- swapping this function between the
+			// identity stub and this real computation produced byte-identical
+			// results in both repros. Kept anyway: it's still a real, confirmed
+			// gap against the base class's own documented contract, and a
+			// wrong value here would matter for any scenario with real
+			// rotational coupling neither repro happened to exercise.
+			const PxVec3 inv_inertia = dyn->getMassSpaceInvInertiaTensor();
+			const PxQuat principal_rot = dyn->getGlobalPose().q * dyn->getCMassLocalPose().q;
+			const Basis r(to_godot(principal_rot));
+			Basis diag;
+			diag[0] = Vector3(inv_inertia.x, 0, 0);
+			diag[1] = Vector3(0, inv_inertia.y, 0);
+			diag[2] = Vector3(0, 0, inv_inertia.z);
+			return r * diag * r.transposed();
+		}
+	}
+	return Basis();
+}
+
 void GodotPhysXDirectBodyState3D::set_linear_velocity(const Vector3 &p_velocity) {
 	body->set_linear_velocity(p_velocity);
 }

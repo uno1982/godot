@@ -65,7 +65,7 @@ public:
 	virtual Basis get_principal_inertia_axes() const override { return Basis(); }
 	virtual real_t get_inverse_mass() const override;
 	virtual Vector3 get_inverse_inertia() const override { return Vector3(); }
-	virtual Basis get_inverse_inertia_tensor() const override { return Basis(); }
+	virtual Basis get_inverse_inertia_tensor() const override;
 
 	virtual void set_linear_velocity(const Vector3 &p_velocity) override;
 	virtual Vector3 get_linear_velocity() const override;

@@ -158,8 +158,20 @@ void GodotPhysXBody3D::_build_actor() {
 			// RigidBody3D.mass semantics -- updateMassAndInertia's argument is a
 			// *density*, which silently gave the wrong mass for any shape whose
 			// volume isn't ~1 m^3 (it only looked right for unit-sized shapes,
-			// where mass and density are numerically the same).
-			PxRigidBodyExt::setMassAndUpdateInertia(*dyn, mass > 0.0 ? (PxReal)mass : 1.0f);
+			// where mass and density are numerically the same). The optional
+			// massLocalPose folds a custom center-of-mass target directly into
+			// this same shape-based computation (a real parallel-axis-correct
+			// inertia around that point) -- NOT a separate setCMassLocalPose()
+			// call after the fact, which would leave the inertia tensor
+			// computed for the OLD (shape-centroid) pivot silently attached to
+			// the NEW one. That mismatch is a real, physically-inconsistent
+			// bug this code briefly had: a first attempt exactly that
+			// (post-hoc setCMassLocalPose) was verified, via a real rollover
+			// repro, to make an unstable vehicle chassis MORE chaotic, not
+			// less -- rotational dynamics with a mismatched inertia/pivot
+			// pair are wrong, not just imprecise.
+			const PxVec3 com_pose = to_px(center_of_mass);
+			PxRigidBodyExt::setMassAndUpdateInertia(*dyn, mass > 0.0 ? (PxReal)mass : 1.0f, has_custom_center_of_mass ? &com_pose : nullptr);
 			dyn->setActorFlag(PxActorFlag::eDISABLE_GRAVITY, gravity_scale == 0.0 || omit_force_integration);
 			dyn->setSleepThreshold((PxReal)space->get_sleep_energy_threshold());
 			dyn->setWakeCounter((PxReal)space->get_time_before_sleep());
@@ -311,8 +323,15 @@ void GodotPhysXBody3D::set_param(PhysicsServer3D::BodyParameter p_param, const V
 		case PhysicsServer3D::BODY_PARAM_ANGULAR_DAMP_MODE:
 			angular_damp_mode = (PhysicsServer3D::BodyDampMode)(int)p_value;
 			break;
+		case PhysicsServer3D::BODY_PARAM_CENTER_OF_MASS:
+			// RigidBody3D only sends this when center_of_mass_mode is CUSTOM
+			// -- there's no separate mode param, so receiving one at all is
+			// the signal (see the header comment on has_custom_center_of_mass).
+			has_custom_center_of_mass = true;
+			center_of_mass = p_value;
+			break;
 		default:
-			// Inertia and center-of-mass overrides not handled yet.
+			// Inertia overrides (BODY_PARAM_INERTIA) not handled yet.
 			break;
 	}
 
@@ -328,10 +347,17 @@ void GodotPhysXBody3D::set_param(PhysicsServer3D::BodyParameter p_param, const V
 		}
 		if (PxRigidDynamic *dyn = px_actor->is<PxRigidDynamic>()) {
 			if (p_param == PhysicsServer3D::BODY_PARAM_MASS && mode != PhysicsServer3D::BODY_MODE_KINEMATIC) {
-				PxRigidBodyExt::setMassAndUpdateInertia(*dyn, mass > 0.0 ? (PxReal)mass : 1.0f);
+				const PxVec3 com_pose = to_px(center_of_mass);
+				PxRigidBodyExt::setMassAndUpdateInertia(*dyn, mass > 0.0 ? (PxReal)mass : 1.0f, has_custom_center_of_mass ? &com_pose : nullptr);
 			}
 			if (p_param == PhysicsServer3D::BODY_PARAM_GRAVITY_SCALE) {
 				dyn->setActorFlag(PxActorFlag::eDISABLE_GRAVITY, gravity_scale == 0.0);
+			}
+			if (p_param == PhysicsServer3D::BODY_PARAM_CENTER_OF_MASS && mode != PhysicsServer3D::BODY_MODE_KINEMATIC) {
+				// Recompute mass+inertia around the new target, same as above --
+				// not a bare setCMassLocalPose (see the comment in _build_actor).
+				const PxVec3 com_pose = to_px(center_of_mass);
+				PxRigidBodyExt::setMassAndUpdateInertia(*dyn, mass > 0.0 ? (PxReal)mass : 1.0f, &com_pose);
 			}
 		}
 	}
@@ -626,7 +652,24 @@ void GodotPhysXBody3D::set_sleep_state(bool p_sleep) {
 void GodotPhysXBody3D::apply_impulse(const Vector3 &p_impulse, const Vector3 &p_position) {
 	if (px_actor) {
 		if (PxRigidDynamic *dyn = px_actor->is<PxRigidDynamic>()) {
-			PxRigidBodyExt::addForceAtLocalPos(*dyn, to_px(p_impulse), to_px(p_position), PxForceMode::eIMPULSE);
+			// PhysicsDirectBodyState3D::apply_impulse's contract: p_position is
+			// the OFFSET from the body origin, in global-aligned axes (see its
+			// doc) -- not an absolute position, and not a local-frame one
+			// either. Neither PxRigidBodyExt overload matches that directly:
+			// addForceAtLocalPos wants pos in the actor's LOCAL frame (wrong at
+			// any real rotation -- confirmed as the actual cause of a real
+			// repro: VehicleBody3D, stock backend-agnostic Godot code driving
+			// wheel suspension/friction purely through this call, tumbled
+			// violently mid-turn on this backend at settings that ran clean on
+			// Jolt, the same generic scene code, same repro, backend swapped).
+			// addForceAtPos wants pos as an ABSOLUTE world position, not an
+			// offset -- passing the bare offset there instead (a first, also
+			// wrong attempt) put the effective application point near world
+			// origin regardless of where the body actually was, an even larger
+			// error. The actual fix: convert the offset to the absolute world
+			// position addForceAtPos wants by adding the body's current origin.
+			const PxVec3 world_pos = dyn->getGlobalPose().p + to_px(p_position);
+			PxRigidBodyExt::addForceAtPos(*dyn, to_px(p_impulse), world_pos, PxForceMode::eIMPULSE);
 		}
 	}
 }
@@ -663,11 +706,7 @@ void GodotPhysXBody3D::_apply_solver_iterations() {
 	if (!dyn) {
 		return;
 	}
-	if (joints.is_empty()) {
-		dyn->setSolverIterationCounts(SOLVER_ITERS_DEFAULT_POS, SOLVER_ITERS_DEFAULT_VEL);
-	} else {
-		dyn->setSolverIterationCounts(SOLVER_ITERS_JOINTED_POS, SOLVER_ITERS_JOINTED_VEL);
-	}
+	dyn->setSolverIterationCounts(SOLVER_ITERS_POS, SOLVER_ITERS_VEL);
 }
 
 void GodotPhysXBody3D::apply_torque(const Vector3 &p_torque) {

@@ -31,6 +31,11 @@ physx_static_libs = [
     "PhysXCooking_static_64",
     "PhysXCommon_static_64",
     "PhysXFoundation_static_64",
+    # PxVehicle2 -- ships in the same PhysX SDK build as everything else above,
+    # no separate SDK checkout/build step (unlike Blast). Headers under
+    # include/vehicle/ use their own subdir-qualified #includes, so no extra
+    # per-subdir CPPPATH entries are needed either.
+    "PhysXVehicle_static_64",
 ]
 
 if env["platform"] == "windows":
@@ -242,6 +247,7 @@ env_physx.add_source_files(module_obj, "objects/*.cpp")
 env_physx.add_source_files(module_obj, "particles/*.cpp")
 env_physx.add_source_files(module_obj, "shapes/*.cpp")
 env_physx.add_source_files(module_obj, "spaces/*.cpp")
+env_physx.add_source_files(module_obj, "vehicle/*.cpp")
 
 if env.editor_build:
     env_physx.add_source_files(module_obj, "editor/*.cpp")

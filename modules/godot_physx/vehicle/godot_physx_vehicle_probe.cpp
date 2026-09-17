@@ -69,10 +69,19 @@ bool GodotPhysXVehicleProbe::initialize(RID p_space, const Vector3 &p_position) 
 	ERR_FAIL_NULL_V(physics, false);
 	ERR_FAIL_NULL_V(scene, false);
 
-	// A ~1500kg sedan-like default (matches the config's own defaults exactly;
-	// listed here anyway so this probe's behavior doesn't silently drift if
-	// Vehicle4WConfig's defaults ever change for the node's sake).
+	// A ~1500kg sedan: half-track 0.75m, wheelbase 2.7m (front axle +1.35,
+	// rear -1.35) -- explicit here (not just Vehicle4WWheelConfig's own
+	// defaults) since wheel *position* has no sensible default of its own,
+	// unlike every other per-wheel field.
 	Vehicle4WConfig cfg;
+	cfg.wheels[0].position = Vector3(-0.75f, 0.05f, 1.35f); // FL
+	cfg.wheels[0].use_as_steering = true;
+	cfg.wheels[1].position = Vector3(0.75f, 0.05f, 1.35f); // FR
+	cfg.wheels[1].use_as_steering = true;
+	cfg.wheels[2].position = Vector3(-0.75f, 0.05f, -1.35f); // RL
+	cfg.wheels[2].use_as_steering = false;
+	cfg.wheels[3].position = Vector3(0.75f, 0.05f, -1.35f); // RR
+	cfg.wheels[3].use_as_steering = false;
 
 	if (!configure_vehicle4w(impl->vehicle, cfg, *physics, *scene, impl->simulationContext)) {
 		return false;
@@ -115,10 +124,24 @@ real_t GodotPhysXVehicleProbe::get_forward_speed() const {
 	return (real_t)impl->vehicle.rigidBodyState.linearVelocity.dot(fwd);
 }
 
+real_t GodotPhysXVehicleProbe::get_wheel_jounce(int p_wheel) const {
+	ERR_FAIL_COND_V(!impl->initialized, 0.0);
+	ERR_FAIL_INDEX_V(p_wheel, 4, 0.0);
+	return (real_t)impl->vehicle.suspensionStates[p_wheel].jounce;
+}
+
+real_t GodotPhysXVehicleProbe::get_wheel_separation(int p_wheel) const {
+	ERR_FAIL_COND_V(!impl->initialized, 0.0);
+	ERR_FAIL_INDEX_V(p_wheel, 4, 0.0);
+	return (real_t)impl->vehicle.suspensionStates[p_wheel].separation;
+}
+
 void GodotPhysXVehicleProbe::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("initialize", "space", "position"), &GodotPhysXVehicleProbe::initialize);
 	ClassDB::bind_method(D_METHOD("step", "dt", "throttle", "brake", "steer"), &GodotPhysXVehicleProbe::step);
 	ClassDB::bind_method(D_METHOD("get_position"), &GodotPhysXVehicleProbe::get_position);
 	ClassDB::bind_method(D_METHOD("get_linear_velocity"), &GodotPhysXVehicleProbe::get_linear_velocity);
 	ClassDB::bind_method(D_METHOD("get_forward_speed"), &GodotPhysXVehicleProbe::get_forward_speed);
+	ClassDB::bind_method(D_METHOD("get_wheel_jounce", "wheel"), &GodotPhysXVehicleProbe::get_wheel_jounce);
+	ClassDB::bind_method(D_METHOD("get_wheel_separation", "wheel"), &GodotPhysXVehicleProbe::get_wheel_separation);
 }

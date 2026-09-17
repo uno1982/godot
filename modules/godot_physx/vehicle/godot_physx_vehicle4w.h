@@ -33,6 +33,7 @@
 
 #include "core/error/error_macros.h"
 #include "core/math/vector3.h"
+#include "core/typedefs.h"
 
 #include <PxPhysicsAPI.h>
 #include <vehicle/PxVehicleAPI.h>
@@ -441,31 +442,68 @@ public:
 	}
 };
 
-// Everything a caller can tune about a direct-drive 4-wheel vehicle, in Godot
-// units/conventions (meters, kg, radians, Godot's -Z-forward/+X-right/+Y-up).
-// Shared between the probe (hardcoded sedan-like defaults) and PhysXVehicle3D
-// (these become real exported properties).
-struct Vehicle4WConfig {
-	real_t mass = 1500.0f;
-	Vector3 moment_of_inertia = Vector3(2000.0f, 2200.0f, 1000.0f);
-
-	real_t half_track = 0.75f;
-	real_t front_axle_z = 1.35f;
-	real_t rear_axle_z = -1.35f;
-
-	real_t wheel_radius = 0.35f;
-	real_t wheel_half_width = 0.15f;
+// Everything a caller can tune about ONE wheel of a direct-drive 4-wheel
+// vehicle, in Godot units/conventions. `position` is the suspension
+// attachment point in chassis-local space -- same meaning as VehicleWheel3D's
+// own `position` (the hardpoint), so a PhysXVehicleWheel3D child node's
+// transform origin maps straight onto it with no separate axle/track-width
+// config needed.
+struct Vehicle4WWheelConfig {
+	Vector3 position;
+	real_t radius = 0.35f;
+	real_t half_width = 0.15f;
 	real_t wheel_mass = 20.0f;
 	real_t wheel_moment_of_inertia = 1.2f;
-	real_t wheel_damping_rate = 0.25f;
+	real_t damping_rate = 0.25f;
 
 	real_t suspension_travel = 0.15f;
-	real_t suspension_stiffness = 35000.0f;
+	// 35000 (the snippet reference's own value, scaled for this car's mass)
+	// left the suspension sitting at ~68% of suspension_travel just holding
+	// static weight at rest (measured directly via PxVehicleSuspensionState
+	// .jounce: 0.102/0.15) -- almost no margin before bottoming out under any
+	// real driving load (braking, cornering weight transfer, a bump), same
+	// failure mode VehicleWheel3D's own default (5.88) had. Retuned so static
+	// jounce sits around 30% of travel instead, leaving real margin.
+	real_t suspension_stiffness = 90000.0f;
 	real_t suspension_damping = 4500.0f;
 
 	real_t tire_lateral_stiffness = 20000.0f;
 	real_t tire_longitudinal_stiffness = 20000.0f;
 	real_t tire_friction = 1.0f;
+
+	// Front axle (steering) vs. rear -- also which axle Ackermann correction
+	// and the steer response multiplier apply to. Exactly 2 of the 4 wheels
+	// must have this true.
+	bool use_as_steering = false;
+	// Whether this wheel receives engine torque. All 4 true = AWD direct
+	// drive (the only drivetrain this MVP composition supports).
+	bool use_as_traction = true;
+};
+
+// Everything a caller can tune about a direct-drive 4-wheel vehicle, in Godot
+// units/conventions (meters, kg, radians, Godot's -Z-forward/+X-right/+Y-up).
+// Shared between the probe (hardcoded sedan-like defaults) and PhysXVehicle3D
+// (these become real exported properties -- chassis_half_extents/
+// chassis_half_extents/chassis_box_center_local come from a real CollisionShape3D child, wheels[] from
+// real PhysXVehicleWheel3D children, matching VehicleBody3D/VehicleWheel3D's
+// own node structure instead of flat scalar properties on the body).
+struct Vehicle4WConfig {
+	real_t mass = 1500.0f;
+	Vector3 moment_of_inertia = Vector3(2000.0f, 2200.0f, 1000.0f);
+
+	Vector3 chassis_half_extents = Vector3(0.95f, 0.4f, 1.85f);
+	Vector3 chassis_box_center_local = Vector3(0.0f, 0.4f, 0.0f);
+	// Center of mass, separate from the box's own visual/collision center --
+	// a lower CoM than the box's geometric center is what keeps the chassis
+	// planted through hard cornering instead of rolling.
+	Vector3 chassis_com_local = Vector3(0.0f, 0.35f, 0.0f);
+
+	// Caller order is arbitrary -- configure_vehicle4w() classifies each
+	// entry into front/rear by use_as_steering and left/right by
+	// position.x's sign, so a scene author can add 4 PhysXVehicleWheel3D
+	// children in any order (matching how VehicleWheel3D children work
+	// today: only position and use_as_steering matter, not insertion order).
+	Vehicle4WWheelConfig wheels[4];
 
 	real_t max_engine_torque = 700.0f;
 	real_t max_brake_torque = 6000.0f;
@@ -480,7 +518,10 @@ struct Vehicle4WConfig {
 // used to do inline. Does NOT add the actor to the scene or set its start
 // pose -- the caller does that (probe/node have different start-pose
 // conventions: a bare position vs. a node's own global_transform).
-// Returns false (with an ERR_PRINT) on any real validation failure.
+// Returns false (with an ERR_PRINT) on any real validation failure --
+// including cfg.wheels not containing exactly 2 use_as_steering==true and
+// 2 ==false entries, which this fixed direct-drive/Ackermann composition
+// requires.
 inline bool configure_vehicle4w(Vehicle4W &v, const Vehicle4WConfig &cfg, PxPhysics &physics, PxScene &scene, PxVehiclePhysXSimulationContext &out_context) {
 	v.setToDefault();
 
@@ -491,6 +532,38 @@ inline bool configure_vehicle4w(Vehicle4W &v, const Vehicle4WConfig &cfg, PxPhys
 	v.frame.latAxis = PxVehicleAxes::ePosX;
 	v.frame.vrtAxis = PxVehicleAxes::ePosY;
 	v.scale.scale = 1.0f;
+
+	// Classify cfg.wheels[0..3] (arbitrary caller order) into canonical
+	// FL/FR/RL/RR slots by (use_as_steering, position.x sign).
+	PxU32 front[2], rear[2];
+	PxU32 nb_front = 0, nb_rear = 0;
+	for (PxU32 i = 0; i < 4; i++) {
+		if (cfg.wheels[i].use_as_steering) {
+			if (nb_front < 2) {
+				front[nb_front++] = i;
+			}
+		} else {
+			if (nb_rear < 2) {
+				rear[nb_rear++] = i;
+			}
+		}
+	}
+	if (nb_front != 2 || nb_rear != 2) {
+		ERR_PRINT("PhysX vehicle: need exactly 2 steering (front) and 2 non-steering (rear) wheels.");
+		return false;
+	}
+	if (cfg.wheels[front[0]].position.x > cfg.wheels[front[1]].position.x) {
+		SWAP(front[0], front[1]);
+	}
+	if (cfg.wheels[rear[0]].position.x > cfg.wheels[rear[1]].position.x) {
+		SWAP(rear[0], rear[1]);
+	}
+	// slot[Vehicle4W::WHEEL_FL] = index into cfg.wheels[] for that slot.
+	PxU32 slot[4];
+	slot[Vehicle4W::WHEEL_FL] = front[0]; // negative (left) x
+	slot[Vehicle4W::WHEEL_FR] = front[1]; // positive (right) x
+	slot[Vehicle4W::WHEEL_RL] = rear[0];
+	slot[Vehicle4W::WHEEL_RR] = rear[1];
 
 	const PxU32 frontWheels[2] = { Vehicle4W::WHEEL_FL, Vehicle4W::WHEEL_FR };
 	const PxU32 rearWheels[2] = { Vehicle4W::WHEEL_RL, Vehicle4W::WHEEL_RR };
@@ -512,66 +585,60 @@ inline bool configure_vehicle4w(Vehicle4W &v, const Vehicle4WConfig &cfg, PxPhys
 	for (PxU32 i = 0; i < 4; i++) {
 		v.steerResponseParams.wheelResponseMultipliers[i] = (i == Vehicle4W::WHEEL_FL || i == Vehicle4W::WHEEL_FR) ? 1.0f : 0.0f;
 	}
+	const Vector3 &fl_pos = cfg.wheels[slot[Vehicle4W::WHEEL_FL]].position;
+	const Vector3 &fr_pos = cfg.wheels[slot[Vehicle4W::WHEEL_FR]].position;
+	const Vector3 &rl_pos = cfg.wheels[slot[Vehicle4W::WHEEL_RL]].position;
 	v.ackermannParams[0].wheelIds[0] = Vehicle4W::WHEEL_FL;
 	v.ackermannParams[0].wheelIds[1] = Vehicle4W::WHEEL_FR;
-	v.ackermannParams[0].wheelBase = (PxReal)(cfg.front_axle_z - cfg.rear_axle_z);
-	v.ackermannParams[0].trackWidth = (PxReal)(cfg.half_track * 2.0f);
+	v.ackermannParams[0].wheelBase = (PxReal)Math::abs(fl_pos.z - rl_pos.z);
+	v.ackermannParams[0].trackWidth = (PxReal)Math::abs(fr_pos.x - fl_pos.x);
 	v.ackermannParams[0].strength = (PxReal)cfg.ackermann_strength;
 
 	v.directDriveThrottleResponseParams.maxResponse = (PxReal)cfg.max_engine_torque;
 	for (PxU32 i = 0; i < 4; i++) {
-		v.directDriveThrottleResponseParams.wheelResponseMultipliers[i] = 1.0f;
+		v.directDriveThrottleResponseParams.wheelResponseMultipliers[i] = cfg.wheels[slot[i]].use_as_traction ? 1.0f : 0.0f;
 	}
-
-	const PxReal hubDropZ = 0.05f; // small drop from chassis-frame origin to hub attach point
-	struct WheelLayout {
-		PxReal x, z;
-	};
-	const WheelLayout layout[4] = {
-		{ (PxReal)-cfg.half_track, (PxReal)cfg.front_axle_z }, // FL
-		{ (PxReal)cfg.half_track, (PxReal)cfg.front_axle_z }, // FR
-		{ (PxReal)-cfg.half_track, (PxReal)cfg.rear_axle_z }, // RL
-		{ (PxReal)cfg.half_track, (PxReal)cfg.rear_axle_z }, // RR
-	};
 
 	v.rigidBodyParams.mass = (PxReal)cfg.mass;
 	v.rigidBodyParams.moi = to_px(cfg.moment_of_inertia);
 
 	for (PxU32 i = 0; i < 4; i++) {
-		v.wheelParams[i].radius = (PxReal)cfg.wheel_radius;
-		v.wheelParams[i].halfWidth = (PxReal)cfg.wheel_half_width;
-		v.wheelParams[i].mass = (PxReal)cfg.wheel_mass;
-		v.wheelParams[i].moi = (PxReal)cfg.wheel_moment_of_inertia;
-		v.wheelParams[i].dampingRate = (PxReal)cfg.wheel_damping_rate;
+		const Vehicle4WWheelConfig &w = cfg.wheels[slot[i]];
 
-		v.suspensionParams[i].suspensionAttachment = PxTransform(PxVec3(layout[i].x, hubDropZ, layout[i].z));
+		v.wheelParams[i].radius = (PxReal)w.radius;
+		v.wheelParams[i].halfWidth = (PxReal)w.half_width;
+		v.wheelParams[i].mass = (PxReal)w.wheel_mass;
+		v.wheelParams[i].moi = (PxReal)w.wheel_moment_of_inertia;
+		v.wheelParams[i].dampingRate = (PxReal)w.damping_rate;
+
+		v.suspensionParams[i].suspensionAttachment = PxTransform(to_px(w.position));
 		v.suspensionParams[i].suspensionTravelDir = PxVec3(0.0f, -1.0f, 0.0f);
-		v.suspensionParams[i].suspensionTravelDist = (PxReal)cfg.suspension_travel;
+		v.suspensionParams[i].suspensionTravelDist = (PxReal)w.suspension_travel;
 		v.suspensionParams[i].wheelAttachment = PxTransform(PxIdentity);
 
 		v.suspensionComplianceParams[i] = PxVehicleSuspensionComplianceParams(); // no toe/camber/force-offset curves
 
-		v.suspensionForceParams[i].stiffness = (PxReal)cfg.suspension_stiffness;
-		v.suspensionForceParams[i].damping = (PxReal)cfg.suspension_damping;
+		v.suspensionForceParams[i].stiffness = (PxReal)w.suspension_stiffness;
+		v.suspensionForceParams[i].damping = (PxReal)w.suspension_damping;
 		v.suspensionForceParams[i].sprungMass = v.rigidBodyParams.mass * 0.25f;
 
 		v.tireForceParams[i].latStiffX = 0.01f;
-		v.tireForceParams[i].latStiffY = (PxReal)cfg.tire_lateral_stiffness;
-		v.tireForceParams[i].longStiff = (PxReal)cfg.tire_longitudinal_stiffness;
+		v.tireForceParams[i].latStiffY = (PxReal)w.tire_lateral_stiffness;
+		v.tireForceParams[i].longStiff = (PxReal)w.tire_longitudinal_stiffness;
 		v.tireForceParams[i].camberStiff = 0.0f;
 		v.tireForceParams[i].restLoad = v.suspensionForceParams[i].sprungMass * 9.81f;
 		v.tireForceParams[i].frictionVsSlip[0][0] = 0.0f;
-		v.tireForceParams[i].frictionVsSlip[0][1] = (PxReal)cfg.tire_friction;
+		v.tireForceParams[i].frictionVsSlip[0][1] = (PxReal)w.tire_friction;
 		v.tireForceParams[i].frictionVsSlip[1][0] = 0.1f;
-		v.tireForceParams[i].frictionVsSlip[1][1] = (PxReal)cfg.tire_friction;
+		v.tireForceParams[i].frictionVsSlip[1][1] = (PxReal)w.tire_friction;
 		v.tireForceParams[i].frictionVsSlip[2][0] = 1.0f;
-		v.tireForceParams[i].frictionVsSlip[2][1] = (PxReal)cfg.tire_friction;
+		v.tireForceParams[i].frictionVsSlip[2][1] = (PxReal)w.tire_friction;
 		v.tireForceParams[i].loadFilter[0][0] = 0.0f;
 		v.tireForceParams[i].loadFilter[0][1] = 0.23f;
 		v.tireForceParams[i].loadFilter[1][0] = 3.0f;
 		v.tireForceParams[i].loadFilter[1][1] = 3.0f;
 
-		v.physxMaterialFrictionParams[i].defaultFriction = (PxReal)cfg.tire_friction;
+		v.physxMaterialFrictionParams[i].defaultFriction = (PxReal)w.tire_friction;
 		v.physxMaterialFrictionParams[i].materialFrictions = nullptr;
 		v.physxMaterialFrictionParams[i].nbMaterialFrictions = 0;
 
@@ -595,11 +662,15 @@ inline bool configure_vehicle4w(Vehicle4W &v, const Vehicle4WConfig &cfg, PxPhys
 	v.physxRoadGeometryQueryParams.filterCallback = nullptr;
 	v.physxRoadGeometryQueryParams.filterDataEntries = nullptr;
 
-	v.physxActorCMassLocalPose = PxTransform(PxVec3(0.0f, 0.35f, 0.0f));
-	v.physxActorBoxShapeHalfExtents = PxVec3((PxReal)cfg.half_track + (PxReal)cfg.wheel_half_width + 0.05f, 0.4f, (PxReal)cfg.front_axle_z + 0.5f);
-	v.physxActorBoxShapeLocalPose = PxTransform(PxVec3(0.0f, 0.4f, 0.0f));
+	v.physxActorCMassLocalPose = PxTransform(to_px(cfg.chassis_com_local));
+	v.physxActorBoxShapeHalfExtents = to_px(cfg.chassis_half_extents);
+	v.physxActorBoxShapeLocalPose = PxTransform(to_px(cfg.chassis_box_center_local));
 
-	PxMaterial *material = physics.createMaterial((PxReal)cfg.tire_friction, (PxReal)cfg.tire_friction, 0.1f);
+	// Uses the first wheel's tire_friction for the shared chassis/wheel
+	// PxMaterial -- per-wheel friction differences are already captured by
+	// physxMaterialFrictionParams[i].defaultFriction above (the road-geometry
+	// query's own friction lookup), not by this material.
+	PxMaterial *material = physics.createMaterial((PxReal)cfg.wheels[0].tire_friction, (PxReal)cfg.wheels[0].tire_friction, 0.1f);
 	if (!material) {
 		ERR_PRINT("PhysX vehicle: failed to create material.");
 		return false;

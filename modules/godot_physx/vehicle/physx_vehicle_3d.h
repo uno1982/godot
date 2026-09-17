@@ -30,7 +30,10 @@
 #pragma once
 
 #include "core/math/vector3.h"
+#include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
+
+class PhysXVehicleWheel3D;
 
 // A real, PhysX-specific 4-wheel vehicle -- offers PxVehicle2 capability
 // stock VehicleBody3D/VehicleWheel3D structurally can't (real engine torque
@@ -43,6 +46,15 @@
 // PhysXDestructible3D's probe, whose damage/fracture logic is genuinely
 // node-specific and was deliberately duplicated instead).
 //
+// Node structure mirrors VehicleBody3D/VehicleWheel3D exactly, for a direct
+// 1:1 comparison: a body node with a real CollisionShape3D (BoxShape3D only)
+// child for the chassis, and exactly 4 PhysXVehicleWheel3D children for the
+// wheels -- each wheel's own `position` is the suspension attachment
+// hardpoint, so a MeshInstance3D child under it lines up with the real
+// physics automatically instead of needing hand-guessed offsets (an earlier,
+// flat-scalar-properties version of this node needed exactly that, and the
+// offsets were wrong -- see the demo's own commit history).
+//
 // Owns its own PxRigidDynamic directly (via configure_vehicle4w), not a
 // GodotPhysXBody3D -- PxVehicle2's own PxVehiclePhysXActorEndComponent writes
 // wheel-shape local poses and rigid-body momentum straight onto the actor
@@ -50,6 +62,9 @@
 // PhysicsServer3D RID abstraction.
 class PhysXVehicle3D : public Node3D {
 	GDCLASS(PhysXVehicle3D, Node3D);
+
+	friend class PhysXVehicleWheel3D;
+	LocalVector<PhysXVehicleWheel3D *> wheels;
 
 protected:
 	static void _bind_methods();
@@ -60,38 +75,6 @@ public:
 	real_t get_mass() const { return mass; }
 	void set_moment_of_inertia(const Vector3 &p_moi);
 	Vector3 get_moment_of_inertia() const { return moment_of_inertia; }
-
-	void set_half_track(real_t p_v);
-	real_t get_half_track() const { return half_track; }
-	void set_front_axle_z(real_t p_v);
-	real_t get_front_axle_z() const { return front_axle_z; }
-	void set_rear_axle_z(real_t p_v);
-	real_t get_rear_axle_z() const { return rear_axle_z; }
-
-	void set_wheel_radius(real_t p_v);
-	real_t get_wheel_radius() const { return wheel_radius; }
-	void set_wheel_half_width(real_t p_v);
-	real_t get_wheel_half_width() const { return wheel_half_width; }
-	void set_wheel_mass(real_t p_v);
-	real_t get_wheel_mass() const { return wheel_mass; }
-	void set_wheel_moment_of_inertia(real_t p_v);
-	real_t get_wheel_moment_of_inertia() const { return wheel_moment_of_inertia; }
-	void set_wheel_damping_rate(real_t p_v);
-	real_t get_wheel_damping_rate() const { return wheel_damping_rate; }
-
-	void set_suspension_travel(real_t p_v);
-	real_t get_suspension_travel() const { return suspension_travel; }
-	void set_suspension_stiffness(real_t p_v);
-	real_t get_suspension_stiffness() const { return suspension_stiffness; }
-	void set_suspension_damping(real_t p_v);
-	real_t get_suspension_damping() const { return suspension_damping; }
-
-	void set_tire_lateral_stiffness(real_t p_v);
-	real_t get_tire_lateral_stiffness() const { return tire_lateral_stiffness; }
-	void set_tire_longitudinal_stiffness(real_t p_v);
-	real_t get_tire_longitudinal_stiffness() const { return tire_longitudinal_stiffness; }
-	void set_tire_friction(real_t p_v);
-	real_t get_tire_friction() const { return tire_friction; }
 
 	void set_max_engine_torque(real_t p_v);
 	real_t get_max_engine_torque() const { return max_engine_torque; }
@@ -117,26 +100,14 @@ public:
 	Vector3 get_linear_velocity() const;
 	real_t get_forward_speed() const;
 
+	PackedStringArray get_configuration_warnings() const override;
+
 	PhysXVehicle3D();
 	~PhysXVehicle3D();
 
 private:
 	real_t mass = 1500.0f;
 	Vector3 moment_of_inertia = Vector3(2000.0f, 2200.0f, 1000.0f);
-	real_t half_track = 0.75f;
-	real_t front_axle_z = 1.35f;
-	real_t rear_axle_z = -1.35f;
-	real_t wheel_radius = 0.35f;
-	real_t wheel_half_width = 0.15f;
-	real_t wheel_mass = 20.0f;
-	real_t wheel_moment_of_inertia = 1.2f;
-	real_t wheel_damping_rate = 0.25f;
-	real_t suspension_travel = 0.15f;
-	real_t suspension_stiffness = 35000.0f;
-	real_t suspension_damping = 4500.0f;
-	real_t tire_lateral_stiffness = 20000.0f;
-	real_t tire_longitudinal_stiffness = 20000.0f;
-	real_t tire_friction = 1.0f;
 	real_t max_engine_torque = 700.0f;
 	real_t max_brake_torque = 6000.0f;
 	real_t max_steer_angle = 0.6f;
@@ -151,10 +122,11 @@ private:
 	struct Impl;
 	Impl *impl = nullptr;
 
-	// Any exported-property setter calls this if the vehicle is already built
-	// (editing in the Inspector while Playing) -- full rebuild, same
-	// "simple; optimize later" convention GodotPhysXBody3D's own
-	// shape/mode-change path already uses. No-op if not yet built.
+	// Any exported-property setter, or a child PhysXVehicleWheel3D's own
+	// property setter, calls this if the vehicle is already built (editing in
+	// the Inspector while Playing) -- full rebuild, same "simple; optimize
+	// later" convention GodotPhysXBody3D's own shape/mode-change path already
+	// uses. No-op if not yet built.
 	void _rebuild_if_live();
 	bool _build();
 	void _destroy();

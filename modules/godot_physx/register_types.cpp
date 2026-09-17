@@ -46,6 +46,7 @@
 #include "nodes/physx_particle_fluid_3d.h"
 #include "vehicle/godot_physx_vehicle_probe.h"
 #include "vehicle/physx_vehicle_3d.h"
+#include "vehicle/physx_vehicle_wheel_3d.h"
 
 #include "core/config/project_settings.h"
 #include "core/object/callable_mp.h"
@@ -85,6 +86,7 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		// Runtime-bridge MVP probe, not public API yet -- see vehicle/godot_physx_vehicle_probe.h.
 		GDREGISTER_CLASS(GodotPhysXVehicleProbe);
 		GDREGISTER_CLASS(PhysXVehicle3D);
+		GDREGISTER_CLASS(PhysXVehicleWheel3D);
 #ifdef GODOT_PHYSX_BLAST
 		// Runtime-bridge MVP probe, not public API yet -- see blast/godot_physx_blast_probe.h.
 		GDREGISTER_CLASS(GodotPhysXBlastProbe);

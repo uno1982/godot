@@ -66,6 +66,14 @@ public:
 	Vector3 get_linear_velocity() const;
 	real_t get_forward_speed() const;
 
+	// Diagnostics for suspension tuning (0=FL, 1=FR, 2=RL, 3=RR). jounce is
+	// how compressed the suspension is right now, in [0, suspension_travel]
+	// (0 = max droop, suspension_travel = fully bottomed out). separation < 0
+	// means the wheel is penetrating the ground even at max compression --
+	// the suspension travel isn't enough to reach the ground at all.
+	real_t get_wheel_jounce(int p_wheel) const;
+	real_t get_wheel_separation(int p_wheel) const;
+
 	GodotPhysXVehicleProbe();
 	~GodotPhysXVehicleProbe();
 

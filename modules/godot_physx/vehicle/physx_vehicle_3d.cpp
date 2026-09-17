@@ -33,8 +33,11 @@
 #include "../godot_physx_server_3d.h"
 #include "../spaces/godot_physx_space_3d.h"
 #include "godot_physx_vehicle4w.h"
+#include "physx_vehicle_wheel_3d.h"
 
 #include "core/object/class_db.h"
+#include "scene/3d/physics/collision_shape_3d.h"
+#include "scene/resources/3d/box_shape_3d.h"
 #include "scene/resources/3d/world_3d.h"
 
 struct PhysXVehicle3D::Impl {
@@ -60,6 +63,31 @@ bool PhysXVehicle3D::_build() {
 	if (!is_inside_world() || get_world_3d().is_null()) {
 		return false;
 	}
+	if (wheels.size() != 4) {
+		// Not a real error -- this fires transiently while wheel children are
+		// still entering the tree one at a time (see PhysXVehicleWheel3D's
+		// own NOTIFICATION_ENTER_TREE), and permanently if the scene author
+		// hasn't added exactly 4 yet. get_configuration_warnings() surfaces
+		// the permanent case in the Inspector.
+		return false;
+	}
+
+	CollisionShape3D *chassis_shape_node = nullptr;
+	for (int i = 0; i < get_child_count(); i++) {
+		chassis_shape_node = Object::cast_to<CollisionShape3D>(get_child(i));
+		if (chassis_shape_node) {
+			break;
+		}
+	}
+	if (!chassis_shape_node || chassis_shape_node->get_shape().is_null()) {
+		return false;
+	}
+	Ref<BoxShape3D> box_shape = chassis_shape_node->get_shape();
+	if (box_shape.is_null()) {
+		ERR_PRINT("PhysXVehicle3D: chassis CollisionShape3D must use a BoxShape3D.");
+		return false;
+	}
+
 	GodotPhysXServer3D *server = GodotPhysXServer3D::get_singleton();
 	if (!server) {
 		return false;
@@ -79,24 +107,32 @@ bool PhysXVehicle3D::_build() {
 	Vehicle4WConfig cfg;
 	cfg.mass = mass;
 	cfg.moment_of_inertia = moment_of_inertia;
-	cfg.half_track = half_track;
-	cfg.front_axle_z = front_axle_z;
-	cfg.rear_axle_z = rear_axle_z;
-	cfg.wheel_radius = wheel_radius;
-	cfg.wheel_half_width = wheel_half_width;
-	cfg.wheel_mass = wheel_mass;
-	cfg.wheel_moment_of_inertia = wheel_moment_of_inertia;
-	cfg.wheel_damping_rate = wheel_damping_rate;
-	cfg.suspension_travel = suspension_travel;
-	cfg.suspension_stiffness = suspension_stiffness;
-	cfg.suspension_damping = suspension_damping;
-	cfg.tire_lateral_stiffness = tire_lateral_stiffness;
-	cfg.tire_longitudinal_stiffness = tire_longitudinal_stiffness;
-	cfg.tire_friction = tire_friction;
+	cfg.chassis_half_extents = box_shape->get_size() * 0.5;
+	cfg.chassis_box_center_local = chassis_shape_node->get_position();
+	cfg.chassis_com_local = chassis_shape_node->get_position();
 	cfg.max_engine_torque = max_engine_torque;
 	cfg.max_brake_torque = max_brake_torque;
 	cfg.max_steer_angle = max_steer_angle;
 	cfg.ackermann_strength = ackermann_strength;
+
+	for (int i = 0; i < 4; i++) {
+		PhysXVehicleWheel3D *w = wheels[i];
+		Vehicle4WWheelConfig &wc = cfg.wheels[i];
+		wc.position = w->get_position();
+		wc.radius = w->get_radius();
+		wc.half_width = w->get_half_width();
+		wc.wheel_mass = w->get_wheel_mass();
+		wc.wheel_moment_of_inertia = w->get_wheel_moment_of_inertia();
+		wc.damping_rate = w->get_damping_rate();
+		wc.suspension_travel = w->get_suspension_travel();
+		wc.suspension_stiffness = w->get_suspension_stiffness();
+		wc.suspension_damping = w->get_suspension_damping();
+		wc.tire_lateral_stiffness = w->get_tire_lateral_stiffness();
+		wc.tire_longitudinal_stiffness = w->get_tire_longitudinal_stiffness();
+		wc.tire_friction = w->get_tire_friction();
+		wc.use_as_steering = w->is_used_as_steering();
+		wc.use_as_traction = w->is_used_as_traction();
+	}
 
 	if (!configure_vehicle4w(impl->vehicle, cfg, *physics, *scene, impl->simulationContext)) {
 		return false;
@@ -124,18 +160,27 @@ void PhysXVehicle3D::_destroy() {
 }
 
 void PhysXVehicle3D::_rebuild_if_live() {
-	if (impl->built) {
-		_destroy();
-		_build();
+	if (!is_inside_world()) {
+		// Not in the tree/world yet -- NOTIFICATION_ENTER_WORLD will do the
+		// real first build once it is.
+		return;
 	}
+	// Unconditional, not just "if already built" -- a wheel child can finish
+	// registering (e.g. the 4th of 4, added after this node's own
+	// NOTIFICATION_ENTER_WORLD already ran and failed with too few wheels)
+	// and that later success needs a real attempt here, not just a rebuild
+	// of something that was never built. Also toggles physics processing
+	// itself -- NOTIFICATION_ENTER_WORLD isn't the only path that can
+	// transition built false->true (a wheel registering after is exactly
+	// that), so it can't be the only place this gets turned on.
+	_destroy();
+	set_physics_process_internal(_build());
 }
 
 void PhysXVehicle3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_WORLD: {
-			if (_build()) {
-				set_physics_process_internal(true);
-			}
+			set_physics_process_internal(_build());
 		} break;
 		case NOTIFICATION_EXIT_WORLD: {
 			set_physics_process_internal(false);
@@ -171,6 +216,33 @@ real_t PhysXVehicle3D::get_forward_speed() const {
 	return (real_t)impl->vehicle.rigidBodyState.linearVelocity.dot(fwd);
 }
 
+PackedStringArray PhysXVehicle3D::get_configuration_warnings() const {
+	PackedStringArray warnings = Node3D::get_configuration_warnings();
+	bool has_box_shape = false;
+	for (int i = 0; i < get_child_count(); i++) {
+		CollisionShape3D *cs = Object::cast_to<CollisionShape3D>(get_child(i));
+		if (cs && cs->get_shape().is_valid() && Object::cast_to<BoxShape3D>(cs->get_shape().ptr())) {
+			has_box_shape = true;
+			break;
+		}
+	}
+	if (!has_box_shape) {
+		warnings.push_back(RTR("PhysXVehicle3D needs a CollisionShape3D child with a BoxShape3D for its chassis."));
+	}
+	int nb_steering = 0;
+	for (uint32_t i = 0; i < wheels.size(); i++) {
+		if (wheels[i]->is_used_as_steering()) {
+			nb_steering++;
+		}
+	}
+	if (wheels.size() != 4) {
+		warnings.push_back(vformat(RTR("PhysXVehicle3D needs exactly 4 PhysXVehicleWheel3D children (has %d)."), (int)wheels.size()));
+	} else if (nb_steering != 2) {
+		warnings.push_back(vformat(RTR("PhysXVehicle3D needs exactly 2 wheels with use_as_steering enabled (has %d)."), nb_steering));
+	}
+	return warnings;
+}
+
 #define PHYSX_VEHICLE_SETTER(m_name, m_field)      \
 	void PhysXVehicle3D::set_##m_name(real_t p_v) { \
 		m_field = p_v;                              \
@@ -185,20 +257,6 @@ void PhysXVehicle3D::set_moment_of_inertia(const Vector3 &p_moi) {
 	moment_of_inertia = p_moi;
 	_rebuild_if_live();
 }
-PHYSX_VEHICLE_SETTER(half_track, half_track)
-PHYSX_VEHICLE_SETTER(front_axle_z, front_axle_z)
-PHYSX_VEHICLE_SETTER(rear_axle_z, rear_axle_z)
-PHYSX_VEHICLE_SETTER(wheel_radius, wheel_radius)
-PHYSX_VEHICLE_SETTER(wheel_half_width, wheel_half_width)
-PHYSX_VEHICLE_SETTER(wheel_mass, wheel_mass)
-PHYSX_VEHICLE_SETTER(wheel_moment_of_inertia, wheel_moment_of_inertia)
-PHYSX_VEHICLE_SETTER(wheel_damping_rate, wheel_damping_rate)
-PHYSX_VEHICLE_SETTER(suspension_travel, suspension_travel)
-PHYSX_VEHICLE_SETTER(suspension_stiffness, suspension_stiffness)
-PHYSX_VEHICLE_SETTER(suspension_damping, suspension_damping)
-PHYSX_VEHICLE_SETTER(tire_lateral_stiffness, tire_lateral_stiffness)
-PHYSX_VEHICLE_SETTER(tire_longitudinal_stiffness, tire_longitudinal_stiffness)
-PHYSX_VEHICLE_SETTER(tire_friction, tire_friction)
 PHYSX_VEHICLE_SETTER(max_engine_torque, max_engine_torque)
 PHYSX_VEHICLE_SETTER(max_brake_torque, max_brake_torque)
 PHYSX_VEHICLE_SETTER(max_steer_angle, max_steer_angle)
@@ -213,56 +271,6 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_moment_of_inertia"), &PhysXVehicle3D::get_moment_of_inertia);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mass", PROPERTY_HINT_RANGE, "1,10000,1,or_greater"), "set_mass", "get_mass");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "moment_of_inertia"), "set_moment_of_inertia", "get_moment_of_inertia");
-
-	ClassDB::bind_method(D_METHOD("set_half_track", "value"), &PhysXVehicle3D::set_half_track);
-	ClassDB::bind_method(D_METHOD("get_half_track"), &PhysXVehicle3D::get_half_track);
-	ClassDB::bind_method(D_METHOD("set_front_axle_z", "value"), &PhysXVehicle3D::set_front_axle_z);
-	ClassDB::bind_method(D_METHOD("get_front_axle_z"), &PhysXVehicle3D::get_front_axle_z);
-	ClassDB::bind_method(D_METHOD("set_rear_axle_z", "value"), &PhysXVehicle3D::set_rear_axle_z);
-	ClassDB::bind_method(D_METHOD("get_rear_axle_z"), &PhysXVehicle3D::get_rear_axle_z);
-	ADD_GROUP("Chassis", "");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "half_track", PROPERTY_HINT_RANGE, "0.1,3,0.01,or_greater"), "set_half_track", "get_half_track");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "front_axle_z", PROPERTY_HINT_RANGE, "-5,5,0.01,or_lesser,or_greater"), "set_front_axle_z", "get_front_axle_z");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rear_axle_z", PROPERTY_HINT_RANGE, "-5,5,0.01,or_lesser,or_greater"), "set_rear_axle_z", "get_rear_axle_z");
-
-	ClassDB::bind_method(D_METHOD("set_wheel_radius", "value"), &PhysXVehicle3D::set_wheel_radius);
-	ClassDB::bind_method(D_METHOD("get_wheel_radius"), &PhysXVehicle3D::get_wheel_radius);
-	ClassDB::bind_method(D_METHOD("set_wheel_half_width", "value"), &PhysXVehicle3D::set_wheel_half_width);
-	ClassDB::bind_method(D_METHOD("get_wheel_half_width"), &PhysXVehicle3D::get_wheel_half_width);
-	ClassDB::bind_method(D_METHOD("set_wheel_mass", "value"), &PhysXVehicle3D::set_wheel_mass);
-	ClassDB::bind_method(D_METHOD("get_wheel_mass"), &PhysXVehicle3D::get_wheel_mass);
-	ClassDB::bind_method(D_METHOD("set_wheel_moment_of_inertia", "value"), &PhysXVehicle3D::set_wheel_moment_of_inertia);
-	ClassDB::bind_method(D_METHOD("get_wheel_moment_of_inertia"), &PhysXVehicle3D::get_wheel_moment_of_inertia);
-	ClassDB::bind_method(D_METHOD("set_wheel_damping_rate", "value"), &PhysXVehicle3D::set_wheel_damping_rate);
-	ClassDB::bind_method(D_METHOD("get_wheel_damping_rate"), &PhysXVehicle3D::get_wheel_damping_rate);
-	ADD_GROUP("Wheels", "wheel_");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wheel_radius", PROPERTY_HINT_RANGE, "0.05,2,0.01,or_greater"), "set_wheel_radius", "get_wheel_radius");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wheel_half_width", PROPERTY_HINT_RANGE, "0.01,1,0.01,or_greater"), "set_wheel_half_width", "get_wheel_half_width");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wheel_mass", PROPERTY_HINT_RANGE, "0.1,200,0.1,or_greater"), "set_wheel_mass", "get_wheel_mass");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wheel_moment_of_inertia", PROPERTY_HINT_RANGE, "0.01,50,0.01,or_greater"), "set_wheel_moment_of_inertia", "get_wheel_moment_of_inertia");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wheel_damping_rate", PROPERTY_HINT_RANGE, "0,5,0.01,or_greater"), "set_wheel_damping_rate", "get_wheel_damping_rate");
-
-	ClassDB::bind_method(D_METHOD("set_suspension_travel", "value"), &PhysXVehicle3D::set_suspension_travel);
-	ClassDB::bind_method(D_METHOD("get_suspension_travel"), &PhysXVehicle3D::get_suspension_travel);
-	ClassDB::bind_method(D_METHOD("set_suspension_stiffness", "value"), &PhysXVehicle3D::set_suspension_stiffness);
-	ClassDB::bind_method(D_METHOD("get_suspension_stiffness"), &PhysXVehicle3D::get_suspension_stiffness);
-	ClassDB::bind_method(D_METHOD("set_suspension_damping", "value"), &PhysXVehicle3D::set_suspension_damping);
-	ClassDB::bind_method(D_METHOD("get_suspension_damping"), &PhysXVehicle3D::get_suspension_damping);
-	ADD_GROUP("Suspension", "suspension_");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "suspension_travel", PROPERTY_HINT_RANGE, "0.01,1,0.01,or_greater"), "set_suspension_travel", "get_suspension_travel");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "suspension_stiffness", PROPERTY_HINT_RANGE, "1000,100000,100,or_greater"), "set_suspension_stiffness", "get_suspension_stiffness");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "suspension_damping", PROPERTY_HINT_RANGE, "0,20000,10,or_greater"), "set_suspension_damping", "get_suspension_damping");
-
-	ClassDB::bind_method(D_METHOD("set_tire_lateral_stiffness", "value"), &PhysXVehicle3D::set_tire_lateral_stiffness);
-	ClassDB::bind_method(D_METHOD("get_tire_lateral_stiffness"), &PhysXVehicle3D::get_tire_lateral_stiffness);
-	ClassDB::bind_method(D_METHOD("set_tire_longitudinal_stiffness", "value"), &PhysXVehicle3D::set_tire_longitudinal_stiffness);
-	ClassDB::bind_method(D_METHOD("get_tire_longitudinal_stiffness"), &PhysXVehicle3D::get_tire_longitudinal_stiffness);
-	ClassDB::bind_method(D_METHOD("set_tire_friction", "value"), &PhysXVehicle3D::set_tire_friction);
-	ClassDB::bind_method(D_METHOD("get_tire_friction"), &PhysXVehicle3D::get_tire_friction);
-	ADD_GROUP("Tires", "tire_");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_lateral_stiffness", PROPERTY_HINT_RANGE, "1000,100000,100,or_greater"), "set_tire_lateral_stiffness", "get_tire_lateral_stiffness");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_longitudinal_stiffness", PROPERTY_HINT_RANGE, "1000,100000,100,or_greater"), "set_tire_longitudinal_stiffness", "get_tire_longitudinal_stiffness");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_friction", PROPERTY_HINT_RANGE, "0.1,3,0.01,or_greater"), "set_tire_friction", "get_tire_friction");
 
 	ClassDB::bind_method(D_METHOD("set_max_engine_torque", "value"), &PhysXVehicle3D::set_max_engine_torque);
 	ClassDB::bind_method(D_METHOD("get_max_engine_torque"), &PhysXVehicle3D::get_max_engine_torque);

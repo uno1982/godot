@@ -125,6 +125,11 @@ real_t GodotPhysXVehicleProbe::get_forward_speed() const {
 	return (real_t)impl->vehicle.rigidBodyState.linearVelocity.dot(fwd);
 }
 
+Vector3 GodotPhysXVehicleProbe::get_actor_position() const {
+	ERR_FAIL_COND_V(!impl->initialized, Vector3());
+	return to_godot(impl->vehicle.physxActor.rigidBody->getGlobalPose().p);
+}
+
 real_t GodotPhysXVehicleProbe::get_wheel_jounce(int p_wheel) const {
 	ERR_FAIL_COND_V(!impl->initialized, 0.0);
 	ERR_FAIL_INDEX_V(p_wheel, 4, 0.0);
@@ -145,4 +150,5 @@ void GodotPhysXVehicleProbe::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_forward_speed"), &GodotPhysXVehicleProbe::get_forward_speed);
 	ClassDB::bind_method(D_METHOD("get_wheel_jounce", "wheel"), &GodotPhysXVehicleProbe::get_wheel_jounce);
 	ClassDB::bind_method(D_METHOD("get_wheel_separation", "wheel"), &GodotPhysXVehicleProbe::get_wheel_separation);
+	ClassDB::bind_method(D_METHOD("get_actor_position"), &GodotPhysXVehicleProbe::get_actor_position);
 }

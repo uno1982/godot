@@ -509,6 +509,12 @@ struct Vehicle4WConfig {
 	real_t max_brake_torque = 6000.0f;
 	real_t max_steer_angle = 0.6f; // radians
 	real_t ackermann_strength = 1.0f;
+
+	// Same meaning as RigidBody3D/VehicleBody3D's own collision_layer/mask --
+	// applies to the chassis box shape only (see configure_vehicle4w()'s own
+	// note on why the wheel shapes stay non-simulating).
+	uint32_t collision_layer = 1;
+	uint32_t collision_mask = 1;
 };
 
 // Fills every param struct on v from cfg, builds the real PxRigidDynamic
@@ -674,31 +680,59 @@ inline bool configure_vehicle4w(Vehicle4W &v, const Vehicle4WConfig &cfg, PxPhys
 	v.physxActorBoxShapeHalfExtents = to_px(cfg.chassis_half_extents);
 	v.physxActorBoxShapeLocalPose = PxTransform(to_px(cfg.chassis_box_center_local));
 
-	// Uses the first wheel's tire_friction for the shared chassis/wheel
-	// PxMaterial -- per-wheel friction differences are already captured by
-	// physxMaterialFrictionParams[i].defaultFriction above (the road-geometry
-	// query's own friction lookup), not by this material.
-	PxMaterial *material = physics.createMaterial((PxReal)cfg.wheels[0].tire_friction, (PxReal)cfg.wheels[0].tire_friction, 0.1f);
-	if (!material) {
+	// Wheel shapes stay non-simulating (flags(0) below), so this material's
+	// friction/restitution never actually gets consumed by them -- it only
+	// exists because PxVehiclePhysXWheelShapeParams requires one.
+	PxMaterial *wheel_material = physics.createMaterial((PxReal)cfg.wheels[0].tire_friction, (PxReal)cfg.wheels[0].tire_friction, 0.1f);
+	// Chassis gets its own, deliberately low-friction material -- it's a
+	// REAL simulation shape now (see below), and if suspension settling ever
+	// lets the box graze the ground even slightly, a high-friction contact
+	// there fights the drivetrain directly (found via a real regression:
+	// reusing the wheel's friction=1.0 material on the chassis froze the car
+	// in place, throttle doing nothing, the instant this shape went from
+	// PxShapeFlags(0) to a real simulation shape). The chassis's role is
+	// just physical bulk for other objects to bump into, not a friction
+	// surface -- the wheels' own tire model is the only thing that should
+	// ever resist the car's own motion.
+	PxMaterial *chassis_material = physics.createMaterial(0.0f, 0.0f, 0.1f);
+	if (!wheel_material || !chassis_material) {
 		ERR_PRINT("PhysX vehicle: failed to create material.");
 		return false;
 	}
 	PxCookingParams cookingParams(physics.getTolerancesScale());
 
 	{
-		// PxShapeFlags(0) matches PhysX's own reference vehicle (VhPhysXActorHelpers.cpp):
-		// neither eSIMULATION_SHAPE nor eSCENE_QUERY_SHAPE is set, so these shapes never
-		// generate normal contacts or get hit by other queries -- weight support comes
-		// entirely from the road-geometry raycast (a separate query against the ground,
-		// which has real shape flags) plus direct rigid-body force integration, not from
-		// these shapes colliding. A known gap: a real scene wants these to be real
-		// simulation/query shapes with Godot-convention filter data, so the car's body
-		// can be hit by other objects -- not done yet.
+		// Chassis box: a REAL simulation shape (unlike the reference vehicle's
+		// own PxShapeFlags(0)) so the car's body can actually be hit by other
+		// rigid bodies in the scene, using Godot's own layer/mask convention
+		// (word0=layer, word1=mask -- see godot_physx_filter_shader).
+		// Deliberately NOT eSCENE_QUERY_SHAPE: the road-geometry raycast each
+		// wheel casts starts near its own suspension attachment point, which
+		// sits inside this box's own vertical extent -- with the box a valid
+		// query target, every wheel's raycast hit its own car's chassis
+		// instead of the ground (jounce pinned at 0, zero tire load, the
+		// actor's real PxRigidDynamic origin settling flush on the ground
+		// instead of the wheels ever bearing the car's weight -- a real
+		// regression caught by comparing rigidBodyState.pose, which is
+		// CoM-relative, against a raw getGlobalPose() read). Simulation
+		// contacts (blocking other bodies) and scene queries (raycasts
+		// hitting it) are independent PhysX flags; only the former is
+		// wanted here. Trade-off: this also means an ordinary Godot-side
+		// raycast query (e.g. a gameplay "aim" raycast) can't hit this car's
+		// body either -- acceptable for the immediate ask (the car should
+		// physically block/be blocked by other objects), revisit if
+		// raycast-pickability is ever needed too.
+		// Wheels stay at flags(0): their ground contact is entirely the
+		// road-geometry raycast + suspension, not real shape collision, and
+		// making them real simulation shapes too would double-apply ground
+		// reaction forces on top of that.
+		const PxFilterData chassisFilterData((PxU32)cfg.collision_layer, (PxU32)cfg.collision_mask, 0, 0);
+		const PxShapeFlags chassisShapeFlags(PxShapeFlag::eSIMULATION_SHAPE | PxShapeFlag::eVISUALIZATION);
 		const PxVehiclePhysXRigidActorParams actorParams(v.rigidBodyParams, nullptr);
 		const PxBoxGeometry boxGeom(v.physxActorBoxShapeHalfExtents);
-		const PxVehiclePhysXRigidActorShapeParams actorShapeParams(boxGeom, v.physxActorBoxShapeLocalPose, *material, PxShapeFlags(0), PxFilterData(), PxFilterData());
+		const PxVehiclePhysXRigidActorShapeParams actorShapeParams(boxGeom, v.physxActorBoxShapeLocalPose, *chassis_material, chassisShapeFlags, chassisFilterData, chassisFilterData);
 		const PxVehiclePhysXWheelParams wheelParams(v.axleDescription, v.wheelParams);
-		const PxVehiclePhysXWheelShapeParams wheelShapeParams(*material, PxShapeFlags(0), PxFilterData(), PxFilterData());
+		const PxVehiclePhysXWheelShapeParams wheelShapeParams(*wheel_material, PxShapeFlags(0), PxFilterData(), PxFilterData());
 
 		PxVehiclePhysXActorCreate(
 				v.frame,
@@ -707,7 +741,8 @@ inline bool configure_vehicle4w(Vehicle4W &v, const Vehicle4WConfig &cfg, PxPhys
 				physics, cookingParams,
 				v.physxActor);
 	}
-	material->release();
+	wheel_material->release();
+	chassis_material->release();
 
 	if (!v.physxActor.rigidBody) {
 		ERR_PRINT("PhysX vehicle: PxVehiclePhysXActorCreate failed.");

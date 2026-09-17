@@ -130,6 +130,8 @@ bool PhysXVehicle3D::_build() {
 	cfg.max_brake_torque = max_brake_torque;
 	cfg.max_steer_angle = max_steer_angle;
 	cfg.ackermann_strength = ackermann_strength;
+	cfg.collision_layer = collision_layer;
+	cfg.collision_mask = collision_mask;
 
 	for (int i = 0; i < 4; i++) {
 		PhysXVehicleWheel3D *w = wheels[i];
@@ -211,6 +213,7 @@ void PhysXVehicle3D::_notification(int p_what) {
 			v.commandState.brakes[0] = (PxReal)brake;
 			v.commandState.nbBrakes = 1;
 			v.commandState.steer = (PxReal)steer;
+			v.transmissionCommandState.gear = reverse ? PxVehicleDirectDriveTransmissionCommandState::eREVERSE : PxVehicleDirectDriveTransmissionCommandState::eFORWARD;
 			v.step((PxReal)get_physics_process_delta_time(), impl->simulationContext);
 			set_global_transform(to_godot(v.rigidBodyState.pose));
 			// Push each wheel's live pose (suspension jounce + steer angle +
@@ -289,6 +292,15 @@ PHYSX_VEHICLE_SETTER(ackermann_strength, ackermann_strength)
 
 #undef PHYSX_VEHICLE_SETTER
 
+void PhysXVehicle3D::set_collision_layer(uint32_t p_layer) {
+	collision_layer = p_layer;
+	_rebuild_if_live();
+}
+void PhysXVehicle3D::set_collision_mask(uint32_t p_mask) {
+	collision_mask = p_mask;
+	_rebuild_if_live();
+}
+
 void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_mass", "mass"), &PhysXVehicle3D::set_mass);
 	ClassDB::bind_method(D_METHOD("get_mass"), &PhysXVehicle3D::get_mass);
@@ -321,6 +333,16 @@ void PhysXVehicle3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "throttle", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_throttle", "get_throttle");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "brake", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_brake", "get_brake");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "steer", PROPERTY_HINT_RANGE, "-1,1,0.01"), "set_steer", "get_steer");
+	ClassDB::bind_method(D_METHOD("set_reverse", "value"), &PhysXVehicle3D::set_reverse);
+	ClassDB::bind_method(D_METHOD("is_reverse"), &PhysXVehicle3D::is_reverse);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "reverse"), "set_reverse", "is_reverse");
+
+	ClassDB::bind_method(D_METHOD("set_collision_layer", "layer"), &PhysXVehicle3D::set_collision_layer);
+	ClassDB::bind_method(D_METHOD("get_collision_layer"), &PhysXVehicle3D::get_collision_layer);
+	ClassDB::bind_method(D_METHOD("set_collision_mask", "mask"), &PhysXVehicle3D::set_collision_mask);
+	ClassDB::bind_method(D_METHOD("get_collision_mask"), &PhysXVehicle3D::get_collision_mask);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "collision_layer", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_collision_layer", "get_collision_layer");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_collision_mask", "get_collision_mask");
 
 	ClassDB::bind_method(D_METHOD("get_linear_velocity"), &PhysXVehicle3D::get_linear_velocity);
 	ClassDB::bind_method(D_METHOD("get_forward_speed"), &PhysXVehicle3D::get_forward_speed);

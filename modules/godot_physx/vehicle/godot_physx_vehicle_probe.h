@@ -74,6 +74,11 @@ public:
 	real_t get_wheel_jounce(int p_wheel) const;
 	real_t get_wheel_separation(int p_wheel) const;
 
+	// Raw PxRigidDynamic::getGlobalPose() -- the actor's own origin, NOT
+	// rigidBodyState.pose (which may be CoM-relative; used to check this
+	// directly rather than re-deriving the frame convention by hand).
+	Vector3 get_actor_position() const;
+
 	GodotPhysXVehicleProbe();
 	~GodotPhysXVehicleProbe();
 

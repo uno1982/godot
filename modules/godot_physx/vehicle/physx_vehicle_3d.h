@@ -96,6 +96,18 @@ public:
 	real_t get_brake() const { return brake; }
 	void set_steer(real_t p_v) { steer = p_v; }
 	real_t get_steer() const { return steer; }
+	// Direct-drive has no gearbox, just a fixed forward/neutral/reverse
+	// multiplier on throttle response (PxVehicleDirectDriveTransmissionCommandState) --
+	// this is that switch, not a raw property on Vehicle4WConfig, since it's
+	// a per-tick control input like throttle/brake/steer, not a build-time
+	// tuning value.
+	void set_reverse(bool p_v) { reverse = p_v; }
+	bool is_reverse() const { return reverse; }
+
+	void set_collision_layer(uint32_t p_layer);
+	uint32_t get_collision_layer() const { return collision_layer; }
+	void set_collision_mask(uint32_t p_mask);
+	uint32_t get_collision_mask() const { return collision_mask; }
 
 	Vector3 get_linear_velocity() const;
 	real_t get_forward_speed() const;
@@ -116,6 +128,9 @@ private:
 	real_t throttle = 0.0f;
 	real_t brake = 0.0f;
 	real_t steer = 0.0f;
+	bool reverse = false;
+	uint32_t collision_layer = 1;
+	uint32_t collision_mask = 1;
 
 	// Opaque pointer to the real PxVehicle2 composition (kept out of this
 	// header so nothing outside physx_vehicle_3d.cpp needs vehicle/PxVehicleAPI.h).

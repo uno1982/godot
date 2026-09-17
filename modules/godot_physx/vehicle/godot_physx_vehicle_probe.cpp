@@ -83,7 +83,8 @@ bool GodotPhysXVehicleProbe::initialize(RID p_space, const Vector3 &p_position) 
 	cfg.wheels[3].position = Vector3(0.75f, 0.05f, -1.35f); // RR
 	cfg.wheels[3].use_as_steering = false;
 
-	if (!configure_vehicle4w(impl->vehicle, cfg, *physics, *scene, impl->simulationContext)) {
+	PxU32 wheel_order[4];
+	if (!configure_vehicle4w(impl->vehicle, cfg, *physics, *scene, impl->simulationContext, wheel_order)) {
 		return false;
 	}
 

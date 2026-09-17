@@ -35,6 +35,7 @@
 #include "godot_physx_vehicle4w.h"
 #include "physx_vehicle_wheel_3d.h"
 
+#include "core/config/engine.h"
 #include "core/object/class_db.h"
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/resources/3d/box_shape_3d.h"
@@ -45,6 +46,10 @@ struct PhysXVehicle3D::Impl {
 	PxVehiclePhysXSimulationContext simulationContext;
 	PxScene *scene = nullptr;
 	bool built = false;
+	// wheel_order[Vehicle4W::WHEEL_FL/FR/RL/RR] = index into the parent's own
+	// `wheels` vector (child-registration order) for that canonical slot --
+	// see configure_vehicle4w()'s own doc comment.
+	PxU32 wheel_order[4] = {};
 };
 
 PhysXVehicle3D::PhysXVehicle3D() {
@@ -59,6 +64,17 @@ PhysXVehicle3D::~PhysXVehicle3D() {
 bool PhysXVehicle3D::_build() {
 	if (impl->built) {
 		return true;
+	}
+	// PxVehicleRigidBodyComponent integrates gravity/velocity into the
+	// chassis pose itself, inside v.step() -- independent of whether
+	// PxScene::simulate() is ever called. In the editor (not Play), nothing
+	// steps the scene, but NOTIFICATION_INTERNAL_PHYSICS_PROCESS still fires
+	// on this node, so without this guard the car just falls forever right
+	// in the viewport the moment it's placed. Same precedent as
+	// PhysXDestructible3D: no physics runs in the editor at all, only real
+	// gameplay (Engine::is_editor_hint() == false).
+	if (Engine::get_singleton()->is_editor_hint()) {
+		return false;
 	}
 	if (!is_inside_world() || get_world_3d().is_null()) {
 		return false;
@@ -134,7 +150,7 @@ bool PhysXVehicle3D::_build() {
 		wc.use_as_traction = w->is_used_as_traction();
 	}
 
-	if (!configure_vehicle4w(impl->vehicle, cfg, *physics, *scene, impl->simulationContext)) {
+	if (!configure_vehicle4w(impl->vehicle, cfg, *physics, *scene, impl->simulationContext, impl->wheel_order)) {
 		return false;
 	}
 
@@ -197,6 +213,15 @@ void PhysXVehicle3D::_notification(int p_what) {
 			v.commandState.steer = (PxReal)steer;
 			v.step((PxReal)get_physics_process_delta_time(), impl->simulationContext);
 			set_global_transform(to_godot(v.rigidBodyState.pose));
+			// Push each wheel's live pose (suspension jounce + steer angle +
+			// roll spin, all baked into wheelLocalPoses by PxVehicleWheelComponent)
+			// onto that wheel's own node -- same idea as VehicleBody3D's own
+			// _update_wheel_transform(): the wheel NODE moves, and any
+			// MeshInstance3D the scene author parented under it inherits that
+			// motion automatically, no separate mesh-transform wiring needed.
+			for (uint32_t i = 0; i < 4; i++) {
+				wheels[impl->wheel_order[i]]->set_transform(to_godot(v.wheelLocalPoses[i].localPose));
+			}
 		} break;
 	}
 }

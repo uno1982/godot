@@ -522,7 +522,12 @@ struct Vehicle4WConfig {
 // including cfg.wheels not containing exactly 2 use_as_steering==true and
 // 2 ==false entries, which this fixed direct-drive/Ackermann composition
 // requires.
-inline bool configure_vehicle4w(Vehicle4W &v, const Vehicle4WConfig &cfg, PxPhysics &physics, PxScene &scene, PxVehiclePhysXSimulationContext &out_context) {
+// out_wheel_order[Vehicle4W::WHEEL_FL/FR/RL/RR] = the index into cfg.wheels[]
+// that ended up in that canonical slot -- callers that keep their own
+// per-wheel objects in cfg.wheels[] order (e.g. PhysXVehicle3D's own
+// PhysXVehicleWheel3D children) need this to know which of their own
+// objects corresponds to v.wheelLocalPoses[WHEEL_FL] etc. each tick.
+inline bool configure_vehicle4w(Vehicle4W &v, const Vehicle4WConfig &cfg, PxPhysics &physics, PxScene &scene, PxVehiclePhysXSimulationContext &out_context, PxU32 out_wheel_order[4]) {
 	v.setToDefault();
 
 	// Godot convention: forward = -Z, right = +X, up = +Y (matches
@@ -564,6 +569,9 @@ inline bool configure_vehicle4w(Vehicle4W &v, const Vehicle4WConfig &cfg, PxPhys
 	slot[Vehicle4W::WHEEL_FR] = front[1]; // positive (right) x
 	slot[Vehicle4W::WHEEL_RL] = rear[0];
 	slot[Vehicle4W::WHEEL_RR] = rear[1];
+	for (PxU32 i = 0; i < 4; i++) {
+		out_wheel_order[i] = slot[i];
+	}
 
 	const PxU32 frontWheels[2] = { Vehicle4W::WHEEL_FL, Vehicle4W::WHEEL_FR };
 	const PxU32 rearWheels[2] = { Vehicle4W::WHEEL_RL, Vehicle4W::WHEEL_RR };

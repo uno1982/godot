@@ -129,38 +129,25 @@ private:
 
 	// PhysX's own default of 4 position / 1 velocity iterations is marginal
 	// for any body under a strong, rapidly-varying constraint load -- joint
-	// chains (pendulums, ragdolls, cloth strips) were the first case found,
-	// but the same under-resolution shows up for any body receiving large
-	// external impulses every step through the generic apply_impulse() API
-	// with no real PxJoint involved at all -- confirmed with VehicleBody3D
-	// (stock, backend-agnostic Godot scene code driving wheel suspension/
-	// friction purely through apply_impulse()): stiffer suspension settings
-	// that should just mean a firmer ride instead pumped the chassis into a
-	// runaway tumble within ~2.5s of sustained hard cornering, while the
-	// exact same setup ran clean and stable at these same iteration counts.
-	// PxVehicle2's own design corroborates this isn't PhysX-specific -- it
-	// deliberately substeps suspension/tire dynamics faster than the main
-	// rigid-body step for exactly this stiffness-vs-resolution reason
-	// (PxVehicleComponentSequence's substep groups); this is the equivalent
-	// fix reachable from the generic PhysicsServer3D level, where a fixed
-	// external body can't be substepped independently of the physics step
-	// it's driven from. Applied universally, not just to jointed bodies --
-	// higher iteration counts only improve solver accuracy, never behavior,
-	// so there's no real body class this should regress. Real A/B cost check
-	// on the heaviest rigid-body scene in this project (physx_playground's
-	// 2000-box pile, demo repo): 6.94ms -> 7.41ms average physics step, ~7%
-	// -- a real but modest cost even at this scale, and smaller in absolute
-	// terms for any lighter scene.
-	// Checked TGS (physics/physx_3d/simulation/solver_type) against the same
-	// vehicle repro on the theory it's the same PGS/joint-chain issue
-	// documented below -- it wasn't: TGS tracked PGS+this iteration bump
-	// almost exactly (same clean ~2s hard-turn, same breakdown point under
-	// sustained full-throttle cornering, arguably a worse tumble in the
-	// tail), so it buys nothing here beyond what the iteration bump already
-	// does. Left at the project's PGS default; see NOTES.md for why TGS
-	// isn't a safe global default anyway (regresses large rigid-body piles).
-	static constexpr uint32_t SOLVER_ITERS_POS = 8;
-	static constexpr uint32_t SOLVER_ITERS_VEL = 2;
+	// chains (pendulums, ragdolls, cloth strips) are the case this was added
+	// for. Tried applying this bump universally (to every dynamic body, not
+	// just jointed ones) while root-causing a VehicleBody3D rollover -- it
+	// helped there, but cost a real, measured regression on CUDA/GPU dynamics
+	// for scenes with a large simultaneously-active body count and no joints
+	// at all (snow.tscn's chunk pile, ~250 free rigid actors): the GPU solver
+	// processes a partitioned island's iterations together, so bumping every
+	// body in a big island multiplies the GPU kernel's per-substep work
+	// directly, not just the cost of the individual bumped bodies (unlike the
+	// ~7% CPU-only cost measured on physx_playground's 2000-box pile, which
+	// has no comparably large single GPU-solved island). The vehicle's actual
+	// fix turned out to be apply_impulse's frame-convention bug (see its
+	// comment), not this iteration bump -- so back to jointed-only, which is
+	// what pendulums/ragdolls/cloth actually need and doesn't touch every
+	// free body in a GPU scene.
+	static constexpr uint32_t SOLVER_ITERS_DEFAULT_POS = 4;
+	static constexpr uint32_t SOLVER_ITERS_DEFAULT_VEL = 1;
+	static constexpr uint32_t SOLVER_ITERS_JOINTED_POS = 8;
+	static constexpr uint32_t SOLVER_ITERS_JOINTED_VEL = 2;
 
 	bool _is_dynamic() const;
 	void _destroy_actor();

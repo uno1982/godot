@@ -706,7 +706,11 @@ void GodotPhysXBody3D::_apply_solver_iterations() {
 	if (!dyn) {
 		return;
 	}
-	dyn->setSolverIterationCounts(SOLVER_ITERS_POS, SOLVER_ITERS_VEL);
+	if (joints.is_empty()) {
+		dyn->setSolverIterationCounts(SOLVER_ITERS_DEFAULT_POS, SOLVER_ITERS_DEFAULT_VEL);
+	} else {
+		dyn->setSolverIterationCounts(SOLVER_ITERS_JOINTED_POS, SOLVER_ITERS_JOINTED_VEL);
+	}
 }
 
 void GodotPhysXBody3D::apply_torque(const Vector3 &p_torque) {

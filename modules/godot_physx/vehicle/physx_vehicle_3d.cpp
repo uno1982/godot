@@ -234,8 +234,23 @@ void PhysXVehicle3D::_notification(int p_what) {
 			// _update_wheel_transform(): the wheel NODE moves, and any
 			// MeshInstance3D the scene author parented under it inherits that
 			// motion automatically, no separate mesh-transform wiring needed.
+			//
+			// wheelLocalPoses[i].localPose is in the CoM frame, NOT the actor's
+			// own origin frame (confirmed directly in PhysX's own write-back
+			// code, VhPhysXActorFunctions.cpp: "Local pose in actor frame" is
+			// computed as cmassLocalPose * wheelLocalPose, not wheelLocalPose
+			// alone) -- this node's own transform above is the actor's real
+			// origin, so composing wheelLocalPose directly onto it left every
+			// wheel a constant offset away (equal to the CoM offset, ~0.35m by
+			// default) from where it should be, visible as wheels sunk deep
+			// into the ground regardless of wheel radius (a real regression
+			// caught by an A/B on radius that showed the SAME absolute
+			// penetration depth for two different radii -- ruling out anything
+			// radius-proportional and pointing straight at a fixed frame
+			// offset instead).
+			const PxTransform cmass_local_pose = v.physxActor.rigidBody->getCMassLocalPose();
 			for (uint32_t i = 0; i < 4; i++) {
-				wheels[impl->wheel_order[i]]->set_transform(to_godot(v.wheelLocalPoses[i].localPose));
+				wheels[impl->wheel_order[i]]->set_transform(to_godot(cmass_local_pose * v.wheelLocalPoses[i].localPose));
 			}
 		} break;
 	}
@@ -254,6 +269,39 @@ real_t PhysXVehicle3D::get_forward_speed() const {
 	}
 	const PxVec3 fwd = impl->vehicle.frame.getLngAxis();
 	return (real_t)impl->vehicle.rigidBodyState.linearVelocity.dot(fwd);
+}
+
+real_t PhysXVehicle3D::get_wheel_jounce(int p_wheel) const {
+	if (!impl->built) {
+		return 0.0;
+	}
+	ERR_FAIL_INDEX_V((uint32_t)p_wheel, wheels.size(), 0.0);
+	for (uint32_t i = 0; i < 4; i++) {
+		if (impl->wheel_order[i] == (uint32_t)p_wheel) {
+			return (real_t)impl->vehicle.suspensionStates[i].jounce;
+		}
+	}
+	return 0.0;
+}
+
+real_t PhysXVehicle3D::get_wheel_separation(int p_wheel) const {
+	if (!impl->built) {
+		return 0.0;
+	}
+	ERR_FAIL_INDEX_V((uint32_t)p_wheel, wheels.size(), 0.0);
+	for (uint32_t i = 0; i < 4; i++) {
+		if (impl->wheel_order[i] == (uint32_t)p_wheel) {
+			return (real_t)impl->vehicle.suspensionStates[i].separation;
+		}
+	}
+	return 0.0;
+}
+
+Vector3 PhysXVehicle3D::get_actor_position() const {
+	if (!impl->built) {
+		return Vector3();
+	}
+	return to_godot(impl->vehicle.physxActor.rigidBody->getGlobalPose().p);
 }
 
 PackedStringArray PhysXVehicle3D::get_configuration_warnings() const {
@@ -358,4 +406,7 @@ void PhysXVehicle3D::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("get_linear_velocity"), &PhysXVehicle3D::get_linear_velocity);
 	ClassDB::bind_method(D_METHOD("get_forward_speed"), &PhysXVehicle3D::get_forward_speed);
+	ClassDB::bind_method(D_METHOD("get_wheel_jounce", "wheel"), &PhysXVehicle3D::get_wheel_jounce);
+	ClassDB::bind_method(D_METHOD("get_wheel_separation", "wheel"), &PhysXVehicle3D::get_wheel_separation);
+	ClassDB::bind_method(D_METHOD("get_actor_position"), &PhysXVehicle3D::get_actor_position);
 }

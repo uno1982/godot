@@ -52,7 +52,8 @@ public:
 	// p_space: a PhysicsServer3D space RID already running on the PhysX
 	// backend (e.g. get_world_3d().space) -- the probe's chassis/wheels are
 	// added to that space's real PxScene.
-	bool initialize(RID p_space, const Vector3 &p_position);
+	// p_wheel_radius <= 0 uses Vehicle4WWheelConfig's own default (0.35).
+	bool initialize(RID p_space, const Vector3 &p_position, real_t p_wheel_radius = -1.0);
 
 	// p_throttle/p_brake in [0,1], p_steer in [-1,1]. Runs the vehicle's own
 	// PxVehicleComponentSequence for this tick; does NOT call
@@ -78,6 +79,12 @@ public:
 	// rigidBodyState.pose (which may be CoM-relative; used to check this
 	// directly rather than re-deriving the frame convention by hand).
 	Vector3 get_actor_position() const;
+
+	// World-space wheel HUB CENTER (actor pose composed with
+	// wheelLocalPoses[i].localPose) -- for directly measuring ground
+	// clearance (wheel_position.y - radius) instead of re-deriving the
+	// suspension attachment/jounce math by hand.
+	Vector3 get_wheel_position(int p_wheel) const;
 
 	GodotPhysXVehicleProbe();
 	~GodotPhysXVehicleProbe();

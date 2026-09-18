@@ -57,7 +57,7 @@ GodotPhysXVehicleProbe::~GodotPhysXVehicleProbe() {
 	}
 }
 
-bool GodotPhysXVehicleProbe::initialize(RID p_space, const Vector3 &p_position) {
+bool GodotPhysXVehicleProbe::initialize(RID p_space, const Vector3 &p_position, real_t p_wheel_radius) {
 	ERR_FAIL_COND_V(impl->initialized, false);
 
 	GodotPhysXServer3D *server = GodotPhysXServer3D::get_singleton();
@@ -82,6 +82,12 @@ bool GodotPhysXVehicleProbe::initialize(RID p_space, const Vector3 &p_position) 
 	cfg.wheels[2].use_as_steering = false;
 	cfg.wheels[3].position = Vector3(0.75f, 0.05f, -1.35f); // RR
 	cfg.wheels[3].use_as_steering = false;
+
+	if (p_wheel_radius > 0.0) {
+		for (int i = 0; i < 4; i++) {
+			cfg.wheels[i].radius = p_wheel_radius;
+		}
+	}
 
 	PxU32 wheel_order[4];
 	if (!configure_vehicle4w(impl->vehicle, cfg, *physics, *scene, impl->simulationContext, wheel_order)) {
@@ -130,6 +136,18 @@ Vector3 GodotPhysXVehicleProbe::get_actor_position() const {
 	return to_godot(impl->vehicle.physxActor.rigidBody->getGlobalPose().p);
 }
 
+Vector3 GodotPhysXVehicleProbe::get_wheel_position(int p_wheel) const {
+	ERR_FAIL_COND_V(!impl->initialized, Vector3());
+	ERR_FAIL_INDEX_V(p_wheel, 4, Vector3());
+	// wheelLocalPoses[i].localPose is in the CoM frame, not the actor's own
+	// origin frame -- see PhysXVehicle3D's identical note for the SDK source
+	// citation that confirmed this.
+	const PxTransform actor_pose = impl->vehicle.physxActor.rigidBody->getGlobalPose();
+	const PxTransform cmass_local_pose = impl->vehicle.physxActor.rigidBody->getCMassLocalPose();
+	const PxTransform wheel_world = actor_pose * cmass_local_pose * impl->vehicle.wheelLocalPoses[p_wheel].localPose;
+	return to_godot(wheel_world.p);
+}
+
 real_t GodotPhysXVehicleProbe::get_wheel_jounce(int p_wheel) const {
 	ERR_FAIL_COND_V(!impl->initialized, 0.0);
 	ERR_FAIL_INDEX_V(p_wheel, 4, 0.0);
@@ -143,7 +161,7 @@ real_t GodotPhysXVehicleProbe::get_wheel_separation(int p_wheel) const {
 }
 
 void GodotPhysXVehicleProbe::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("initialize", "space", "position"), &GodotPhysXVehicleProbe::initialize);
+	ClassDB::bind_method(D_METHOD("initialize", "space", "position", "wheel_radius"), &GodotPhysXVehicleProbe::initialize, DEFVAL(-1.0));
 	ClassDB::bind_method(D_METHOD("step", "dt", "throttle", "brake", "steer"), &GodotPhysXVehicleProbe::step);
 	ClassDB::bind_method(D_METHOD("get_position"), &GodotPhysXVehicleProbe::get_position);
 	ClassDB::bind_method(D_METHOD("get_linear_velocity"), &GodotPhysXVehicleProbe::get_linear_velocity);
@@ -151,4 +169,5 @@ void GodotPhysXVehicleProbe::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wheel_jounce", "wheel"), &GodotPhysXVehicleProbe::get_wheel_jounce);
 	ClassDB::bind_method(D_METHOD("get_wheel_separation", "wheel"), &GodotPhysXVehicleProbe::get_wheel_separation);
 	ClassDB::bind_method(D_METHOD("get_actor_position"), &GodotPhysXVehicleProbe::get_actor_position);
+	ClassDB::bind_method(D_METHOD("get_wheel_position", "wheel"), &GodotPhysXVehicleProbe::get_wheel_position);
 }

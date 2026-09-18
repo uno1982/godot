@@ -112,6 +112,14 @@ public:
 	Vector3 get_linear_velocity() const;
 	real_t get_forward_speed() const;
 
+	// Diagnostics -- see GodotPhysXVehicleProbe's own identical methods for
+	// what these mean. wheel index here matches this node's own `wheels`
+	// child-registration order (NOT the FL/FR/RL/RR canonical order the
+	// underlying Vehicle4W uses internally).
+	real_t get_wheel_jounce(int p_wheel) const;
+	real_t get_wheel_separation(int p_wheel) const;
+	Vector3 get_actor_position() const;
+
 	PackedStringArray get_configuration_warnings() const override;
 
 	PhysXVehicle3D();

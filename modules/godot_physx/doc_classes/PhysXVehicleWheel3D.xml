@@ -29,7 +29,13 @@
 			How far the suspension can compress from fully extended, in meters. If this is too short for the ride height, [method PhysXVehicle3D.get_wheel_separation] reports a negative value (the wheel penetrates the ground even fully compressed).
 		</member>
 		<member name="tire_friction" type="float" setter="set_tire_friction" getter="get_tire_friction" default="1.0">
-			The tire's peak grip coefficient (used at a small amount of wheel slip). Grip is [code]90%[/code] of this value at zero slip and falls to [code]70%[/code] once the tire is fully sliding/locked -- a real tire (and [VehicleWheel3D]'s own simpler single-coefficient model) grips less once it starts sliding than while still rolling, which is what actually produces a skid under hard braking or throttle instead of the tire just sticking to the road regardless of how hard it is being spun or braked.
+			The tire's peak grip coefficient, reached at ~10% wheel slip. Grip below and above that point is scaled by [member tire_rest_grip] and [member tire_slide_grip] -- a real tire (and [VehicleWheel3D]'s own simpler single-coefficient model) grips less once it starts sliding than while still rolling, which is what actually produces a skid under hard braking or throttle instead of the tire just sticking to the road regardless of how hard it is being spun or braked.
+		</member>
+		<member name="tire_rest_grip" type="float" setter="set_tire_rest_grip" getter="get_tire_rest_grip" default="0.9">
+			Grip at zero wheel slip, as a fraction of [member tire_friction]. Lower than [code]1.0[/code] so grip still ramps up toward the peak at ~10% slip rather than starting there.
+		</member>
+		<member name="tire_slide_grip" type="float" setter="set_tire_slide_grip" getter="get_tire_slide_grip" default="0.7">
+			Grip once the tire is fully sliding/locked (100% wheel slip), as a fraction of [member tire_friction]. Lower values make a locked wheel (hard braking) or a spun-out wheel (hard throttle) slide/skid more readily instead of gripping like a rolling tire; [code]1.0[/code] disables the falloff entirely (a locked tire grips as well as a rolling one).
 		</member>
 		<member name="tire_lateral_stiffness" type="float" setter="set_tire_lateral_stiffness" getter="get_tire_lateral_stiffness" default="20000.0">
 			How much sideways (cornering) force the tire develops per unit of lateral slip angle. Higher values corner more sharply for the same steering input, at the cost of feeling less forgiving/more twitchy.

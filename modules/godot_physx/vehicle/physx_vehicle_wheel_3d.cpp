@@ -104,6 +104,14 @@ void PhysXVehicleWheel3D::set_tire_friction(real_t p_v) {
 	tire_friction = p_v;
 	_rebuild_parent_if_live();
 }
+void PhysXVehicleWheel3D::set_tire_rest_grip(real_t p_v) {
+	tire_rest_grip = p_v;
+	_rebuild_parent_if_live();
+}
+void PhysXVehicleWheel3D::set_tire_slide_grip(real_t p_v) {
+	tire_slide_grip = p_v;
+	_rebuild_parent_if_live();
+}
 void PhysXVehicleWheel3D::set_use_as_steering(bool p_v) {
 	use_as_steering = p_v;
 	_rebuild_parent_if_live();
@@ -154,9 +162,15 @@ void PhysXVehicleWheel3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_tire_longitudinal_stiffness"), &PhysXVehicleWheel3D::get_tire_longitudinal_stiffness);
 	ClassDB::bind_method(D_METHOD("set_tire_friction", "value"), &PhysXVehicleWheel3D::set_tire_friction);
 	ClassDB::bind_method(D_METHOD("get_tire_friction"), &PhysXVehicleWheel3D::get_tire_friction);
+	ClassDB::bind_method(D_METHOD("set_tire_rest_grip", "value"), &PhysXVehicleWheel3D::set_tire_rest_grip);
+	ClassDB::bind_method(D_METHOD("get_tire_rest_grip"), &PhysXVehicleWheel3D::get_tire_rest_grip);
+	ClassDB::bind_method(D_METHOD("set_tire_slide_grip", "value"), &PhysXVehicleWheel3D::set_tire_slide_grip);
+	ClassDB::bind_method(D_METHOD("get_tire_slide_grip"), &PhysXVehicleWheel3D::get_tire_slide_grip);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_lateral_stiffness", PROPERTY_HINT_RANGE, "1000,100000,100,or_greater"), "set_tire_lateral_stiffness", "get_tire_lateral_stiffness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_longitudinal_stiffness", PROPERTY_HINT_RANGE, "1000,100000,100,or_greater"), "set_tire_longitudinal_stiffness", "get_tire_longitudinal_stiffness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_friction", PROPERTY_HINT_RANGE, "0.1,3,0.01,or_greater"), "set_tire_friction", "get_tire_friction");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_rest_grip", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_tire_rest_grip", "get_tire_rest_grip");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_slide_grip", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_tire_slide_grip", "get_tire_slide_grip");
 
 	ClassDB::bind_method(D_METHOD("set_use_as_steering", "value"), &PhysXVehicleWheel3D::set_use_as_steering);
 	ClassDB::bind_method(D_METHOD("is_used_as_steering"), &PhysXVehicleWheel3D::is_used_as_steering);

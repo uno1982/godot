@@ -148,6 +148,8 @@ bool PhysXVehicle3D::_build() {
 		wc.tire_lateral_stiffness = w->get_tire_lateral_stiffness();
 		wc.tire_longitudinal_stiffness = w->get_tire_longitudinal_stiffness();
 		wc.tire_friction = w->get_tire_friction();
+		wc.tire_rest_grip = w->get_tire_rest_grip();
+		wc.tire_slide_grip = w->get_tire_slide_grip();
 		wc.use_as_steering = w->is_used_as_steering();
 		wc.use_as_traction = w->is_used_as_traction();
 	}

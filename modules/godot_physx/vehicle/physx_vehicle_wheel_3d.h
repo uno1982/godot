@@ -76,6 +76,10 @@ public:
 	real_t get_tire_longitudinal_stiffness() const { return tire_longitudinal_stiffness; }
 	void set_tire_friction(real_t p_v);
 	real_t get_tire_friction() const { return tire_friction; }
+	void set_tire_rest_grip(real_t p_v);
+	real_t get_tire_rest_grip() const { return tire_rest_grip; }
+	void set_tire_slide_grip(real_t p_v);
+	real_t get_tire_slide_grip() const { return tire_slide_grip; }
 
 	void set_use_as_steering(bool p_v);
 	bool is_used_as_steering() const { return use_as_steering; }
@@ -96,6 +100,8 @@ private:
 	real_t tire_lateral_stiffness = 20000.0f;
 	real_t tire_longitudinal_stiffness = 20000.0f;
 	real_t tire_friction = 1.0f;
+	real_t tire_rest_grip = 0.9f;
+	real_t tire_slide_grip = 0.7f;
 	bool use_as_steering = false;
 	bool use_as_traction = true;
 

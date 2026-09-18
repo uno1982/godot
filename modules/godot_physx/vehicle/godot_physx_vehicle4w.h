@@ -470,6 +470,11 @@ struct Vehicle4WWheelConfig {
 	real_t tire_lateral_stiffness = 20000.0f;
 	real_t tire_longitudinal_stiffness = 20000.0f;
 	real_t tire_friction = 1.0f;
+	// frictionVsSlip curve, as fractions of tire_friction: grip ramps up to
+	// peak (1.0x) at 10% slip, then falls off to tire_slide_grip once fully
+	// sliding/locked (100% slip). tire_rest_grip is the 0%-slip value.
+	real_t tire_rest_grip = 0.9f;
+	real_t tire_slide_grip = 0.7f;
 
 	// Front axle (steering) vs. rear -- also which axle Ackermann correction
 	// and the steer response multiplier apply to. Exactly 2 of the 4 wheels
@@ -645,11 +650,11 @@ inline bool configure_vehicle4w(Vehicle4W &v, const Vehicle4WConfig &cfg, PxPhys
 		// a flat curve here would mean a locked tire grips as well as a
 		// rolling one, which never produces a real skid.
 		v.tireForceParams[i].frictionVsSlip[0][0] = 0.0f;
-		v.tireForceParams[i].frictionVsSlip[0][1] = (PxReal)w.tire_friction * 0.9f;
+		v.tireForceParams[i].frictionVsSlip[0][1] = (PxReal)w.tire_friction * (PxReal)w.tire_rest_grip;
 		v.tireForceParams[i].frictionVsSlip[1][0] = 0.1f;
 		v.tireForceParams[i].frictionVsSlip[1][1] = (PxReal)w.tire_friction;
 		v.tireForceParams[i].frictionVsSlip[2][0] = 1.0f;
-		v.tireForceParams[i].frictionVsSlip[2][1] = (PxReal)w.tire_friction * 0.7f;
+		v.tireForceParams[i].frictionVsSlip[2][1] = (PxReal)w.tire_friction * (PxReal)w.tire_slide_grip;
 		v.tireForceParams[i].loadFilter[0][0] = 0.0f;
 		v.tireForceParams[i].loadFilter[0][1] = 0.23f;
 		v.tireForceParams[i].loadFilter[1][0] = 3.0f;

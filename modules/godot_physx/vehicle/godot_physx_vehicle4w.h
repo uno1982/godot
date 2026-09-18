@@ -630,16 +630,36 @@ inline bool configure_vehicle4w(Vehicle4W &v, const Vehicle4WConfig &cfg, PxPhys
 		v.wheelParams[i].moi = (PxReal)w.wheel_moment_of_inertia;
 		v.wheelParams[i].dampingRate = (PxReal)w.damping_rate;
 
-		v.suspensionParams[i].suspensionAttachment = PxTransform(to_px(w.position));
+		v.suspensionForceParams[i].stiffness = (PxReal)w.suspension_stiffness;
+		v.suspensionForceParams[i].damping = (PxReal)w.suspension_damping;
+		v.suspensionForceParams[i].sprungMass = v.rigidBodyParams.mass * 0.25f;
+
+		// suspensionAttachment is PxVehicle2's own "wheel pose at maximum
+		// compression" (PxVehicleSuspensionParams.h), specified in "the
+		// frame of the rigid body" -- CoM-composed
+		// (actorGlobalPose * actorCMassLocalPose, see PxVehicleWheelHelpers.h's
+		// rigidBodyPose), not the actor's raw origin. Neither of those is
+		// what a scene author expects w.position to mean: PxVehicle2 has no
+		// notion of a rest length independent of travel (unlike Bullet's
+		// VehicleWheel3D, whose spring force is stiffness*(restLength -
+		// currentLength) -- restLength and travel are two separate
+		// numbers there), so its natural zero-force point always sits
+		// pinned to full droop, `travel` away from the attachment. That
+		// means changing travel alone shifts where the suspension settles,
+		// which is surprising and makes w.position mean "attachment", not
+		// "resting position" -- the opposite of VehicleWheel3D's own
+		// convention. Backing out the attachment from an estimated static
+		// jounce makes w.position mean the same thing VehicleWheel3D's own
+		// position means: where the wheel actually sits at rest.
+		const PxReal restLoadEstimate = v.suspensionForceParams[i].sprungMass * 9.81f;
+		const PxReal jounceAtRest = (w.suspension_stiffness > 0.0) ? PxClamp(restLoadEstimate / (PxReal)w.suspension_stiffness, 0.0f, (PxReal)w.suspension_travel) : 0.0f;
+		const Vector3 attachment_local = w.position - cfg.chassis_com_local + Vector3(0.0f, (real_t)((PxReal)w.suspension_travel - jounceAtRest), 0.0f);
+		v.suspensionParams[i].suspensionAttachment = PxTransform(to_px(attachment_local));
 		v.suspensionParams[i].suspensionTravelDir = PxVec3(0.0f, -1.0f, 0.0f);
 		v.suspensionParams[i].suspensionTravelDist = (PxReal)w.suspension_travel;
 		v.suspensionParams[i].wheelAttachment = PxTransform(PxIdentity);
 
 		v.suspensionComplianceParams[i] = PxVehicleSuspensionComplianceParams(); // no toe/camber/force-offset curves
-
-		v.suspensionForceParams[i].stiffness = (PxReal)w.suspension_stiffness;
-		v.suspensionForceParams[i].damping = (PxReal)w.suspension_damping;
-		v.suspensionForceParams[i].sprungMass = v.rigidBodyParams.mass * 0.25f;
 
 		v.tireForceParams[i].latStiffX = 0.01f;
 		v.tireForceParams[i].latStiffY = (PxReal)w.tire_lateral_stiffness;

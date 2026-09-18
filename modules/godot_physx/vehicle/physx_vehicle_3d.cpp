@@ -341,6 +341,12 @@ PackedStringArray PhysXVehicle3D::get_configuration_warnings() const {
 
 void PhysXVehicle3D::set_mass(real_t p_mass) {
 	mass = p_mass;
+	// Wheel gizmos estimate rest ride height from this vehicle's own mass
+	// (sprung_mass = mass * 0.25, matching configure_vehicle4w()) -- refresh
+	// them so the editor preview stays accurate as mass is tuned.
+	for (PhysXVehicleWheel3D *w : wheels) {
+		w->update_gizmos();
+	}
 	_rebuild_if_live();
 }
 void PhysXVehicle3D::set_moment_of_inertia(const Vector3 &p_moi) {

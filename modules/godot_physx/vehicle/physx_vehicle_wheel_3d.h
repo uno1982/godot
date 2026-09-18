@@ -94,9 +94,9 @@ private:
 	real_t wheel_mass = 20.0f;
 	real_t wheel_moment_of_inertia = 1.2f;
 	real_t damping_rate = 0.25f;
-	real_t suspension_travel = 0.15f;
-	real_t suspension_stiffness = 90000.0f;
-	real_t suspension_damping = 4500.0f;
+	real_t suspension_travel = 0.22f;
+	real_t suspension_stiffness = 22000.0f;
+	real_t suspension_damping = 5200.0f;
 	real_t tire_lateral_stiffness = 20000.0f;
 	real_t tire_longitudinal_stiffness = 20000.0f;
 	real_t tire_friction = 1.0f;

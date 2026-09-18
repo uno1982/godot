@@ -62,6 +62,7 @@ void PhysXVehicleWheel3D::_rebuild_parent_if_live() {
 
 void PhysXVehicleWheel3D::set_radius(real_t p_v) {
 	radius = p_v;
+	update_gizmos();
 	_rebuild_parent_if_live();
 }
 void PhysXVehicleWheel3D::set_half_width(real_t p_v) {
@@ -82,10 +83,12 @@ void PhysXVehicleWheel3D::set_damping_rate(real_t p_v) {
 }
 void PhysXVehicleWheel3D::set_suspension_travel(real_t p_v) {
 	suspension_travel = p_v;
+	update_gizmos();
 	_rebuild_parent_if_live();
 }
 void PhysXVehicleWheel3D::set_suspension_stiffness(real_t p_v) {
 	suspension_stiffness = p_v;
+	update_gizmos();
 	_rebuild_parent_if_live();
 }
 void PhysXVehicleWheel3D::set_suspension_damping(real_t p_v) {

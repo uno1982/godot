@@ -4,7 +4,7 @@
 		One wheel of a [PhysXVehicle3D]. Add exactly 4 as children of a [PhysXVehicle3D], the same way [VehicleWheel3D] children work on a [VehicleBody3D].
 	</brief_description>
 	<description>
-		This node's own [member Node3D.position] is the wheel's suspension attachment point in the vehicle's own local space -- not a separate offset property, so a [MeshInstance3D] parented under it lines up with the real, live wheel motion (suspension jounce, steering angle, roll) automatically, with no manual transform syncing.
+		This node's own [member Node3D.position] is where the wheel rests under its own static share of the vehicle's weight -- the same convention [VehicleWheel3D]'s own position uses. It is not a separate offset property, so a [MeshInstance3D] parented under it lines up with the real, live wheel motion (suspension jounce, steering angle, roll) automatically, with no manual transform syncing, and the Inspector's own gizmo shows the wheel sitting exactly where Play will settle it -- no separate editor-time-vs-runtime estimate involved.
 		Exactly 2 of a vehicle's 4 wheels must have [member use_as_steering] enabled (the front axle) -- [PhysXVehicle3D] surfaces a configuration warning if that is not the case.
 	</description>
 	<tutorials>
@@ -19,14 +19,14 @@
 		<member name="radius" type="float" setter="set_radius" getter="get_radius" default="0.35">
 			The wheel's radius, in meters -- also the size the suspension raycast uses to place the wheel above the ground, so this should match whatever wheel mesh is parented under this node.
 		</member>
-		<member name="suspension_damping" type="float" setter="set_suspension_damping" getter="get_suspension_damping" default="4500.0">
-			How strongly the suspension resists the *rate* of compression change, separate from [member suspension_stiffness]'s resistance to compression itself -- higher values settle bounces (from a bump, or landing after a jump) faster, with less oscillation.
+		<member name="suspension_damping" type="float" setter="set_suspension_damping" getter="get_suspension_damping" default="5200.0">
+			How strongly the suspension resists the *rate* of compression change, separate from [member suspension_stiffness]'s resistance to compression itself -- higher values settle bounces (from a bump, or landing after a jump) faster, with less oscillation. The default is close to critically damped for the default [member suspension_stiffness] (damping / (2*sqrt(stiffness*sprung_mass)) ≈ 0.9) -- if you change stiffness a lot, rescale damping by roughly sqrt(new_stiffness/old_stiffness) to keep the same feel instead of introducing a bounce.
 		</member>
-		<member name="suspension_stiffness" type="float" setter="set_suspension_stiffness" getter="get_suspension_stiffness" default="90000.0">
-			The suspension spring's stiffness. Too low for the vehicle's [member PhysXVehicle3D.mass] and this wheel's share of it means the suspension sits compressed close to [member suspension_travel] even at rest, leaving little margin before it bottoms out under braking, cornering, or a bump -- check [method PhysXVehicle3D.get_wheel_jounce] against [member suspension_travel] directly rather than guessing.
+		<member name="suspension_stiffness" type="float" setter="set_suspension_stiffness" getter="get_suspension_stiffness" default="22000.0">
+			The suspension spring's stiffness, in N/m. The default matches PhysX's own reference vehicle scaled to this node's default [member PhysXVehicle3D.mass] (same stiffness-to-sprung-mass ratio, roughly a 1.2Hz natural frequency) -- too high and cornering/braking/acceleration barely compress the suspension at all, so the body never visibly leans or dips; too low and it sits compressed close to [member suspension_travel] even at rest, leaving little margin before it bottoms out. Check [method PhysXVehicle3D.get_wheel_jounce] against [member suspension_travel] directly rather than guessing.
 		</member>
-		<member name="suspension_travel" type="float" setter="set_suspension_travel" getter="get_suspension_travel" default="0.15">
-			How far the suspension can compress from fully extended, in meters. If this is too short for the ride height, [method PhysXVehicle3D.get_wheel_separation] reports a negative value (the wheel penetrates the ground even fully compressed).
+		<member name="suspension_travel" type="float" setter="set_suspension_travel" getter="get_suspension_travel" default="0.22">
+			How far the suspension can move from full droop to full compression, in meters -- matches PhysX's own reference vehicle. [member Node3D.position] (the resting point) sits somewhere inside this range, not at either end, so raising this alone does not change ride height, only how much room there is to move before bottoming out or topping out. If this is too short for the ride height, [method PhysXVehicle3D.get_wheel_separation] reports a negative value (the wheel penetrates the ground even fully compressed).
 		</member>
 		<member name="tire_friction" type="float" setter="set_tire_friction" getter="get_tire_friction" default="1.0">
 			The tire's peak grip coefficient, reached at ~10% wheel slip. Grip below and above that point is scaled by [member tire_rest_grip] and [member tire_slide_grip] -- a real tire (and [VehicleWheel3D]'s own simpler single-coefficient model) grips less once it starts sliding than while still rolling, which is what actually produces a skid under hard braking or throttle instead of the tire just sticking to the road regardless of how hard it is being spun or braked.

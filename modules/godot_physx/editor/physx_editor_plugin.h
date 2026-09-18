@@ -113,6 +113,27 @@ public:
 	PhysXGasEmitter3DGizmoPlugin();
 };
 
+// Viewport gizmo for PhysXVehicleWheel3D: a line for the full suspension
+// travel range (node origin = max compression, down to full droop) plus a
+// wireframe ring showing where the wheel will actually settle at rest --
+// computed from the parent PhysXVehicle3D's mass and this wheel's own
+// suspension_stiffness, the same sprung-mass-per-wheel assumption
+// configure_vehicle4w() itself uses. Lets a scene author judge ride height/
+// ground clearance directly in the editor instead of only finding out once
+// the suspension settles in Play.
+class PhysXVehicleWheel3DGizmoPlugin : public EditorNode3DGizmoPlugin {
+	GDCLASS(PhysXVehicleWheel3DGizmoPlugin, EditorNode3DGizmoPlugin);
+
+public:
+	bool has_gizmo(Node3D *p_spatial) override;
+	String get_gizmo_name() const override;
+	int get_priority() const override;
+	bool is_selectable_when_hidden() const override;
+	void redraw(EditorNode3DGizmo *p_gizmo) override;
+
+	PhysXVehicleWheel3DGizmoPlugin();
+};
+
 #ifdef GODOT_PHYSX_BLAST
 class PhysXBlastFractureDialog;
 

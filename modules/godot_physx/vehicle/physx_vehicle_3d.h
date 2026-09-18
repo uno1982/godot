@@ -66,15 +66,26 @@ class PhysXVehicle3D : public Node3D {
 	friend class PhysXVehicleWheel3D;
 	LocalVector<PhysXVehicleWheel3D *> wheels;
 
+public:
+	enum CenterOfMassMode {
+		CENTER_OF_MASS_MODE_AUTO,
+		CENTER_OF_MASS_MODE_CUSTOM,
+	};
+
 protected:
 	static void _bind_methods();
 	void _notification(int p_what);
+	void _validate_property(PropertyInfo &p_property) const;
 
 public:
 	void set_mass(real_t p_mass);
 	real_t get_mass() const { return mass; }
 	void set_moment_of_inertia(const Vector3 &p_moi);
 	Vector3 get_moment_of_inertia() const { return moment_of_inertia; }
+	void set_center_of_mass_mode(CenterOfMassMode p_mode);
+	CenterOfMassMode get_center_of_mass_mode() const { return center_of_mass_mode; }
+	void set_center_of_mass(const Vector3 &p_center_of_mass);
+	const Vector3 &get_center_of_mass() const { return center_of_mass; }
 
 	void set_max_engine_torque(real_t p_v);
 	real_t get_max_engine_torque() const { return max_engine_torque; }
@@ -128,6 +139,8 @@ public:
 private:
 	real_t mass = 1500.0f;
 	Vector3 moment_of_inertia = Vector3(2000.0f, 2200.0f, 1000.0f);
+	CenterOfMassMode center_of_mass_mode = CENTER_OF_MASS_MODE_AUTO;
+	Vector3 center_of_mass;
 	real_t max_engine_torque = 700.0f;
 	real_t max_brake_torque = 6000.0f;
 	real_t max_steer_angle = 0.6f;
@@ -154,3 +167,5 @@ private:
 	bool _build();
 	void _destroy();
 };
+
+VARIANT_ENUM_CAST(PhysXVehicle3D::CenterOfMassMode);

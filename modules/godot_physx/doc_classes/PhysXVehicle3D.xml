@@ -58,6 +58,12 @@
 		<member name="collision_mask" type="int" setter="set_collision_mask" getter="get_collision_mask" default="1">
 			Same meaning as [member RigidBody3D.collision_mask]. Applies to the chassis only, see [member collision_layer].
 		</member>
+		<member name="center_of_mass" type="Vector3" setter="set_center_of_mass" getter="get_center_of_mass" default="Vector3(0, 0, 0)">
+			The vehicle center of mass in the vehicle's local coordinates when [member center_of_mass_mode] is [code]Custom[/code]. Lowering the Y coordinate can make the vehicle more resistant to rollover. In [code]Auto[/code] mode, the center of mass follows the chassis [CollisionShape3D] child position.
+		</member>
+		<member name="center_of_mass_mode" type="int" setter="set_center_of_mass_mode" getter="get_center_of_mass_mode" enum="CenterOfMassMode" default="0">
+			Whether to derive the center of mass from the chassis [CollisionShape3D] position ([code]Auto[/code]) or use [member center_of_mass] directly ([code]Custom[/code]).
+		</member>
 		<member name="mass" type="float" setter="set_mass" getter="get_mass" default="1500.0">
 			Total mass of the vehicle, in kg.
 		</member>

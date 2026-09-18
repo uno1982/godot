@@ -125,7 +125,7 @@ bool PhysXVehicle3D::_build() {
 	cfg.moment_of_inertia = moment_of_inertia;
 	cfg.chassis_half_extents = box_shape->get_size() * 0.5;
 	cfg.chassis_box_center_local = chassis_shape_node->get_position();
-	cfg.chassis_com_local = chassis_shape_node->get_position();
+	cfg.chassis_com_local = center_of_mass_mode == CENTER_OF_MASS_MODE_CUSTOM ? center_of_mass : chassis_shape_node->get_position();
 	cfg.max_engine_torque = max_engine_torque;
 	cfg.max_brake_torque = max_brake_torque;
 	cfg.max_steer_angle = max_steer_angle;
@@ -353,6 +353,22 @@ void PhysXVehicle3D::set_moment_of_inertia(const Vector3 &p_moi) {
 	moment_of_inertia = p_moi;
 	_rebuild_if_live();
 }
+void PhysXVehicle3D::set_center_of_mass_mode(CenterOfMassMode p_mode) {
+	if (center_of_mass_mode == p_mode) {
+		return;
+	}
+	center_of_mass_mode = p_mode;
+	notify_property_list_changed();
+	_rebuild_if_live();
+}
+void PhysXVehicle3D::set_center_of_mass(const Vector3 &p_center_of_mass) {
+	if (center_of_mass == p_center_of_mass) {
+		return;
+	}
+	ERR_FAIL_COND(center_of_mass_mode != CENTER_OF_MASS_MODE_CUSTOM);
+	center_of_mass = p_center_of_mass;
+	_rebuild_if_live();
+}
 PHYSX_VEHICLE_SETTER(max_engine_torque, max_engine_torque)
 PHYSX_VEHICLE_SETTER(max_brake_torque, max_brake_torque)
 PHYSX_VEHICLE_SETTER(max_steer_angle, max_steer_angle)
@@ -369,13 +385,28 @@ void PhysXVehicle3D::set_collision_mask(uint32_t p_mask) {
 	_rebuild_if_live();
 }
 
+void PhysXVehicle3D::_validate_property(PropertyInfo &p_property) const {
+	if (center_of_mass_mode != CENTER_OF_MASS_MODE_CUSTOM && p_property.name == "center_of_mass") {
+		p_property.usage = PROPERTY_USAGE_NO_EDITOR;
+	}
+}
+
 void PhysXVehicle3D::_bind_methods() {
+	BIND_ENUM_CONSTANT(CENTER_OF_MASS_MODE_AUTO);
+	BIND_ENUM_CONSTANT(CENTER_OF_MASS_MODE_CUSTOM);
+
 	ClassDB::bind_method(D_METHOD("set_mass", "mass"), &PhysXVehicle3D::set_mass);
 	ClassDB::bind_method(D_METHOD("get_mass"), &PhysXVehicle3D::get_mass);
 	ClassDB::bind_method(D_METHOD("set_moment_of_inertia", "moi"), &PhysXVehicle3D::set_moment_of_inertia);
 	ClassDB::bind_method(D_METHOD("get_moment_of_inertia"), &PhysXVehicle3D::get_moment_of_inertia);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mass", PROPERTY_HINT_RANGE, "1,10000,1,or_greater"), "set_mass", "get_mass");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "moment_of_inertia"), "set_moment_of_inertia", "get_moment_of_inertia");
+	ClassDB::bind_method(D_METHOD("set_center_of_mass_mode", "mode"), &PhysXVehicle3D::set_center_of_mass_mode);
+	ClassDB::bind_method(D_METHOD("get_center_of_mass_mode"), &PhysXVehicle3D::get_center_of_mass_mode);
+	ClassDB::bind_method(D_METHOD("set_center_of_mass", "center_of_mass"), &PhysXVehicle3D::set_center_of_mass);
+	ClassDB::bind_method(D_METHOD("get_center_of_mass"), &PhysXVehicle3D::get_center_of_mass);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "center_of_mass_mode", PROPERTY_HINT_ENUM, "Auto,Custom"), "set_center_of_mass_mode", "get_center_of_mass_mode");
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "center_of_mass", PROPERTY_HINT_RANGE, "-10,10,0.01,or_less,or_greater,suffix:m"), "set_center_of_mass", "get_center_of_mass");
 
 	ClassDB::bind_method(D_METHOD("set_max_engine_torque", "value"), &PhysXVehicle3D::set_max_engine_torque);
 	ClassDB::bind_method(D_METHOD("get_max_engine_torque"), &PhysXVehicle3D::get_max_engine_torque);

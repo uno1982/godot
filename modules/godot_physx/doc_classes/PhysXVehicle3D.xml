@@ -44,6 +44,12 @@
 				[code]0[/code] when wheel [param wheel] can reach the ground within its suspension travel. A negative value means the wheel is penetrating the ground even at full compression -- [member PhysXVehicleWheel3D.suspension_travel] is too short for the current ride height. [param wheel] uses the same child-index convention as [method get_wheel_jounce].
 			</description>
 		</method>
+		<method name="is_sleeping" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Returns whether the underlying PhysX vehicle actor is currently sleeping.
+			</description>
+		</method>
 	</methods>
 	<members>
 		<member name="ackermann_strength" type="float" setter="set_ackermann_strength" getter="get_ackermann_strength" default="1.0">
@@ -63,6 +69,9 @@
 		</member>
 		<member name="center_of_mass_mode" type="int" setter="set_center_of_mass_mode" getter="get_center_of_mass_mode" enum="CenterOfMassMode" default="0">
 			Whether to derive the center of mass from the chassis [CollisionShape3D] position ([code]Auto[/code]) or use [member center_of_mass] directly ([code]Custom[/code]).
+		</member>
+		<member name="can_sleep" type="bool" setter="set_can_sleep" getter="is_able_to_sleep" default="true">
+			Whether the vehicle is allowed to sleep after remaining below the PhysX space's configured sleep thresholds. The global [code]physics/physx_3d/simulation/allow_sleep[/code] project setting can disable sleeping for all PhysX bodies.
 		</member>
 		<member name="mass" type="float" setter="set_mass" getter="get_mass" default="1500.0">
 			Total mass of the vehicle, in kg.

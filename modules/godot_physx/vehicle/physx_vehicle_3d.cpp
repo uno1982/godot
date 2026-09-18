@@ -30,6 +30,7 @@
 #include "physx_vehicle_3d.h"
 
 #include "../godot_physx_conversions.h"
+#include "../godot_physx_project_settings.h"
 #include "../godot_physx_server_3d.h"
 #include "../spaces/godot_physx_space_3d.h"
 #include "godot_physx_vehicle4w.h"
@@ -45,6 +46,8 @@ struct PhysXVehicle3D::Impl {
 	Vehicle4W vehicle;
 	PxVehiclePhysXSimulationContext simulationContext;
 	PxScene *scene = nullptr;
+	PxReal sleep_threshold = 0.0f;
+	PxReal time_before_sleep = 0.0f;
 	bool built = false;
 	// wheel_order[Vehicle4W::WHEEL_FL/FR/RL/RR] = index into the parent's own
 	// `wheels` vector (child-registration order) for that canonical slot --
@@ -160,6 +163,12 @@ bool PhysXVehicle3D::_build() {
 
 	Vehicle4W &v = impl->vehicle;
 	v.physxActor.rigidBody->setGlobalPose(to_px(get_global_transform()));
+	impl->sleep_threshold = (PxReal)space->get_sleep_energy_threshold();
+	impl->time_before_sleep = (PxReal)space->get_time_before_sleep();
+	PxRigidDynamic *dynamic_body = v.physxActor.rigidBody->is<PxRigidDynamic>();
+	ERR_FAIL_NULL_V(dynamic_body, false);
+	dynamic_body->setSleepThreshold(can_sleep && GodotPhysXProjectSettings::allow_sleep ? impl->sleep_threshold : 0.0f);
+	dynamic_body->setWakeCounter(impl->time_before_sleep);
 	scene->addActor(*v.physxActor.rigidBody);
 	v.physxActor.rigidBody->setName("PhysXVehicle3D");
 
@@ -369,6 +378,26 @@ void PhysXVehicle3D::set_center_of_mass(const Vector3 &p_center_of_mass) {
 	center_of_mass = p_center_of_mass;
 	_rebuild_if_live();
 }
+void PhysXVehicle3D::set_can_sleep(bool p_can_sleep) {
+	if (can_sleep == p_can_sleep) {
+		return;
+	}
+	can_sleep = p_can_sleep;
+	if (impl->built) {
+		PxRigidDynamic *body = impl->vehicle.physxActor.rigidBody->is<PxRigidDynamic>();
+		ERR_FAIL_NULL(body);
+		body->setSleepThreshold(can_sleep && GodotPhysXProjectSettings::allow_sleep ? impl->sleep_threshold : 0.0f);
+		body->setWakeCounter(impl->time_before_sleep);
+		if (!can_sleep) {
+			body->wakeUp();
+		}
+	}
+}
+
+bool PhysXVehicle3D::is_sleeping() const {
+	PxRigidDynamic *body = impl->built ? impl->vehicle.physxActor.rigidBody->is<PxRigidDynamic>() : nullptr;
+	return body && body->isSleeping();
+}
 PHYSX_VEHICLE_SETTER(max_engine_torque, max_engine_torque)
 PHYSX_VEHICLE_SETTER(max_brake_torque, max_brake_torque)
 PHYSX_VEHICLE_SETTER(max_steer_angle, max_steer_angle)
@@ -407,6 +436,10 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_center_of_mass"), &PhysXVehicle3D::get_center_of_mass);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "center_of_mass_mode", PROPERTY_HINT_ENUM, "Auto,Custom"), "set_center_of_mass_mode", "get_center_of_mass_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "center_of_mass", PROPERTY_HINT_RANGE, "-10,10,0.01,or_less,or_greater,suffix:m"), "set_center_of_mass", "get_center_of_mass");
+	ClassDB::bind_method(D_METHOD("set_can_sleep", "able_to_sleep"), &PhysXVehicle3D::set_can_sleep);
+	ClassDB::bind_method(D_METHOD("is_able_to_sleep"), &PhysXVehicle3D::is_able_to_sleep);
+	ClassDB::bind_method(D_METHOD("is_sleeping"), &PhysXVehicle3D::is_sleeping);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "can_sleep"), "set_can_sleep", "is_able_to_sleep");
 
 	ClassDB::bind_method(D_METHOD("set_max_engine_torque", "value"), &PhysXVehicle3D::set_max_engine_torque);
 	ClassDB::bind_method(D_METHOD("get_max_engine_torque"), &PhysXVehicle3D::get_max_engine_torque);

@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXVehicle3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A PhysX-specific 4-wheel vehicle, powered by PxVehicle2 -- an alternative to the stock, backend-agnostic [VehicleBody3D], not a replacement for it.
+	</brief_description>
+	<description>
+		[VehicleBody3D]/[VehicleWheel3D] work on this module already (no PhysX-specific code needed) and stay the right choice for a project that wants to swap physics backends freely. [PhysXVehicle3D] exists for real PxVehicle2 capability that backend-agnostic model structurally can't offer: a real engine torque response, Ackermann steering correction (inner/outer front wheels turn by different angles in a turn), and a real slip-based tire friction curve (grip peaks at a small amount of wheel slip and falls off once the tire is fully sliding/locked, instead of one flat friction number).
+		Node structure mirrors [VehicleBody3D]/[VehicleWheel3D] on purpose: add a [CollisionShape3D] child with a [BoxShape3D] for the chassis, and exactly 4 [PhysXVehicleWheel3D] children for the wheels -- exactly 2 of them need [member PhysXVehicleWheel3D.use_as_steering] enabled (the front axle). Each wheel's own [member Node3D.position] is its suspension attachment point, so a [MeshInstance3D] parented under a wheel tracks the real, live suspension/steering motion automatically.
+		Drive it every physics tick by setting [member throttle], [member brake], [member steer], and (once actually stopped) [member reverse] -- these use PxVehicleCommandState's own convention ([code]throttle[/code]/[code]brake[/code] in [code][0, 1][/code], [code]steer[/code] in [code][-1, 1][/code]), not [VehicleBody3D]'s raw force/angle convention.
+		Only runs in an actual running game, never in the editor -- placing or moving the node in the Inspector does not simulate or fall under gravity.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_actor_position" qualifiers="const">
+			<return type="Vector3" />
+			<description>
+				The real PhysX actor's own world-space origin -- for comparing against this node's own [member Node3D.global_position] (which tracks the same point) when diagnosing a suspension/placement issue.
+			</description>
+		</method>
+		<method name="get_forward_speed" qualifiers="const">
+			<return type="float" />
+			<description>
+				Current speed along the car's own forward axis, in m/s. Positive while driving forward, negative while rolling backward -- a simple way to decide when it is safe to switch [member reverse] on (a real gear should only engage once the car has actually stopped, not while still coasting forward).
+			</description>
+		</method>
+		<method name="get_linear_velocity" qualifiers="const">
+			<return type="Vector3" />
+			<description>
+				Current world-space linear velocity of the chassis.
+			</description>
+		</method>
+		<method name="get_wheel_jounce" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="wheel" type="int" />
+			<description>
+				How compressed wheel [param wheel]'s suspension is right now, from [code]0[/code] (fully extended / max droop) to that wheel's own [member PhysXVehicleWheel3D.suspension_travel] (fully compressed / bottomed out). [param wheel] is the child index among this node's [PhysXVehicleWheel3D] children, in the order they were added -- not a fixed front-left/front-right/rear-left/rear-right order. Useful for tuning [member PhysXVehicleWheel3D.suspension_stiffness]: resting jounce well under half of [member PhysXVehicleWheel3D.suspension_travel] leaves real margin before the suspension bottoms out under braking, cornering, or a bump.
+			</description>
+		</method>
+		<method name="get_wheel_separation" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="wheel" type="int" />
+			<description>
+				[code]0[/code] when wheel [param wheel] can reach the ground within its suspension travel. A negative value means the wheel is penetrating the ground even at full compression -- [member PhysXVehicleWheel3D.suspension_travel] is too short for the current ride height. [param wheel] uses the same child-index convention as [method get_wheel_jounce].
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="ackermann_strength" type="float" setter="set_ackermann_strength" getter="get_ackermann_strength" default="1.0">
+			How much Ackermann steering correction to apply to the front (steering) axle, from [code]0[/code] (both front wheels always turn by the same angle, like [VehicleWheel3D]) to [code]1[/code] (full correction: the inside wheel of a turn steers more sharply than the outside wheel, matching how a real front axle is geometrically linked).
+		</member>
+		<member name="brake" type="float" setter="set_brake" getter="get_brake" default="0.0">
+			Brake pedal input, [code]0[/code] to [code]1[/code]. Scales up to [member max_brake_torque] of braking torque at each wheel. Set every physics tick from script; does not persist on its own the way a real pedal would.
+		</member>
+		<member name="collision_layer" type="int" setter="set_collision_layer" getter="get_collision_layer" default="1">
+			Same meaning as [member RigidBody3D.collision_layer]. Applies to the chassis only -- the wheels do not have their own collision shapes (their ground contact is handled entirely by the suspension, not by a physical wheel shape touching the road).
+		</member>
+		<member name="collision_mask" type="int" setter="set_collision_mask" getter="get_collision_mask" default="1">
+			Same meaning as [member RigidBody3D.collision_mask]. Applies to the chassis only, see [member collision_layer].
+		</member>
+		<member name="mass" type="float" setter="set_mass" getter="get_mass" default="1500.0">
+			Total mass of the vehicle, in kg.
+		</member>
+		<member name="max_brake_torque" type="float" setter="set_max_brake_torque" getter="get_max_brake_torque" default="6000.0">
+			The braking torque applied to each wheel when [member brake] is [code]1[/code]. Higher values stop the wheel's own rotation faster, but do not by themselves determine whether the tire skids once locked -- see [member PhysXVehicleWheel3D.tire_friction] for that.
+		</member>
+		<member name="max_engine_torque" type="float" setter="set_max_engine_torque" getter="get_max_engine_torque" default="700.0">
+			The drive torque applied to every wheel with [member PhysXVehicleWheel3D.use_as_traction] enabled when [member throttle] is [code]1[/code] (a real direct-drive response, unlike [VehicleBody3D.engine_force] which is a raw force value with no torque curve).
+		</member>
+		<member name="max_steer_angle" type="float" setter="set_max_steer_angle" getter="get_max_steer_angle" default="0.6">
+			The steering angle, in radians, applied to the front axle when [member steer] is [code]1[/code] or [code]-1[/code]. The default (~34°) is a realistic maximum for a real car's front wheels.
+		</member>
+		<member name="moment_of_inertia" type="Vector3" setter="set_moment_of_inertia" getter="get_moment_of_inertia" default="Vector3(2000, 2200, 1000)">
+			The vehicle's own rotational inertia around its X/Y/Z axes. Higher values resist rotation (pitch/yaw/roll) more -- tune the Y (yaw) component if the car turns too eagerly or too sluggishly for its size.
+		</member>
+		<member name="reverse" type="bool" setter="set_reverse" getter="is_reverse" default="false">
+			Switches the drivetrain's gear between forward and reverse -- a real gear change (PxVehicle2 has no neutral-coast/instant-reverse shortcut), so [member throttle] in reverse gear still needs to first bring the car to a stop if it was moving forward, same as a real car. Check [method get_forward_speed] before engaging this from a driving script.
+		</member>
+		<member name="steer" type="float" setter="set_steer" getter="get_steer" default="0.0">
+			Steering input, [code]-1[/code] to [code]1[/code]. Scales up to [member max_steer_angle] on the front (steering) axle, modified by [member ackermann_strength]. Set every physics tick from script.
+		</member>
+		<member name="throttle" type="float" setter="set_throttle" getter="get_throttle" default="0.0">
+			Throttle input, [code]0[/code] to [code]1[/code]. Scales up to [member max_engine_torque] of drive torque at each traction wheel, in whichever direction [member reverse] currently selects. Set every physics tick from script.
+		</member>
+	</members>
+</class>

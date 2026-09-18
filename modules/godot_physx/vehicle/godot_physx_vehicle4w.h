@@ -641,12 +641,15 @@ inline bool configure_vehicle4w(Vehicle4W &v, const Vehicle4WConfig &cfg, PxPhys
 		v.tireForceParams[i].longStiff = (PxReal)w.tire_longitudinal_stiffness;
 		v.tireForceParams[i].camberStiff = 0.0f;
 		v.tireForceParams[i].restLoad = v.suspensionForceParams[i].sprungMass * 9.81f;
+		// Peak grip at ~10% slip, falling off once fully locked/sliding --
+		// a flat curve here would mean a locked tire grips as well as a
+		// rolling one, which never produces a real skid.
 		v.tireForceParams[i].frictionVsSlip[0][0] = 0.0f;
-		v.tireForceParams[i].frictionVsSlip[0][1] = (PxReal)w.tire_friction;
+		v.tireForceParams[i].frictionVsSlip[0][1] = (PxReal)w.tire_friction * 0.9f;
 		v.tireForceParams[i].frictionVsSlip[1][0] = 0.1f;
 		v.tireForceParams[i].frictionVsSlip[1][1] = (PxReal)w.tire_friction;
 		v.tireForceParams[i].frictionVsSlip[2][0] = 1.0f;
-		v.tireForceParams[i].frictionVsSlip[2][1] = (PxReal)w.tire_friction;
+		v.tireForceParams[i].frictionVsSlip[2][1] = (PxReal)w.tire_friction * 0.7f;
 		v.tireForceParams[i].loadFilter[0][0] = 0.0f;
 		v.tireForceParams[i].loadFilter[0][1] = 0.23f;
 		v.tireForceParams[i].loadFilter[1][0] = 3.0f;

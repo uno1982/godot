@@ -41,6 +41,8 @@ def get_doc_classes():
         "PhysXChunkEmitter3D",
         "PhysXDestructible3D",
         "PhysXBlastAsset",
+        "PhysXVehicle3D",
+        "PhysXVehicleWheel3D",
     ]
 
 

@@ -215,7 +215,19 @@ void PhysXVehicle3D::_notification(int p_what) {
 			v.commandState.steer = (PxReal)steer;
 			v.transmissionCommandState.gear = reverse ? PxVehicleDirectDriveTransmissionCommandState::eREVERSE : PxVehicleDirectDriveTransmissionCommandState::eFORWARD;
 			v.step((PxReal)get_physics_process_delta_time(), impl->simulationContext);
-			set_global_transform(to_godot(v.rigidBodyState.pose));
+			// v.rigidBodyState.pose is CoM-relative, not the actor's real
+			// origin (confirmed directly by comparing it against a raw
+			// getGlobalPose() read while root-causing the chassis-collision
+			// regression) -- the CollisionShape3D/wheel/mesh children are all
+			// positioned relative to the actor's own origin (that's the frame
+			// PxVehiclePhysXActorCreate cooked the real PxShape geometry
+			// into), so this node's own transform has to track that same
+			// origin, not the CoM. Using rigidBodyState.pose here left the
+			// visual body a constant offset away from where the real
+			// collision geometry actually sits at rest, and made that offset
+			// visibly swing whenever the body rotated (braking, cornering, a
+			// bump) since it rotates with the body.
+			set_global_transform(to_godot(v.physxActor.rigidBody->getGlobalPose()));
 			// Push each wheel's live pose (suspension jounce + steer angle +
 			// roll spin, all baked into wheelLocalPoses by PxVehicleWheelComponent)
 			// onto that wheel's own node -- same idea as VehicleBody3D's own

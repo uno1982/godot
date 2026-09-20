@@ -55,6 +55,12 @@
 		<member name="ackermann_strength" type="float" setter="set_ackermann_strength" getter="get_ackermann_strength" default="1.0">
 			How much Ackermann steering correction to apply to the front (steering) axle, from [code]0[/code] (both front wheels always turn by the same angle, like [VehicleWheel3D]) to [code]1[/code] (full correction: the inside wheel of a turn steers more sharply than the outside wheel, matching how a real front axle is geometrically linked).
 		</member>
+		<member name="front_anti_roll_stiffness" type="float" setter="set_front_anti_roll_stiffness" getter="get_front_anti_roll_stiffness" default="0.0">
+			Anti-roll bar stiffness connecting the front-left and front-right wheels. A positive value is a real anti-roll bar: it resists the difference in suspension compression between the two wheels, reducing body roll during cornering. A negative value does the opposite -- it amplifies that difference, exaggerating roll instead of resisting it, which is a cheaper and more targeted way to get a more dramatic cornering lean than lowering [member PhysXVehicleWheel3D.suspension_stiffness] further (that also softens straight-line bump absorption; this only affects side-to-side compression difference). [code]0[/code] disables the bar entirely.
+		</member>
+		<member name="rear_anti_roll_stiffness" type="float" setter="set_rear_anti_roll_stiffness" getter="get_rear_anti_roll_stiffness" default="0.0">
+			Same as [member front_anti_roll_stiffness], connecting the rear-left and rear-right wheels instead. Tuning front and rear independently changes handling balance: a stiffer (more positive) front bar relative to the rear tends toward understeer, and vice versa for oversteer -- same real-world relationship a physical anti-roll bar has.
+		</member>
 		<member name="brake" type="float" setter="set_brake" getter="get_brake" default="0.0">
 			Brake pedal input, [code]0[/code] to [code]1[/code]. Scales up to [member max_brake_torque] of braking torque at each wheel. Set every physics tick from script; does not persist on its own the way a real pedal would.
 		</member>

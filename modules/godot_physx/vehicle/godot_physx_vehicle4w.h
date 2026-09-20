@@ -100,6 +100,15 @@ public:
 	PxVehicleWheelLocalPose wheelLocalPoses[4];
 	PxVehicleRigidBodyState rigidBodyState;
 
+	// Anti-roll bars: [0] connects WHEEL_FL/WHEEL_FR (front axle), [1]
+	// connects WHEEL_RL/WHEEL_RR (rear axle). Always submitted (even at
+	// stiffness=0) so the wiring in getDataForSuspensionComponent/
+	// getDataForRigidBodyComponent stays unconditional -- see
+	// PxVehicleAntiRollForceParams's own isValid(), zero stiffness is valid
+	// and just contributes zero torque.
+	PxVehicleAntiRollForceParams antiRollForceParams[2];
+	PxVehicleAntiRollTorque antiRollTorque;
+
 	// --- Direct drive (DirectDrivetrainParams/State) -----------------------
 	PxVehicleDirectDriveThrottleCommandResponseParams directDriveThrottleResponseParams;
 	PxReal directDriveThrottleResponseStates[4] = {};
@@ -139,6 +148,7 @@ public:
 			wheelLocalPoses[i].setToDefault();
 		}
 		rigidBodyState.setToDefault();
+		antiRollTorque.setToDefault();
 		commandState.setToDefault();
 		transmissionCommandState.gear = PxVehicleDirectDriveTransmissionCommandState::eNEUTRAL;
 		physxActor.setToDefault();
@@ -158,7 +168,7 @@ public:
 		outRigidBodyParams = &rigidBodyParams;
 		outSuspensionForces.setData(suspensionForces);
 		outTireForces.setData(tireForces);
-		outAntiRollTorque = nullptr;
+		outAntiRollTorque = &antiRollTorque;
 		outRigidBodyState = &rigidBodyState;
 	}
 
@@ -188,12 +198,12 @@ public:
 		outSuspensionParams.setData(suspensionParams);
 		outSuspensionComplianceParams.setData(suspensionComplianceParams);
 		outSuspensionForceParams.setData(suspensionForceParams);
-		outAntiRollForceParams.setEmpty();
+		outAntiRollForceParams.setDataAndCount(antiRollForceParams, 2);
 		outWheelRoadGeomStates.setData(roadGeomStates);
 		outSuspensionStates.setData(suspensionStates);
 		outSuspensionComplianceStates.setData(suspensionComplianceStates);
 		outSuspensionForces.setData(suspensionForces);
-		outAntiRollTorque = nullptr;
+		outAntiRollTorque = &antiRollTorque;
 	}
 
 	// getDataForTireComponent (PxVehicleTireComponent)
@@ -515,6 +525,17 @@ struct Vehicle4WConfig {
 	real_t max_steer_angle = 0.6f; // radians
 	real_t ackermann_strength = 1.0f;
 
+	// Anti-roll bar stiffness, front axle (FL/FR) and rear axle (RL/RR).
+	// Positive values are a real anti-roll bar: they reduce the jounce
+	// difference between the two wheels, i.e. resist body roll during
+	// cornering. Negative values do the opposite -- they amplify the jounce
+	// difference, exaggerating roll instead of resisting it. 0 = no anti-roll
+	// bar on that axle (PxVehicleAntiRollForceParams is still submitted with
+	// stiffness=0, a harmless no-op, rather than omitted, to keep the wiring
+	// unconditional).
+	real_t front_anti_roll_stiffness = 0.0f;
+	real_t rear_anti_roll_stiffness = 0.0f;
+
 	// Same meaning as RigidBody3D/VehicleBody3D's own collision_layer/mask --
 	// applies to the chassis box shape only (see configure_vehicle4w()'s own
 	// note on why the wheel shapes stay non-simulating).
@@ -612,6 +633,13 @@ inline bool configure_vehicle4w(Vehicle4W &v, const Vehicle4WConfig &cfg, PxPhys
 	v.ackermannParams[0].wheelBase = (PxReal)Math::abs(fl_pos.z - rl_pos.z);
 	v.ackermannParams[0].trackWidth = (PxReal)Math::abs(fr_pos.x - fl_pos.x);
 	v.ackermannParams[0].strength = (PxReal)cfg.ackermann_strength;
+
+	v.antiRollForceParams[0].wheel0 = Vehicle4W::WHEEL_FL;
+	v.antiRollForceParams[0].wheel1 = Vehicle4W::WHEEL_FR;
+	v.antiRollForceParams[0].stiffness = (PxReal)cfg.front_anti_roll_stiffness;
+	v.antiRollForceParams[1].wheel0 = Vehicle4W::WHEEL_RL;
+	v.antiRollForceParams[1].wheel1 = Vehicle4W::WHEEL_RR;
+	v.antiRollForceParams[1].stiffness = (PxReal)cfg.rear_anti_roll_stiffness;
 
 	v.directDriveThrottleResponseParams.maxResponse = (PxReal)cfg.max_engine_torque;
 	for (PxU32 i = 0; i < 4; i++) {

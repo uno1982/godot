@@ -98,6 +98,10 @@ public:
 	real_t get_max_steer_angle() const { return max_steer_angle; }
 	void set_ackermann_strength(real_t p_v);
 	real_t get_ackermann_strength() const { return ackermann_strength; }
+	void set_front_anti_roll_stiffness(real_t p_v);
+	real_t get_front_anti_roll_stiffness() const { return front_anti_roll_stiffness; }
+	void set_rear_anti_roll_stiffness(real_t p_v);
+	real_t get_rear_anti_roll_stiffness() const { return rear_anti_roll_stiffness; }
 
 	// Runtime control inputs, same convention as PxVehicleCommandState: throttle/
 	// brake in [0,1], steer in [-1,1]. Set every tick from script, same pattern
@@ -149,6 +153,8 @@ private:
 	real_t max_brake_torque = 6000.0f;
 	real_t max_steer_angle = 0.6f;
 	real_t ackermann_strength = 1.0f;
+	real_t front_anti_roll_stiffness = 0.0f;
+	real_t rear_anti_roll_stiffness = 0.0f;
 
 	real_t throttle = 0.0f;
 	real_t brake = 0.0f;

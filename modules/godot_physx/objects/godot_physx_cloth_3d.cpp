@@ -36,6 +36,15 @@
 #include "core/error/error_macros.h"
 #include "core/math/math_funcs.h"
 
+// PxDeformableSurface (FEM/XPBD cloth) is a PhysX 5 GPU/CUDA-only feature --
+// unreachable on a physx_gpu=no build regardless of what's actually in this
+// file. The #else stub below keeps GodotPhysXCloth3D::is_ready() reporting
+// false (surface stays null forever), which is exactly the signal
+// PhysXCloth3D's own Auto solver selection already uses to fall back to its
+// built-in CPU XPBD solver (cloth/xpbd_cloth_solver.h) -- see
+// nodes/physx_cloth_3d.cpp.
+#ifdef GODOT_PHYSX_GPU
+
 #include <PxPhysicsAPI.h>
 #include <extensions/PxCudaHelpersExt.h>
 #include <extensions/PxDeformableSurfaceExt.h>
@@ -393,3 +402,64 @@ uint32_t GodotPhysXCloth3D::copy_mesh(LocalVector<Vector3> &r_positions, LocalVe
 	r_indices = indices;
 	return indices.size() / 3;
 }
+
+#else // !GODOT_PHYSX_GPU
+
+// surface stays null forever -- is_ready() (inline in the header) correctly
+// reports false always, matching PhysXCloth3D's own Auto-solver dispatch.
+
+GodotPhysXCloth3D::~GodotPhysXCloth3D() {
+	set_space(nullptr);
+}
+
+void GodotPhysXCloth3D::set_space(GodotPhysXSpace3D *p_space) {
+	if (space == p_space) {
+		return;
+	}
+	if (space) {
+		space->unregister_cloth(this);
+	}
+	space = p_space;
+	if (space) {
+		space->register_cloth(this);
+	}
+}
+
+void GodotPhysXCloth3D::set_params(float p_thickness, float p_density, float p_stretch, float p_bend, float p_damping, uint32_t p_collision_mask) {
+	thickness = p_thickness;
+	density = p_density;
+	stretch_stiffness = p_stretch;
+	bend_stiffness = p_bend;
+	damping = p_damping;
+	collision_mask = p_collision_mask;
+}
+
+void GodotPhysXCloth3D::build(const Vector<Vector3> &p_positions, const Vector<int32_t> &p_indices, const Transform3D &p_xform) {
+	WARN_PRINT_ONCE("PhysXCloth3D: the GPU deformable-surface solver requires a physx_gpu=yes build with a CUDA device -- this module was built without GPU support, staying inert. Use solver=Auto or solver=CPU instead.");
+}
+
+void GodotPhysXCloth3D::set_pinned(const Vector<int32_t> &p_pinned_indices) {
+}
+
+void GodotPhysXCloth3D::set_pin_targets(const Vector<Vector3> &p_world_targets) {
+}
+
+void GodotPhysXCloth3D::apply_wind(const Vector3 &p_wind, float p_drag, float p_lift, float p_dt) {
+}
+
+void GodotPhysXCloth3D::clear() {
+	MutexLock lock(mesh_mutex);
+	read_positions.clear();
+	indices.clear();
+	vertex_count = 0;
+	mesh_version++;
+}
+
+void GodotPhysXCloth3D::read_back() {
+}
+
+uint32_t GodotPhysXCloth3D::copy_mesh(LocalVector<Vector3> &r_positions, LocalVector<int32_t> &r_indices, uint32_t &p_have_version) const {
+	return UINT32_MAX; // never changes -- empty, nothing to draw
+}
+
+#endif // GODOT_PHYSX_GPU

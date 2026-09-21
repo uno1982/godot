@@ -36,6 +36,17 @@
 #include "core/error/error_macros.h"
 #include "core/math/math_defs.h"
 
+// The PBD particle system (PxPBDParticleSystem) is PhysX 5's GPU/CUDA-only
+// particle solver -- PxParticleExt.h itself is only installed by the SDK's
+// own CMake when built with PX_GENERATE_GPU_PROJECTS (see
+// PhysXExtensions.cmake), so this whole real implementation is unreachable
+// on a physx_gpu=no build regardless. The #else stub below keeps every
+// plain data field (viscosity, foam params, etc.) working normally -- the
+// node's own Auto solver selection already treats is_ready()==false as "no
+// GPU available, use MPM instead" (see nodes/physx_particle_fluid_3d.cpp),
+// so this degrades exactly the way that dispatch logic already expects.
+#ifdef GODOT_PHYSX_GPU
+
 #include <PxAnisotropy.h>
 #include <PxIsosurfaceExtraction.h>
 #include <PxPhysicsAPI.h>
@@ -1033,3 +1044,152 @@ real_t GodotPhysXParticleFluid3D::get_submersion(const AABB &p_world_aabb) const
 	const real_t filled = (real_t)inside * s * s * s;
 	return CLAMP(filled / box_vol, (real_t)0.0, (real_t)1.0);
 }
+
+#else // !GODOT_PHYSX_GPU
+
+// px_system/px_material/px_buffer stay null forever (px_system is
+// forward-declared only, never given a definition here) -- is_ready()
+// (inline in the header, `px_system != nullptr`) correctly reports false
+// always, and every setter below still stores into the plain Godot-typed
+// fields so the Inspector round-trips normally even though nothing
+// simulates.
+
+GodotPhysXParticleFluid3D::~GodotPhysXParticleFluid3D() {
+	set_space(nullptr);
+}
+
+void GodotPhysXParticleFluid3D::set_space(GodotPhysXSpace3D *p_space) {
+	if (space == p_space) {
+		return;
+	}
+	if (space) {
+		space->unregister_fluid(this);
+	}
+	space = p_space;
+	if (space) {
+		space->register_fluid(this);
+	}
+}
+
+void GodotPhysXParticleFluid3D::set_param(Param p_param, real_t p_value) {
+	switch (p_param) {
+		case PARAM_VISCOSITY:
+			viscosity = p_value;
+			break;
+		case PARAM_SURFACE_TENSION:
+			surface_tension = p_value;
+			break;
+		case PARAM_COHESION:
+			cohesion = p_value;
+			break;
+		case PARAM_ADHESION:
+			adhesion = p_value;
+			break;
+		case PARAM_VORTICITY:
+			vorticity = p_value;
+			break;
+		case PARAM_GRAVITY_SCALE:
+			gravity_scale = p_value;
+			break;
+		case PARAM_PARTICLE_SIZE:
+			particle_size = MAX(p_value, (real_t)0.001);
+			break;
+		default:
+			break;
+	}
+}
+
+real_t GodotPhysXParticleFluid3D::get_param(Param p_param) const {
+	switch (p_param) {
+		case PARAM_VISCOSITY:
+			return viscosity;
+		case PARAM_SURFACE_TENSION:
+			return surface_tension;
+		case PARAM_COHESION:
+			return cohesion;
+		case PARAM_ADHESION:
+			return adhesion;
+		case PARAM_VORTICITY:
+			return vorticity;
+		case PARAM_GRAVITY_SCALE:
+			return gravity_scale;
+		case PARAM_PARTICLE_SIZE:
+			return particle_size;
+		default:
+			return 0.0;
+	}
+}
+
+void GodotPhysXParticleFluid3D::set_granular(bool p_enabled, real_t p_friction) {
+	granular = p_enabled;
+	granular_friction = p_friction;
+}
+
+void GodotPhysXParticleFluid3D::set_capacity(uint32_t p_capacity) {
+	capacity = MAX(p_capacity, 1u);
+}
+
+void GodotPhysXParticleFluid3D::clear() {
+	active_count = 0;
+	write_head = 0;
+	foam_count = 0;
+	read_scratch.clear();
+	read_positions.clear();
+	foam_scratch.clear();
+	foam_positions.clear();
+}
+
+void GodotPhysXParticleFluid3D::set_foam_enabled(bool p_enabled) {
+	foam_enabled = p_enabled;
+}
+
+void GodotPhysXParticleFluid3D::set_foam_capacity(uint32_t p_capacity) {
+	foam_capacity = MAX(p_capacity, 1u);
+}
+
+void GodotPhysXParticleFluid3D::set_foam_lifetime(real_t p_v) {
+	foam_lifetime = MAX(p_v, (real_t)0.01);
+}
+
+void GodotPhysXParticleFluid3D::set_foam_threshold(real_t p_v) {
+	foam_threshold = MAX(p_v, (real_t)0.0);
+}
+
+void GodotPhysXParticleFluid3D::set_foam_buoyancy(real_t p_v) {
+	foam_buoyancy = CLAMP(p_v, (real_t)0.0, (real_t)1.0);
+}
+
+void GodotPhysXParticleFluid3D::set_foam_size(real_t p_v) {
+	foam_size = MAX(p_v, (real_t)0.001);
+}
+
+void GodotPhysXParticleFluid3D::set_particles(const Vector<Vector3> &p_positions, const Vector3 &p_initial_velocity) {
+	WARN_PRINT_ONCE("PhysXParticleFluid3D: PBD solver requires a physx_gpu=yes build with a CUDA device -- this module was built without GPU support, staying inert. Use solver=Auto or solver=MPM instead.");
+}
+
+void GodotPhysXParticleFluid3D::emit(const Vector<Vector3> &p_positions, const Vector3 &p_velocity) {
+}
+
+void GodotPhysXParticleFluid3D::read_back() {
+}
+
+void GodotPhysXParticleFluid3D::finish_isosurface_extraction() {
+}
+
+void GodotPhysXParticleFluid3D::set_surface_mesh_enabled(bool p_enabled) {
+	surface_mesh_enabled = p_enabled;
+}
+
+uint32_t GodotPhysXParticleFluid3D::copy_surface_mesh(LocalVector<Vector3> &r_vertices, LocalVector<Vector3> &r_normals, LocalVector<int32_t> &r_indices, uint32_t &p_have_version) const {
+	return UINT32_MAX; // never changes -- empty, nothing to draw
+}
+
+uint32_t GodotPhysXParticleFluid3D::copy_foam_mesh(LocalVector<Vector3> &r_vertices, LocalVector<Vector3> &r_normals, LocalVector<int32_t> &r_indices, uint32_t &p_have_version) const {
+	return UINT32_MAX;
+}
+
+real_t GodotPhysXParticleFluid3D::get_submersion(const AABB &p_world_aabb) const {
+	return 0.0;
+}
+
+#endif // GODOT_PHYSX_GPU

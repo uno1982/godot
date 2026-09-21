@@ -38,7 +38,11 @@ void GodotPhysXProjectSettings::register_settings() {
 	GLOBAL_DEF(PropertyInfo(Variant::BOOL, "physics/physx_3d/simulation/allow_sleep"), true);
 	GLOBAL_DEF(PropertyInfo(Variant::BOOL, "physics/physx_3d/simulation/stabilization"), true);
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "physics/physx_3d/simulation/cpu_worker_threads", PROPERTY_HINT_RANGE, U"0,32,1"), 0);
+#ifdef GODOT_PHYSX_GPU
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "physics/physx_3d/soft_body/mode", PROPERTY_HINT_ENUM, "Auto,CPU,GPU"), 0);
+#else
+	GLOBAL_DEF(PropertyInfo(Variant::INT, "physics/physx_3d/soft_body/mode", PROPERTY_HINT_ENUM, "Auto,CPU"), 0);
+#endif
 }
 
 void GodotPhysXProjectSettings::read_settings() {

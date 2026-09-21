@@ -1253,6 +1253,17 @@ void PhysXParticleFluid3D::_validate_property(PropertyInfo &p_property) const {
 	if (p_property.name == SNAME("mpm_grid_resolution") && !_is_granular()) {
 		p_property.usage = PROPERTY_USAGE_NO_EDITOR;
 	}
+	// Hide the PBD (CUDA) option when there's no GPU dynamics context --
+	// either this build has no PxPBDParticleSystem support at all (see
+	// objects/godot_physx_particle_fluid_3d.cpp) or it does but no CUDA
+	// device was found. Selecting it explicitly still degrades to MPM at
+	// runtime (with a warning either way), but offering a dead option in
+	// the dropdown is just confusing. "Label:value" syntax keeps
+	// SOLVER_MPM's stored int (2) correct even with SOLVER_PBD (1) skipped.
+	GodotPhysXServer3D *server = GodotPhysXServer3D::get_singleton();
+	if (p_property.name == SNAME("solver") && (!server || !server->has_gpu())) {
+		p_property.hint_string = "Auto:0,MPM (compute):2";
+	}
 }
 
 void PhysXParticleFluid3D::_notification(int p_what) {

@@ -37,6 +37,14 @@
 #include "core/math/math_funcs.h"
 #include "core/templates/hash_map.h"
 
+// PxDeformableVolume (tetrahedral FEM soft body) is a PhysX 5 GPU/CUDA-only
+// feature -- unreachable on a physx_gpu=no build regardless of what's
+// actually in this file. The #else stub below keeps build() returning
+// false, which is exactly the signal GodotPhysXSoftBody3D::_try_build_gpu()
+// already treats as "fall back to the CPU XPBD solver" (see
+// objects/godot_physx_soft_body_3d.cpp) -- no changes needed there.
+#ifdef GODOT_PHYSX_GPU
+
 #include <PxPhysicsAPI.h>
 #include <extensions/PxCudaHelpersExt.h>
 #include <extensions/PxDeformableVolumeExt.h>
@@ -393,3 +401,43 @@ double GodotPhysXSoftVolume3D::_estimate_mesh_volume(const Vector<Vector3> &p_ve
 	}
 	return Math::abs(v) / 6.0;
 }
+
+#else // !GODOT_PHYSX_GPU
+
+// volume stays null forever -- is_valid() (inline in the header) correctly
+// reports false always, which _try_build_gpu() (in
+// godot_physx_soft_body_3d.cpp) already treats as "use the CPU solver".
+
+GodotPhysXSoftVolume3D::~GodotPhysXSoftVolume3D() {
+}
+
+bool GodotPhysXSoftVolume3D::build(GodotPhysXSpace3D *p_space, const Vector<Vector3> &p_world_verts,
+		const Vector<int32_t> &p_indices, const Transform3D &p_xform, const Params &p_params) {
+	WARN_PRINT_ONCE("SoftBody3D (PhysX backend): the GPU deformable-volume solver requires a physx_gpu=yes build with a CUDA device -- this module was built without GPU support, falling back to the CPU solver.");
+	return false;
+}
+
+void GodotPhysXSoftVolume3D::apply_params(const Params &p_params) {
+}
+
+void GodotPhysXSoftVolume3D::read_back() {
+}
+
+Vector3 GodotPhysXSoftVolume3D::get_vertex_position(uint32_t p_welded_index) const {
+	return Vector3();
+}
+
+Vector3 GodotPhysXSoftVolume3D::get_vertex_normal(uint32_t p_welded_index) const {
+	return Vector3();
+}
+
+void GodotPhysXSoftVolume3D::set_pins(const Vector<int> &p_welded_indices, const Vector<Vector3> &p_targets) {
+}
+
+void GodotPhysXSoftVolume3D::add_central_impulse(const Vector3 &p_impulse) {
+}
+
+void GodotPhysXSoftVolume3D::add_point_impulse(uint32_t p_welded_index, const Vector3 &p_impulse) {
+}
+
+#endif // GODOT_PHYSX_GPU

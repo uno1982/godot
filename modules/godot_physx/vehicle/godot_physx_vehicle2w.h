@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  godot_physx_vehicle4w.h                                               */
+/*  godot_physx_vehicle2w.h                                               */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -41,17 +41,27 @@
 
 using namespace physx;
 
-// A single direct-drive 4-wheel vehicle, composed exactly the way PhysX's own
-// snippetvehiclecommon (Base/DirectDrivetrain/PhysXIntegration) composes one --
-// ported here rather than linked, since that layer is snippet source, not part
-// of the installed PhysXVehicle_static_64 lib (which only supplies the real
-// per-component math these getDataForXComponent overrides hand pointers into).
-// Wheel index convention: 0=FL, 1=FR, 2=RL, 3=RR. Shared verbatim between
-// GodotPhysXVehicleProbe (headless regression) and PhysXVehicle3D (the real
-// node) -- this class and configure_vehicle4w() below are pure PxVehicle2
-// composition with no project-specific decisions in them, so duplicating them
-// would just be ~500 lines of copy-pasted boilerplate for no benefit.
-class Vehicle4W : public PxVehicleRigidBodyComponent,
+// A single direct-drive 2-wheel vehicle (motorcycle-style: one front steering
+// wheel, one rear driven wheel) -- same composition pattern as Vehicle4W
+// (vehicle/godot_physx_vehicle4w.h), reduced to 2 wheels instead of 4.
+//
+// Vehicle4W's own composition can't represent this: configure_vehicle4w()
+// hard-requires exactly 2 steering + 2 non-steering wheels (its Ackermann
+// correction and anti-roll bars are both defined over a wheel *pair* on an
+// axle), and every one of its per-wheel arrays is fixed at size 4. A 2-wheel
+// vehicle has one wheel per axle -- no pair to correct or roll-couple -- so
+// this is a separate, smaller composition rather than a variant of Vehicle4W.
+//
+// PxVehicle2 itself provides no balancing mechanism for a 2-wheeled vehicle
+// (unlike Jolt's dedicated MotorcycleController, which adds an active lean
+// spring) -- confirmed by reading the whole vehicle/ SDK header tree, zero
+// Motorcycle/Lean/Balance-related types anywhere in it. This class is purely
+// the same per-wheel suspension/tire/drivetrain composition Vehicle4W uses;
+// staying upright is left to the caller (PhysXMotorcycle3D exposes
+// apply_torque_impulse() so a script-side lean controller can apply a
+// balancing torque every tick, the same role Jolt's lean spring plays, just
+// implemented at the node/script layer instead of inside the SDK).
+class Vehicle2W : public PxVehicleRigidBodyComponent,
 				   public PxVehicleSuspensionComponent,
 				   public PxVehicleTireComponent,
 				   public PxVehicleWheelComponent,
@@ -63,67 +73,55 @@ class Vehicle4W : public PxVehicleRigidBodyComponent,
 				   public PxVehicleDirectDriveActuationStateComponent,
 				   public PxVehicleDirectDrivetrainComponent {
 public:
-	static constexpr PxU32 WHEEL_FL = 0;
-	static constexpr PxU32 WHEEL_FR = 1;
-	static constexpr PxU32 WHEEL_RL = 2;
-	static constexpr PxU32 WHEEL_RR = 3;
+	static constexpr PxU32 WHEEL_FRONT = 0;
+	static constexpr PxU32 WHEEL_REAR = 1;
 
 	// --- Base (BaseVehicleParams/State) ------------------------------------
 	PxVehicleAxleDescription axleDescription;
 	PxVehicleFrame frame;
 	PxVehicleScale scale;
 	PxVehicleSuspensionStateCalculationParams suspensionStateCalculationParams;
-	PxVehicleBrakeCommandResponseParams brakeResponseParams[2];
+	PxVehicleBrakeCommandResponseParams brakeResponseParams[1];
 	PxVehicleSteerCommandResponseParams steerResponseParams;
-	PxVehicleAckermannParams ackermannParams[1];
-	PxVehicleSuspensionParams suspensionParams[4];
-	PxVehicleSuspensionComplianceParams suspensionComplianceParams[4];
-	PxVehicleSuspensionForceParams suspensionForceParams[4];
-	PxVehicleTireForceParams tireForceParams[4];
-	PxVehicleWheelParams wheelParams[4];
+	PxVehicleSuspensionParams suspensionParams[2];
+	PxVehicleSuspensionComplianceParams suspensionComplianceParams[2];
+	PxVehicleSuspensionForceParams suspensionForceParams[2];
+	PxVehicleTireForceParams tireForceParams[2];
+	PxVehicleWheelParams wheelParams[2];
 	PxVehicleRigidBodyParams rigidBodyParams;
 
-	PxReal brakeCommandResponseStates[4] = {};
-	PxReal steerCommandResponseStates[4] = {};
-	PxVehicleWheelActuationState actuationStates[4];
-	PxVehicleRoadGeometryState roadGeomStates[4];
-	PxVehicleSuspensionState suspensionStates[4];
-	PxVehicleSuspensionComplianceState suspensionComplianceStates[4];
-	PxVehicleSuspensionForce suspensionForces[4];
-	PxVehicleTireGripState tireGripStates[4];
-	PxVehicleTireDirectionState tireDirectionStates[4];
-	PxVehicleTireSpeedState tireSpeedStates[4];
-	PxVehicleTireSlipState tireSlipStates[4];
-	PxVehicleTireCamberAngleState tireCamberAngleStates[4];
-	PxVehicleTireStickyState tireStickyStates[4];
-	PxVehicleTireForce tireForces[4];
-	PxVehicleWheelRigidBody1dState wheelRigidBody1dStates[4];
-	PxVehicleWheelLocalPose wheelLocalPoses[4];
+	PxReal brakeCommandResponseStates[2] = {};
+	PxReal steerCommandResponseStates[2] = {};
+	PxVehicleWheelActuationState actuationStates[2];
+	PxVehicleRoadGeometryState roadGeomStates[2];
+	PxVehicleSuspensionState suspensionStates[2];
+	PxVehicleSuspensionComplianceState suspensionComplianceStates[2];
+	PxVehicleSuspensionForce suspensionForces[2];
+	PxVehicleTireGripState tireGripStates[2];
+	PxVehicleTireDirectionState tireDirectionStates[2];
+	PxVehicleTireSpeedState tireSpeedStates[2];
+	PxVehicleTireSlipState tireSlipStates[2];
+	PxVehicleTireCamberAngleState tireCamberAngleStates[2];
+	PxVehicleTireStickyState tireStickyStates[2];
+	PxVehicleTireForce tireForces[2];
+	PxVehicleWheelRigidBody1dState wheelRigidBody1dStates[2];
+	PxVehicleWheelLocalPose wheelLocalPoses[2];
 	PxVehicleRigidBodyState rigidBodyState;
-
-	// Anti-roll bars: [0] connects WHEEL_FL/WHEEL_FR (front axle), [1]
-	// connects WHEEL_RL/WHEEL_RR (rear axle). Always submitted (even at
-	// stiffness=0) so the wiring in getDataForSuspensionComponent/
-	// getDataForRigidBodyComponent stays unconditional -- see
-	// PxVehicleAntiRollForceParams's own isValid(), zero stiffness is valid
-	// and just contributes zero torque.
-	PxVehicleAntiRollForceParams antiRollForceParams[2];
-	PxVehicleAntiRollTorque antiRollTorque;
 
 	// --- Direct drive (DirectDrivetrainParams/State) -----------------------
 	PxVehicleDirectDriveThrottleCommandResponseParams directDriveThrottleResponseParams;
-	PxReal directDriveThrottleResponseStates[4] = {};
+	PxReal directDriveThrottleResponseStates[2] = {};
 	PxVehicleCommandState commandState;
 	PxVehicleDirectDriveTransmissionCommandState transmissionCommandState;
 
 	// --- PhysX integration (PhysXIntegrationParams/State) ------------------
 	PxVehiclePhysXRoadGeometryQueryParams physxRoadGeometryQueryParams;
-	PxVehiclePhysXMaterialFrictionParams physxMaterialFrictionParams[4];
-	PxVehiclePhysXSuspensionLimitConstraintParams physxSuspensionLimitConstraintParams[4];
+	PxVehiclePhysXMaterialFrictionParams physxMaterialFrictionParams[2];
+	PxVehiclePhysXSuspensionLimitConstraintParams physxSuspensionLimitConstraintParams[2];
 	PxTransform physxActorCMassLocalPose;
 	PxVec3 physxActorBoxShapeHalfExtents;
 	PxTransform physxActorBoxShapeLocalPose;
-	PxTransform physxWheelShapeLocalPoses[4];
+	PxTransform physxWheelShapeLocalPoses[2];
 	PxVehiclePhysXActor physxActor;
 	PxVehiclePhysXSteerState physxSteerState;
 	PxVehiclePhysXConstraints physxConstraints;
@@ -132,7 +130,7 @@ public:
 	PxU8 componentSequenceSubstepGroupHandle = 0;
 
 	void setToDefault() {
-		for (PxU32 i = 0; i < 4; i++) {
+		for (PxU32 i = 0; i < 2; i++) {
 			actuationStates[i].setToDefault();
 			roadGeomStates[i].setToDefault();
 			suspensionStates[i].setToDefault();
@@ -149,7 +147,6 @@ public:
 			wheelLocalPoses[i].setToDefault();
 		}
 		rigidBodyState.setToDefault();
-		antiRollTorque.setToDefault();
 		commandState.setToDefault();
 		transmissionCommandState.gear = PxVehicleDirectDriveTransmissionCommandState::eNEUTRAL;
 		physxActor.setToDefault();
@@ -169,7 +166,7 @@ public:
 		outRigidBodyParams = &rigidBodyParams;
 		outSuspensionForces.setData(suspensionForces);
 		outTireForces.setData(tireForces);
-		outAntiRollTorque = &antiRollTorque;
+		outAntiRollTorque = nullptr; // no anti-roll bar -- meaningless with one wheel per axle
 		outRigidBodyState = &rigidBodyState;
 	}
 
@@ -199,12 +196,12 @@ public:
 		outSuspensionParams.setData(suspensionParams);
 		outSuspensionComplianceParams.setData(suspensionComplianceParams);
 		outSuspensionForceParams.setData(suspensionForceParams);
-		outAntiRollForceParams.setDataAndCount(antiRollForceParams, 2);
+		outAntiRollForceParams.setEmpty();
 		outWheelRoadGeomStates.setData(roadGeomStates);
 		outSuspensionStates.setData(suspensionStates);
 		outSuspensionComplianceStates.setData(suspensionComplianceStates);
 		outSuspensionForces.setData(suspensionForces);
-		outAntiRollTorque = &antiRollTorque;
+		outAntiRollTorque = nullptr;
 	}
 
 	// getDataForTireComponent (PxVehicleTireComponent)
@@ -383,10 +380,10 @@ public:
 			PxVehicleArrayData<PxReal> &outThrottleResponseStates,
 			PxVehicleArrayData<PxReal> &outSteerResponseStates) override {
 		outAxleDescription = &axleDescription;
-		outBrakeResponseParams.setDataAndCount(brakeResponseParams, 2);
+		outBrakeResponseParams.setDataAndCount(brakeResponseParams, 1);
 		outThrottleResponseParams = &directDriveThrottleResponseParams;
 		outSteerResponseParams = &steerResponseParams;
-		outAckermannParams.setDataAndCount(ackermannParams, 1);
+		outAckermannParams.setEmpty(); // no wheel pair to Ackermann-correct
 		outCommands = &commandState;
 		outTransmissionCommands = &transmissionCommandState;
 		outRigidBodyState = &rigidBodyState;
@@ -453,213 +450,112 @@ public:
 	}
 };
 
-// Everything a caller can tune about ONE wheel of a direct-drive 4-wheel
-// vehicle, in Godot units/conventions. `position` is the suspension
-// attachment point in chassis-local space -- same meaning as VehicleWheel3D's
-// own `position` (the hardpoint), so a PhysXVehicleWheel3D child node's
-// transform origin maps straight onto it with no separate axle/track-width
-// config needed.
-struct Vehicle4WWheelConfig {
+// Everything a caller can tune about ONE wheel of a direct-drive 2-wheel
+// vehicle, in Godot units/conventions -- same field set/meaning as
+// Vehicle4WWheelConfig (see that struct's own doc comment for `position`'s
+// hardpoint convention).
+struct Vehicle2WWheelConfig {
 	Vector3 position;
-	// The wheel node's own local orientation (relative to the chassis) --
-	// identity (the default) means straight-down suspension travel, matching
-	// every existing scene/test. A non-identity basis angles the suspension
-	// travel direction and gives the wheel real camber -- e.g. a dune buggy's
-	// angled A-arms. Same convention as Vehicle2WWheelConfig::basis; see that
-	// struct's own doc comment for the stock-Godot precedent this mirrors.
+	// The wheel node's own local orientation (relative to the vehicle body) --
+	// identity means straight-down suspension travel and an unrotated axle,
+	// matching every existing scene. A non-identity basis angles the fork
+	// (or, on a car, gives a wheel real camber/caster) -- same convention
+	// stock Godot's own VehicleWheel3D already uses (it derives suspension
+	// travel direction from -basis.column(1) and axle from basis.column(0)
+	// of the wheel node's own local transform; see vehicle_body_3d.cpp
+	// VehicleWheel3D::_notification()). PxVehicleSuspensionParams.
+	// suspensionAttachment/suspensionTravelDir accept exactly this: any unit
+	// direction "in the frame of the rigid body", so mirroring stock's own
+	// convention needed no new PhysX capability, just wiring it through.
 	Basis basis;
-	real_t radius = 0.35f;
-	real_t half_width = 0.15f;
-	real_t wheel_mass = 20.0f;
-	real_t wheel_moment_of_inertia = 1.2f;
-	real_t damping_rate = 0.25f;
+	real_t radius = 0.30f;
+	real_t half_width = 0.08f;
+	real_t wheel_mass = 8.0f;
+	real_t wheel_moment_of_inertia = 0.4f;
+	real_t damping_rate = 0.15f;
 
-	real_t suspension_travel = 0.15f;
-	// 35000 (the snippet reference's own value, scaled for this car's mass)
-	// left the suspension sitting at ~68% of suspension_travel just holding
-	// static weight at rest (measured directly via PxVehicleSuspensionState
-	// .jounce: 0.102/0.15) -- almost no margin before bottoming out under any
-	// real driving load (braking, cornering weight transfer, a bump), same
-	// failure mode VehicleWheel3D's own default (5.88) had. Retuned so static
-	// jounce sits around 30% of travel instead, leaving real margin.
-	real_t suspension_stiffness = 90000.0f;
-	real_t suspension_damping = 4500.0f;
+	real_t suspension_travel = 0.12f;
+	real_t suspension_stiffness = 25000.0f;
+	real_t suspension_damping = 2200.0f;
 
-	real_t tire_lateral_stiffness = 20000.0f;
-	real_t tire_longitudinal_stiffness = 20000.0f;
+	real_t tire_lateral_stiffness = 12000.0f;
+	real_t tire_longitudinal_stiffness = 12000.0f;
 	real_t tire_camber_stiffness = 0.0f;
 	real_t tire_friction = 1.0f;
-	// frictionVsSlip curve, as fractions of tire_friction: grip ramps up to
-	// peak (1.0x) at 10% slip, then falls off to tire_slide_grip once fully
-	// sliding/locked (100% slip). tire_rest_grip is the 0%-slip value.
 	real_t tire_rest_grip = 0.9f;
 	real_t tire_slide_grip = 0.7f;
-
-	// Front axle (steering) vs. rear -- also which axle Ackermann correction
-	// and the steer response multiplier apply to. Exactly 2 of the 4 wheels
-	// must have this true.
-	bool use_as_steering = false;
-	// Whether this wheel receives engine torque. All 4 true = AWD direct
-	// drive (the only drivetrain this MVP composition supports).
-	bool use_as_traction = true;
 };
 
-// Everything a caller can tune about a direct-drive 4-wheel vehicle, in Godot
-// units/conventions (meters, kg, radians, Godot's -Z-forward/+X-right/+Y-up).
-// Shared between the probe (hardcoded sedan-like defaults) and PhysXVehicle3D
-// (these become real exported properties -- chassis_half_extents/
-// chassis_half_extents/chassis_box_center_local come from a real CollisionShape3D child, wheels[] from
-// real PhysXVehicleWheel3D children, matching VehicleBody3D/VehicleWheel3D's
-// own node structure instead of flat scalar properties on the body).
-struct Vehicle4WConfig {
-	real_t mass = 1500.0f;
-	Vector3 moment_of_inertia = Vector3(2000.0f, 2200.0f, 1000.0f);
+// Everything a caller can tune about a direct-drive 2-wheel vehicle, in Godot
+// units/conventions. front = steering only, rear = driven only (real
+// motorcycle convention -- no front-wheel-drive option, unlike Vehicle4WConfig's
+// per-wheel use_as_traction, since a 2-wheel direct-drive vehicle only ever
+// has one meaningful drivetrain split).
+struct Vehicle2WConfig {
+	real_t mass = 220.0f;
+	Vector3 moment_of_inertia = Vector3(40.0f, 55.0f, 20.0f);
 
-	Vector3 chassis_half_extents = Vector3(0.95f, 0.4f, 1.85f);
-	Vector3 chassis_box_center_local = Vector3(0.0f, 0.4f, 0.0f);
-	// Center of mass, separate from the box's own visual/collision center --
-	// a lower CoM than the box's geometric center is what keeps the chassis
-	// planted through hard cornering instead of rolling.
-	Vector3 chassis_com_local = Vector3(0.0f, 0.35f, 0.0f);
+	// Chassis collision box stands in for the bike's frame/engine mass --
+	// deliberately small and low, the wheels themselves (and the visual mesh
+	// a scene author parents under each wheel node) carry the real silhouette.
+	Vector3 chassis_half_extents = Vector3(0.18f, 0.25f, 0.45f);
+	Vector3 chassis_box_center_local = Vector3(0.0f, 0.55f, 0.0f);
+	Vector3 chassis_com_local = Vector3(0.0f, 0.5f, 0.0f);
 
-	// Caller order is arbitrary -- configure_vehicle4w() classifies each
-	// entry into front/rear by use_as_steering and left/right by
-	// position.x's sign, so a scene author can add 4 PhysXVehicleWheel3D
-	// children in any order (matching how VehicleWheel3D children work
-	// today: only position and use_as_steering matter, not insertion order).
-	Vehicle4WWheelConfig wheels[4];
+	Vehicle2WWheelConfig front_wheel;
+	Vehicle2WWheelConfig rear_wheel;
 
-	real_t max_engine_torque = 700.0f;
-	real_t max_brake_torque = 6000.0f;
-	real_t max_steer_angle = 0.6f; // radians
-	real_t ackermann_strength = 1.0f;
+	real_t max_engine_torque = 250.0f;
+	real_t max_brake_torque = 1200.0f;
+	real_t max_steer_angle = 0.5f; // radians
 
-	// Anti-roll bar stiffness, front axle (FL/FR) and rear axle (RL/RR).
-	// Positive values are a real anti-roll bar: they reduce the jounce
-	// difference between the two wheels, i.e. resist body roll during
-	// cornering. Negative values do the opposite -- they amplify the jounce
-	// difference, exaggerating roll instead of resisting it. 0 = no anti-roll
-	// bar on that axle (PxVehicleAntiRollForceParams is still submitted with
-	// stiffness=0, a harmless no-op, rather than omitted, to keep the wiring
-	// unconditional).
-	real_t front_anti_roll_stiffness = 0.0f;
-	real_t rear_anti_roll_stiffness = 0.0f;
-
-	// Same meaning as RigidBody3D/VehicleBody3D's own collision_layer/mask --
-	// applies to the chassis box shape only (see configure_vehicle4w()'s own
-	// note on why the wheel shapes stay non-simulating).
 	uint32_t collision_layer = 1;
 	uint32_t collision_mask = 1;
 };
 
-// Fills every param struct on v from cfg, builds the real PxRigidDynamic
-// chassis+wheel shapes (PxVehiclePhysXActorCreate), the suspension-limit/
-// sticky-tire constraints (PxVehicleConstraintsCreate), the component
-// sequence, and out_context -- everything GodotPhysXVehicleProbe::initialize()
-// used to do inline. Does NOT add the actor to the scene or set its start
-// pose -- the caller does that (probe/node have different start-pose
-// conventions: a bare position vs. a node's own global_transform).
-// Returns false (with an ERR_PRINT) on any real validation failure --
-// including cfg.wheels not containing exactly 2 use_as_steering==true and
-// 2 ==false entries, which this fixed direct-drive/Ackermann composition
-// requires.
-// out_wheel_order[Vehicle4W::WHEEL_FL/FR/RL/RR] = the index into cfg.wheels[]
-// that ended up in that canonical slot -- callers that keep their own
-// per-wheel objects in cfg.wheels[] order (e.g. PhysXVehicle3D's own
-// PhysXVehicleWheel3D children) need this to know which of their own
-// objects corresponds to v.wheelLocalPoses[WHEEL_FL] etc. each tick.
-inline bool configure_vehicle4w(Vehicle4W &v, const Vehicle4WConfig &cfg, PxPhysics &physics, PxScene &scene, PxVehiclePhysXSimulationContext &out_context, PxU32 out_wheel_order[4]) {
+// Same role as configure_vehicle4w() (see that function's own doc comment) --
+// fills every param struct on v from cfg, builds the real PxRigidDynamic
+// chassis+wheel shapes, the suspension-limit/sticky-tire constraints, the
+// component sequence, and out_context. Does NOT add the actor to the scene or
+// set its start pose. Returns false (with an ERR_PRINT) on any real
+// validation failure.
+inline bool configure_vehicle2w(Vehicle2W &v, const Vehicle2WConfig &cfg, PxPhysics &physics, PxScene &scene, PxVehiclePhysXSimulationContext &out_context) {
 	v.setToDefault();
 
-	// Godot convention: forward = -Z, right = +X, up = +Y (matches
-	// godot_physx_conversions.h's 1:1 PhysX<->Godot component mapping, so no
-	// axis remap is needed when reading the chassis pose back out).
 	v.frame.lngAxis = PxVehicleAxes::eNegZ;
 	v.frame.latAxis = PxVehicleAxes::ePosX;
 	v.frame.vrtAxis = PxVehicleAxes::ePosY;
 	v.scale.scale = 1.0f;
 
-	// Classify cfg.wheels[0..3] (arbitrary caller order) into canonical
-	// FL/FR/RL/RR slots by (use_as_steering, position.x sign).
-	PxU32 front[2], rear[2];
-	PxU32 nb_front = 0, nb_rear = 0;
-	for (PxU32 i = 0; i < 4; i++) {
-		if (cfg.wheels[i].use_as_steering) {
-			if (nb_front < 2) {
-				front[nb_front++] = i;
-			}
-		} else {
-			if (nb_rear < 2) {
-				rear[nb_rear++] = i;
-			}
-		}
-	}
-	if (nb_front != 2 || nb_rear != 2) {
-		ERR_PRINT("PhysX vehicle: need exactly 2 steering (front) and 2 non-steering (rear) wheels.");
-		return false;
-	}
-	if (cfg.wheels[front[0]].position.x > cfg.wheels[front[1]].position.x) {
-		SWAP(front[0], front[1]);
-	}
-	if (cfg.wheels[rear[0]].position.x > cfg.wheels[rear[1]].position.x) {
-		SWAP(rear[0], rear[1]);
-	}
-	// slot[Vehicle4W::WHEEL_FL] = index into cfg.wheels[] for that slot.
-	PxU32 slot[4];
-	slot[Vehicle4W::WHEEL_FL] = front[0]; // negative (left) x
-	slot[Vehicle4W::WHEEL_FR] = front[1]; // positive (right) x
-	slot[Vehicle4W::WHEEL_RL] = rear[0];
-	slot[Vehicle4W::WHEEL_RR] = rear[1];
-	for (PxU32 i = 0; i < 4; i++) {
-		out_wheel_order[i] = slot[i];
-	}
-
-	const PxU32 frontWheels[2] = { Vehicle4W::WHEEL_FL, Vehicle4W::WHEEL_FR };
-	const PxU32 rearWheels[2] = { Vehicle4W::WHEEL_RL, Vehicle4W::WHEEL_RR };
+	const PxU32 frontWheel[1] = { Vehicle2W::WHEEL_FRONT };
+	const PxU32 rearWheel[1] = { Vehicle2W::WHEEL_REAR };
 	v.axleDescription.setToDefault();
-	v.axleDescription.addAxle(2, frontWheels);
-	v.axleDescription.addAxle(2, rearWheels);
+	v.axleDescription.addAxle(1, frontWheel);
+	v.axleDescription.addAxle(1, rearWheel);
 
 	v.suspensionStateCalculationParams.suspensionJounceCalculationType = PxVehicleSuspensionJounceCalculationType::eRAYCAST;
 	v.suspensionStateCalculationParams.limitSuspensionExpansionVelocity = false;
 
-	// Regular brake: all 4 wheels; handbrake: rear only.
+	// Single brake response entry: both wheels get full brake response
+	// (no separate handbrake convention for a 2-wheel vehicle).
 	v.brakeResponseParams[0].maxResponse = (PxReal)cfg.max_brake_torque;
-	v.brakeResponseParams[1].maxResponse = (PxReal)cfg.max_brake_torque;
-	for (PxU32 i = 0; i < 4; i++) {
-		v.brakeResponseParams[0].wheelResponseMultipliers[i] = 1.0f;
-		v.brakeResponseParams[1].wheelResponseMultipliers[i] = (i == Vehicle4W::WHEEL_RL || i == Vehicle4W::WHEEL_RR) ? 1.0f : 0.0f;
-	}
-	v.steerResponseParams.maxResponse = (PxReal)cfg.max_steer_angle;
-	for (PxU32 i = 0; i < 4; i++) {
-		v.steerResponseParams.wheelResponseMultipliers[i] = (i == Vehicle4W::WHEEL_FL || i == Vehicle4W::WHEEL_FR) ? 1.0f : 0.0f;
-	}
-	const Vector3 &fl_pos = cfg.wheels[slot[Vehicle4W::WHEEL_FL]].position;
-	const Vector3 &fr_pos = cfg.wheels[slot[Vehicle4W::WHEEL_FR]].position;
-	const Vector3 &rl_pos = cfg.wheels[slot[Vehicle4W::WHEEL_RL]].position;
-	v.ackermannParams[0].wheelIds[0] = Vehicle4W::WHEEL_FL;
-	v.ackermannParams[0].wheelIds[1] = Vehicle4W::WHEEL_FR;
-	v.ackermannParams[0].wheelBase = (PxReal)Math::abs(fl_pos.z - rl_pos.z);
-	v.ackermannParams[0].trackWidth = (PxReal)Math::abs(fr_pos.x - fl_pos.x);
-	v.ackermannParams[0].strength = (PxReal)cfg.ackermann_strength;
+	v.brakeResponseParams[0].wheelResponseMultipliers[Vehicle2W::WHEEL_FRONT] = 1.0f;
+	v.brakeResponseParams[0].wheelResponseMultipliers[Vehicle2W::WHEEL_REAR] = 1.0f;
 
-	v.antiRollForceParams[0].wheel0 = Vehicle4W::WHEEL_FL;
-	v.antiRollForceParams[0].wheel1 = Vehicle4W::WHEEL_FR;
-	v.antiRollForceParams[0].stiffness = (PxReal)cfg.front_anti_roll_stiffness;
-	v.antiRollForceParams[1].wheel0 = Vehicle4W::WHEEL_RL;
-	v.antiRollForceParams[1].wheel1 = Vehicle4W::WHEEL_RR;
-	v.antiRollForceParams[1].stiffness = (PxReal)cfg.rear_anti_roll_stiffness;
+	v.steerResponseParams.maxResponse = (PxReal)cfg.max_steer_angle;
+	v.steerResponseParams.wheelResponseMultipliers[Vehicle2W::WHEEL_FRONT] = 1.0f;
+	v.steerResponseParams.wheelResponseMultipliers[Vehicle2W::WHEEL_REAR] = 0.0f;
 
 	v.directDriveThrottleResponseParams.maxResponse = (PxReal)cfg.max_engine_torque;
-	for (PxU32 i = 0; i < 4; i++) {
-		v.directDriveThrottleResponseParams.wheelResponseMultipliers[i] = cfg.wheels[slot[i]].use_as_traction ? 1.0f : 0.0f;
-	}
+	v.directDriveThrottleResponseParams.wheelResponseMultipliers[Vehicle2W::WHEEL_FRONT] = 0.0f;
+	v.directDriveThrottleResponseParams.wheelResponseMultipliers[Vehicle2W::WHEEL_REAR] = 1.0f;
 
 	v.rigidBodyParams.mass = (PxReal)cfg.mass;
 	v.rigidBodyParams.moi = to_px(cfg.moment_of_inertia);
 
-	for (PxU32 i = 0; i < 4; i++) {
-		const Vehicle4WWheelConfig &w = cfg.wheels[slot[i]];
+	const Vehicle2WWheelConfig *wheel_cfgs[2] = { &cfg.front_wheel, &cfg.rear_wheel };
+	for (PxU32 i = 0; i < 2; i++) {
+		const Vehicle2WWheelConfig &w = *wheel_cfgs[i];
 
 		v.wheelParams[i].radius = (PxReal)w.radius;
 		v.wheelParams[i].halfWidth = (PxReal)w.half_width;
@@ -669,30 +565,20 @@ inline bool configure_vehicle4w(Vehicle4W &v, const Vehicle4WConfig &cfg, PxPhys
 
 		v.suspensionForceParams[i].stiffness = (PxReal)w.suspension_stiffness;
 		v.suspensionForceParams[i].damping = (PxReal)w.suspension_damping;
-		v.suspensionForceParams[i].sprungMass = v.rigidBodyParams.mass * 0.25f;
+		// Sprung mass: half the vehicle's weight per wheel (front/rear split,
+		// same estimate Vehicle4W uses per-axle -- exact static balance isn't
+		// critical here since a real motorcycle's rider/frame layout varies
+		// widely anyway).
+		v.suspensionForceParams[i].sprungMass = v.rigidBodyParams.mass * 0.5f;
 
-		// suspensionAttachment is PxVehicle2's own "wheel pose at maximum
-		// compression" (PxVehicleSuspensionParams.h), specified in "the
-		// frame of the rigid body" -- CoM-composed
-		// (actorGlobalPose * actorCMassLocalPose, see PxVehicleWheelHelpers.h's
-		// rigidBodyPose), not the actor's raw origin. Neither of those is
-		// what a scene author expects w.position to mean: PxVehicle2 has no
-		// notion of a rest length independent of travel (unlike Bullet's
-		// VehicleWheel3D, whose spring force is stiffness*(restLength -
-		// currentLength) -- restLength and travel are two separate
-		// numbers there), so its natural zero-force point always sits
-		// pinned to full droop, `travel` away from the attachment. That
-		// means changing travel alone shifts where the suspension settles,
-		// which is surprising and makes w.position mean "attachment", not
-		// "resting position" -- the opposite of VehicleWheel3D's own
-		// convention. Backing out the attachment from an estimated static
-		// jounce makes w.position mean the same thing VehicleWheel3D's own
-		// position means: where the wheel actually sits at rest. Travel
-		// direction is the wheel node's own local -Y (see
-		// Vehicle4WWheelConfig::basis's own doc comment) instead of a
-		// hardcoded (0,-1,0), so the backing-out math below projects along
-		// that direction rather than assuming +Y is "up" relative to the
-		// suspension.
+		// Same attachment-vs-rest-position backing-out Vehicle4W's own
+		// configure_vehicle4w() does -- see that function's doc comment for
+		// why w.position has to mean "rest position", not "attachment". The
+		// travel direction is no longer hardcoded straight down -- it's the
+		// wheel node's own local -Y (matching stock Godot's VehicleWheel3D
+		// convention, see Vehicle2WWheelConfig::basis's own doc comment), so
+		// the same backing-out math has to project along that direction
+		// instead of assuming +Y is "up" relative to the suspension.
 		const Vector3 travel_dir_local = w.basis.xform(Vector3(0.0f, -1.0f, 0.0f)).normalized();
 		const PxReal restLoadEstimate = v.suspensionForceParams[i].sprungMass * 9.81f;
 		const PxReal jounceAtRest = (w.suspension_stiffness > 0.0) ? PxClamp(restLoadEstimate / (PxReal)w.suspension_stiffness, 0.0f, (PxReal)w.suspension_travel) : 0.0f;
@@ -702,16 +588,13 @@ inline bool configure_vehicle4w(Vehicle4W &v, const Vehicle4WConfig &cfg, PxPhys
 		v.suspensionParams[i].suspensionTravelDist = (PxReal)w.suspension_travel;
 		v.suspensionParams[i].wheelAttachment = PxTransform(PxIdentity);
 
-		v.suspensionComplianceParams[i] = PxVehicleSuspensionComplianceParams(); // no toe/camber/force-offset curves
+		v.suspensionComplianceParams[i] = PxVehicleSuspensionComplianceParams();
 
 		v.tireForceParams[i].latStiffX = 0.01f;
 		v.tireForceParams[i].latStiffY = (PxReal)w.tire_lateral_stiffness;
 		v.tireForceParams[i].longStiff = (PxReal)w.tire_longitudinal_stiffness;
 		v.tireForceParams[i].camberStiff = (PxReal)w.tire_camber_stiffness;
 		v.tireForceParams[i].restLoad = v.suspensionForceParams[i].sprungMass * 9.81f;
-		// Peak grip at ~10% slip, falling off once fully locked/sliding --
-		// a flat curve here would mean a locked tire grips as well as a
-		// rolling one, which never produces a real skid.
 		v.tireForceParams[i].frictionVsSlip[0][0] = 0.0f;
 		v.tireForceParams[i].frictionVsSlip[0][1] = (PxReal)w.tire_friction * (PxReal)w.tire_rest_grip;
 		v.tireForceParams[i].frictionVsSlip[1][0] = 0.1f;
@@ -734,11 +617,11 @@ inline bool configure_vehicle4w(Vehicle4W &v, const Vehicle4WConfig &cfg, PxPhys
 	}
 
 	if (!v.axleDescription.isValid()) {
-		ERR_PRINT("PhysX vehicle: invalid axle description.");
+		ERR_PRINT("PhysX motorcycle: invalid axle description.");
 		return false;
 	}
 	if (!v.rigidBodyParams.isValid()) {
-		ERR_PRINT("PhysX vehicle: invalid rigid body params.");
+		ERR_PRINT("PhysX motorcycle: invalid rigid body params.");
 		return false;
 	}
 
@@ -751,52 +634,22 @@ inline bool configure_vehicle4w(Vehicle4W &v, const Vehicle4WConfig &cfg, PxPhys
 	v.physxActorBoxShapeHalfExtents = to_px(cfg.chassis_half_extents);
 	v.physxActorBoxShapeLocalPose = PxTransform(to_px(cfg.chassis_box_center_local));
 
-	// Wheel shapes stay non-simulating (flags(0) below), so this material's
-	// friction/restitution never actually gets consumed by them -- it only
-	// exists because PxVehiclePhysXWheelShapeParams requires one.
-	PxMaterial *wheel_material = physics.createMaterial((PxReal)cfg.wheels[0].tire_friction, (PxReal)cfg.wheels[0].tire_friction, 0.1f);
-	// Chassis gets its own, deliberately low-friction material -- it's a
-	// REAL simulation shape now (see below), and if suspension settling ever
-	// lets the box graze the ground even slightly, a high-friction contact
-	// there fights the drivetrain directly (found via a real regression:
-	// reusing the wheel's friction=1.0 material on the chassis froze the car
-	// in place, throttle doing nothing, the instant this shape went from
-	// PxShapeFlags(0) to a real simulation shape). The chassis's role is
-	// just physical bulk for other objects to bump into, not a friction
-	// surface -- the wheels' own tire model is the only thing that should
-	// ever resist the car's own motion.
+	PxMaterial *wheel_material = physics.createMaterial((PxReal)cfg.front_wheel.tire_friction, (PxReal)cfg.front_wheel.tire_friction, 0.1f);
+	// Same rationale as configure_vehicle4w(): the chassis box is a real
+	// simulation shape (so other bodies can hit it), but deliberately
+	// low-friction so it never fights the drivetrain if suspension settling
+	// lets it graze the ground.
 	PxMaterial *chassis_material = physics.createMaterial(0.0f, 0.0f, 0.1f);
 	if (!wheel_material || !chassis_material) {
-		ERR_PRINT("PhysX vehicle: failed to create material.");
+		ERR_PRINT("PhysX motorcycle: failed to create material.");
 		return false;
 	}
 	PxCookingParams cookingParams(physics.getTolerancesScale());
 
 	{
-		// Chassis box: a REAL simulation shape (unlike the reference vehicle's
-		// own PxShapeFlags(0)) so the car's body can actually be hit by other
-		// rigid bodies in the scene, using Godot's own layer/mask convention
-		// (word0=layer, word1=mask -- see godot_physx_filter_shader).
-		// Deliberately NOT eSCENE_QUERY_SHAPE: the road-geometry raycast each
-		// wheel casts starts near its own suspension attachment point, which
-		// sits inside this box's own vertical extent -- with the box a valid
-		// query target, every wheel's raycast hit its own car's chassis
-		// instead of the ground (jounce pinned at 0, zero tire load, the
-		// actor's real PxRigidDynamic origin settling flush on the ground
-		// instead of the wheels ever bearing the car's weight -- a real
-		// regression caught by comparing rigidBodyState.pose, which is
-		// CoM-relative, against a raw getGlobalPose() read). Simulation
-		// contacts (blocking other bodies) and scene queries (raycasts
-		// hitting it) are independent PhysX flags; only the former is
-		// wanted here. Trade-off: this also means an ordinary Godot-side
-		// raycast query (e.g. a gameplay "aim" raycast) can't hit this car's
-		// body either -- acceptable for the immediate ask (the car should
-		// physically block/be blocked by other objects), revisit if
-		// raycast-pickability is ever needed too.
-		// Wheels stay at flags(0): their ground contact is entirely the
-		// road-geometry raycast + suspension, not real shape collision, and
-		// making them real simulation shapes too would double-apply ground
-		// reaction forces on top of that.
+		// Same eSIMULATION_SHAPE-only, non-scene-query chassis convention as
+		// configure_vehicle4w() -- see that function's own comment on why
+		// eSCENE_QUERY_SHAPE would break the wheels' own road-geometry raycasts.
 		const PxFilterData chassisFilterData((PxU32)cfg.collision_layer, (PxU32)cfg.collision_mask, 0, 0);
 		const PxShapeFlags chassisShapeFlags(PxShapeFlag::eSIMULATION_SHAPE | PxShapeFlag::eVISUALIZATION);
 		const PxVehiclePhysXRigidActorParams actorParams(v.rigidBodyParams, nullptr);
@@ -816,7 +669,7 @@ inline bool configure_vehicle4w(Vehicle4W &v, const Vehicle4WConfig &cfg, PxPhys
 	chassis_material->release();
 
 	if (!v.physxActor.rigidBody) {
-		ERR_PRINT("PhysX vehicle: PxVehiclePhysXActorCreate failed.");
+		ERR_PRINT("PhysX motorcycle: PxVehiclePhysXActorCreate failed.");
 		return false;
 	}
 

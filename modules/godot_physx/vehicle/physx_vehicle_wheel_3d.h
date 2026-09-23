@@ -32,20 +32,25 @@
 #include "scene/3d/node_3d.h"
 
 class PhysXVehicle3D;
+class PhysXMotorcycle3D;
 
-// One wheel of a PhysXVehicle3D -- same role/registration mechanism as
-// VehicleWheel3D on a VehicleBody3D (this node's own `position` IS the
-// suspension attachment hardpoint, exactly like VehicleWheel3D's), so a
-// PhysXVehicle3D's node structure is directly comparable to a VehicleBody3D's:
-// a body node with 4 wheel children, each with its own real transform a
-// MeshInstance3D child can attach to for visuals -- not flat scalar
-// properties on the body with hand-guessed offsets for visuals, which is
-// what this replaces.
+// One wheel of a PhysXVehicle3D OR a PhysXMotorcycle3D -- same role/
+// registration mechanism as VehicleWheel3D on a VehicleBody3D (this node's
+// own `position` IS the suspension attachment hardpoint, exactly like
+// VehicleWheel3D's). Shared between both vehicle types rather than split into
+// a separate PhysXMotorcycleWheel3D: the only thing that looked different at
+// first (a motorcycle's fixed front-steers/rear-drives roles) is already
+// exactly what use_as_steering/use_as_traction express when left at their
+// natural per-wheel values -- a motorcycle just never has more than one wheel
+// with either flag true. Only one of `vehicle`/`motorcycle` is ever non-null
+// on a given instance.
 class PhysXVehicleWheel3D : public Node3D {
 	GDCLASS(PhysXVehicleWheel3D, Node3D);
 
 	friend class PhysXVehicle3D;
+	friend class PhysXMotorcycle3D;
 	PhysXVehicle3D *vehicle = nullptr;
+	PhysXMotorcycle3D *motorcycle = nullptr;
 
 protected:
 	static void _bind_methods();
@@ -74,6 +79,8 @@ public:
 	real_t get_tire_lateral_stiffness() const { return tire_lateral_stiffness; }
 	void set_tire_longitudinal_stiffness(real_t p_v);
 	real_t get_tire_longitudinal_stiffness() const { return tire_longitudinal_stiffness; }
+	void set_tire_camber_stiffness(real_t p_v);
+	real_t get_tire_camber_stiffness() const { return tire_camber_stiffness; }
 	void set_tire_friction(real_t p_v);
 	real_t get_tire_friction() const { return tire_friction; }
 	void set_tire_rest_grip(real_t p_v);
@@ -99,6 +106,7 @@ private:
 	real_t suspension_damping = 5200.0f;
 	real_t tire_lateral_stiffness = 20000.0f;
 	real_t tire_longitudinal_stiffness = 20000.0f;
+	real_t tire_camber_stiffness = 0.0f;
 	real_t tire_friction = 1.0f;
 	real_t tire_rest_grip = 0.9f;
 	real_t tire_slide_grip = 0.7f;

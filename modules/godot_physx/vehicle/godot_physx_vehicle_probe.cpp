@@ -127,7 +127,12 @@ Vector3 GodotPhysXVehicleProbe::get_linear_velocity() const {
 
 real_t GodotPhysXVehicleProbe::get_forward_speed() const {
 	ERR_FAIL_COND_V(!impl->initialized, 0.0);
-	const PxVec3 fwd = impl->vehicle.frame.getLngAxis();
+	// frame.getLngAxis() is a fixed LOCAL-frame constant, not a world-space
+	// direction -- rotate it into world space by the actor's current
+	// orientation first (see PhysXVehicle3D::get_forward_speed()'s own
+	// comment for the real bug this was found from).
+	const PxTransform actor_pose = impl->vehicle.physxActor.rigidBody->getGlobalPose();
+	const PxVec3 fwd = actor_pose.q.rotate(impl->vehicle.frame.getLngAxis());
 	return (real_t)impl->vehicle.rigidBodyState.linearVelocity.dot(fwd);
 }
 

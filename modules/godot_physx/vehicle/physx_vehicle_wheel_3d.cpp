@@ -29,6 +29,7 @@
 
 #include "physx_vehicle_wheel_3d.h"
 
+#include "physx_motorcycle_3d.h"
 #include "physx_vehicle_3d.h"
 
 #include "core/object/class_db.h"
@@ -36,19 +37,25 @@
 void PhysXVehicleWheel3D::_notification(int p_what) {
 	switch (p_what) {
 		case NOTIFICATION_ENTER_TREE: {
-			PhysXVehicle3D *v = Object::cast_to<PhysXVehicle3D>(get_parent());
-			if (!v) {
-				return;
+			if (PhysXVehicle3D *v = Object::cast_to<PhysXVehicle3D>(get_parent())) {
+				vehicle = v;
+				v->wheels.push_back(this);
+				v->_rebuild_if_live();
+			} else if (PhysXMotorcycle3D *m = Object::cast_to<PhysXMotorcycle3D>(get_parent())) {
+				motorcycle = m;
+				m->wheels.push_back(this);
+				m->_rebuild_if_live();
 			}
-			vehicle = v;
-			v->wheels.push_back(this);
-			v->_rebuild_if_live();
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			if (vehicle) {
 				vehicle->wheels.erase(this);
 				vehicle->_rebuild_if_live();
 				vehicle = nullptr;
+			} else if (motorcycle) {
+				motorcycle->wheels.erase(this);
+				motorcycle->_rebuild_if_live();
+				motorcycle = nullptr;
 			}
 		} break;
 	}
@@ -57,6 +64,8 @@ void PhysXVehicleWheel3D::_notification(int p_what) {
 void PhysXVehicleWheel3D::_rebuild_parent_if_live() {
 	if (vehicle) {
 		vehicle->_rebuild_if_live();
+	} else if (motorcycle) {
+		motorcycle->_rebuild_if_live();
 	}
 }
 
@@ -103,6 +112,10 @@ void PhysXVehicleWheel3D::set_tire_longitudinal_stiffness(real_t p_v) {
 	tire_longitudinal_stiffness = p_v;
 	_rebuild_parent_if_live();
 }
+void PhysXVehicleWheel3D::set_tire_camber_stiffness(real_t p_v) {
+	tire_camber_stiffness = p_v;
+	_rebuild_parent_if_live();
+}
 void PhysXVehicleWheel3D::set_tire_friction(real_t p_v) {
 	tire_friction = p_v;
 	_rebuild_parent_if_live();
@@ -126,8 +139,8 @@ void PhysXVehicleWheel3D::set_use_as_traction(bool p_v) {
 
 PackedStringArray PhysXVehicleWheel3D::get_configuration_warnings() const {
 	PackedStringArray warnings = Node3D::get_configuration_warnings();
-	if (!Object::cast_to<PhysXVehicle3D>(get_parent())) {
-		warnings.push_back(RTR("PhysXVehicleWheel3D serves to provide a wheel to a PhysXVehicle3D. Please use it as a child of a PhysXVehicle3D."));
+	if (!Object::cast_to<PhysXVehicle3D>(get_parent()) && !Object::cast_to<PhysXMotorcycle3D>(get_parent())) {
+		warnings.push_back(RTR("PhysXVehicleWheel3D serves to provide a wheel to a PhysXVehicle3D or PhysXMotorcycle3D. Please use it as a child of one of those."));
 	}
 	return warnings;
 }
@@ -163,6 +176,8 @@ void PhysXVehicleWheel3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_tire_lateral_stiffness"), &PhysXVehicleWheel3D::get_tire_lateral_stiffness);
 	ClassDB::bind_method(D_METHOD("set_tire_longitudinal_stiffness", "value"), &PhysXVehicleWheel3D::set_tire_longitudinal_stiffness);
 	ClassDB::bind_method(D_METHOD("get_tire_longitudinal_stiffness"), &PhysXVehicleWheel3D::get_tire_longitudinal_stiffness);
+	ClassDB::bind_method(D_METHOD("set_tire_camber_stiffness", "value"), &PhysXVehicleWheel3D::set_tire_camber_stiffness);
+	ClassDB::bind_method(D_METHOD("get_tire_camber_stiffness"), &PhysXVehicleWheel3D::get_tire_camber_stiffness);
 	ClassDB::bind_method(D_METHOD("set_tire_friction", "value"), &PhysXVehicleWheel3D::set_tire_friction);
 	ClassDB::bind_method(D_METHOD("get_tire_friction"), &PhysXVehicleWheel3D::get_tire_friction);
 	ClassDB::bind_method(D_METHOD("set_tire_rest_grip", "value"), &PhysXVehicleWheel3D::set_tire_rest_grip);
@@ -171,6 +186,7 @@ void PhysXVehicleWheel3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_tire_slide_grip"), &PhysXVehicleWheel3D::get_tire_slide_grip);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_lateral_stiffness", PROPERTY_HINT_RANGE, "1000,100000,100,or_greater"), "set_tire_lateral_stiffness", "get_tire_lateral_stiffness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_longitudinal_stiffness", PROPERTY_HINT_RANGE, "1000,100000,100,or_greater"), "set_tire_longitudinal_stiffness", "get_tire_longitudinal_stiffness");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_camber_stiffness", PROPERTY_HINT_RANGE, "0,100000,100,or_greater"), "set_tire_camber_stiffness", "get_tire_camber_stiffness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_friction", PROPERTY_HINT_RANGE, "0.1,3,0.01,or_greater"), "set_tire_friction", "get_tire_friction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_rest_grip", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_tire_rest_grip", "get_tire_rest_grip");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_slide_grip", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_tire_slide_grip", "get_tire_slide_grip");

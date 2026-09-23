@@ -142,6 +142,7 @@ bool PhysXVehicle3D::_build() {
 		PhysXVehicleWheel3D *w = wheels[i];
 		Vehicle4WWheelConfig &wc = cfg.wheels[i];
 		wc.position = w->get_position();
+		wc.basis = w->get_transform().basis;
 		wc.radius = w->get_radius();
 		wc.half_width = w->get_half_width();
 		wc.wheel_mass = w->get_wheel_mass();
@@ -152,6 +153,7 @@ bool PhysXVehicle3D::_build() {
 		wc.suspension_damping = w->get_suspension_damping();
 		wc.tire_lateral_stiffness = w->get_tire_lateral_stiffness();
 		wc.tire_longitudinal_stiffness = w->get_tire_longitudinal_stiffness();
+		wc.tire_camber_stiffness = w->get_tire_camber_stiffness();
 		wc.tire_friction = w->get_tire_friction();
 		wc.tire_rest_grip = w->get_tire_rest_grip();
 		wc.tire_slide_grip = w->get_tire_slide_grip();
@@ -280,7 +282,14 @@ real_t PhysXVehicle3D::get_forward_speed() const {
 	if (!impl->built) {
 		return 0.0;
 	}
-	const PxVec3 fwd = impl->vehicle.frame.getLngAxis();
+	// frame.getLngAxis() is a fixed LOCAL-frame constant (e.g. (0,0,-1)),
+	// not a world-space direction -- rotate it into world space by the
+	// actor's current orientation before dotting against the world-space
+	// velocity, or this is only correct when yaw matches spawn orientation
+	// (found via a real bug report: correct at first, sign-flips as the
+	// vehicle yaws further away from its start heading).
+	const PxTransform actor_pose = impl->vehicle.physxActor.rigidBody->getGlobalPose();
+	const PxVec3 fwd = actor_pose.q.rotate(impl->vehicle.frame.getLngAxis());
 	return (real_t)impl->vehicle.rigidBodyState.linearVelocity.dot(fwd);
 }
 

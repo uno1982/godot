@@ -28,20 +28,23 @@
 		<member name="suspension_travel" type="float" setter="set_suspension_travel" getter="get_suspension_travel" default="0.22">
 			How far the suspension can move from full droop to full compression, in meters -- matches PhysX's own reference vehicle. [member Node3D.position] (the resting point) sits somewhere inside this range, not at either end, so raising this alone does not change ride height, only how much room there is to move before bottoming out or topping out. If this is too short for the ride height, [method PhysXVehicle3D.get_wheel_separation] reports a negative value (the wheel penetrates the ground even fully compressed).
 		</member>
+		<member name="tire_camber_stiffness" type="float" setter="set_tire_camber_stiffness" getter="get_tire_camber_stiffness" default="0.0">
+			How much lateral force the tire develops from camber angle. This is useful for leaned motorcycle tires; zero disables camber-generated force.
+		</member>
 		<member name="tire_friction" type="float" setter="set_tire_friction" getter="get_tire_friction" default="1.0">
 			The tire's peak grip coefficient, reached at ~10% wheel slip. Grip below and above that point is scaled by [member tire_rest_grip] and [member tire_slide_grip] -- a real tire (and [VehicleWheel3D]'s own simpler single-coefficient model) grips less once it starts sliding than while still rolling, which is what actually produces a skid under hard braking or throttle instead of the tire just sticking to the road regardless of how hard it is being spun or braked.
-		</member>
-		<member name="tire_rest_grip" type="float" setter="set_tire_rest_grip" getter="get_tire_rest_grip" default="0.9">
-			Grip at zero wheel slip, as a fraction of [member tire_friction]. Lower than [code]1.0[/code] so grip still ramps up toward the peak at ~10% slip rather than starting there.
-		</member>
-		<member name="tire_slide_grip" type="float" setter="set_tire_slide_grip" getter="get_tire_slide_grip" default="0.7">
-			Grip once the tire is fully sliding/locked (100% wheel slip), as a fraction of [member tire_friction]. Lower values make a locked wheel (hard braking) or a spun-out wheel (hard throttle) slide/skid more readily instead of gripping like a rolling tire; [code]1.0[/code] disables the falloff entirely (a locked tire grips as well as a rolling one).
 		</member>
 		<member name="tire_lateral_stiffness" type="float" setter="set_tire_lateral_stiffness" getter="get_tire_lateral_stiffness" default="20000.0">
 			How much sideways (cornering) force the tire develops per unit of lateral slip angle. Higher values corner more sharply for the same steering input, at the cost of feeling less forgiving/more twitchy.
 		</member>
 		<member name="tire_longitudinal_stiffness" type="float" setter="set_tire_longitudinal_stiffness" getter="get_tire_longitudinal_stiffness" default="20000.0">
 			How much forward/backward (acceleration or braking) force the tire develops per unit of longitudinal slip. Higher values put down power more directly for the same throttle/brake input, at the cost of feeling less forgiving/more twitchy.
+		</member>
+		<member name="tire_rest_grip" type="float" setter="set_tire_rest_grip" getter="get_tire_rest_grip" default="0.9">
+			Grip at zero wheel slip, as a fraction of [member tire_friction]. Lower than [code]1.0[/code] so grip still ramps up toward the peak at ~10% slip rather than starting there.
+		</member>
+		<member name="tire_slide_grip" type="float" setter="set_tire_slide_grip" getter="get_tire_slide_grip" default="0.7">
+			Grip once the tire is fully sliding/locked (100% wheel slip), as a fraction of [member tire_friction]. Lower values make a locked wheel (hard braking) or a spun-out wheel (hard throttle) slide/skid more readily instead of gripping like a rolling tire; [code]1.0[/code] disables the falloff entirely (a locked tire grips as well as a rolling one).
 		</member>
 		<member name="use_as_steering" type="bool" setter="set_use_as_steering" getter="is_used_as_steering" default="false">
 			Whether this wheel is on the steering (front) axle. Exactly 2 of a vehicle's 4 wheels must have this enabled -- [PhysXVehicle3D] surfaces a configuration warning otherwise. Also determines which axle [member PhysXVehicle3D.ackermann_strength] applies Ackermann correction to.

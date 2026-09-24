@@ -25,13 +25,9 @@ automatically too, same mechanism as PhysXGpu_64.dll -- on Linux this is
 also still unverified/manual.
 
 Run this script on the machine you're building the module for -- --platform
-defaults to the host OS (windows / linuxbsd). The Linux presets
-(linux64-godot[-gpu].xml) are UNVERIFIED: nobody has run this script or built
-the module on Linux yet, only prepared it. If generate_projects.sh, the CMake
-build, or the later scons link step fails, see each preset file's header
-comment and README.md's Linux section for the specific unknowns to check
-first (preset platform/compiler naming, install bin/ layout, GPU link
-mechanism) before assuming something else is wrong.
+defaults to the host OS (windows / linuxbsd). The Linux GPU preset
+(linux64-godot-gpu.xml) is UNVERIFIED -- see its header comment and
+README.md's Linux section.
 """
 
 import argparse
@@ -83,13 +79,10 @@ def main():
     preset_file = os.path.join(PRESET_DIR, preset + ".xml")
     if not os.path.isfile(preset_file):
         sys.exit("missing preset: " + preset_file)
-    if args.platform == "linuxbsd":
+    if args.platform == "linuxbsd" and args.gpu:
         print(
-            "NOTE: the %s preset is unverified -- no Linux build of this module has "
-            "been run yet. See its header comment and README.md's Linux section for "
-            "the specific unknowns (preset platform/compiler naming, install bin/ "
-            "layout, GPU link mechanism) if generate_projects.sh or the CMake build "
-            "fails here." % preset
+            "NOTE: the %s preset is unverified -- no Linux GPU build of this module has "
+            "been run yet. See its header comment and README.md's Linux section." % preset
         )
 
     if args.gpu and not (os.environ.get("CUDA_PATH") or shutil.which("nvcc")):
@@ -137,7 +130,9 @@ def main():
     gen_path = os.path.join(physx, gen)
     run([gen_path, preset] if is_windows else ["bash", gen_path, preset], cwd=physx)
 
-    build_dir = os.path.join(physx, "compiler", preset)
+    # Visual Studio is a multi-config generator (one build dir, config picked at
+    # build time); on Linux PhysX generates one Makefile build dir per config.
+    build_dir = os.path.join(physx, "compiler", preset if is_windows else preset + "-" + args.config)
     if not os.path.isdir(build_dir):
         sys.exit("project generation did not produce " + build_dir)
     run(
@@ -163,15 +158,13 @@ def main():
             print()
             print("SCsub copies PhysXGpu_64.dll next to the Godot binary automatically -- nothing more to do.")
         else:
-            # UNVERIFIED bin/ subdirectory name -- see linux64-godot-gpu.xml's
-            # header comment; check the actual install output and adjust.
-            # Also UNVERIFIED whether Linux even needs a copied .so the way
-            # Windows needs the DLL (vs. an rpath/LD_LIBRARY_PATH entry, or a
-            # pure dlopen with no on-disk convention to match) -- SCsub does
-            # not auto-copy anything here yet.
-            so = os.path.join(sdk, "bin", "linux.clang.x86_64", args.config, "libPhysXGpu_64.so")
+            # UNVERIFIED whether Linux even needs a copied .so the way Windows
+            # needs the DLL (vs. an rpath/LD_LIBRARY_PATH entry, or a pure
+            # dlopen with no on-disk convention to match) -- SCsub does not
+            # auto-copy anything here yet.
+            so = os.path.join(sdk, "bin", "linux.x86_64", args.config, "libPhysXGpu_64.so")
             print()
-            print("Then copy the GPU runtime next to the Godot binary (path above is a guess -- verify it):")
+            print("Then copy the GPU runtime next to the Godot binary (unverified -- see README.md's Linux section):")
             print("    cp %s bin/" % so)
 
     if args.blast:

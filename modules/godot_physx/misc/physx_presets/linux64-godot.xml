@@ -1,14 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  UNVERIFIED: this preset has not been run through PhysX's generate_projects.sh
-  on an actual Linux machine. It mirrors vc17win64-godot.xml minus the
-  Windows-only static-CRT switches (NV_USE_STATIC_WINCRT / NV_USE_DEBUG_WINCRT
-  have no meaning outside MSVC). `targetPlatform="linux"` / `compiler="clang"`
-  match PhysX's own public Linux preset naming, but have not been confirmed
-  against this pinned PHYSX_REF -- if generate_projects.sh rejects this preset,
-  check physx/buildtools/presets/public/ in the checkout for the exact
-  supported platform/compiler spelling and fix this file (and build_physx.py's
-  preset selection) to match.
+  Mirrors vc17win64-godot.xml minus the Windows-only static-CRT switches
+  (NV_USE_STATIC_WINCRT / NV_USE_DEBUG_WINCRT have no meaning outside MSVC).
 -->
 <preset name="linux64-godot" comment="Linux x86-64 CPU-only static libs, for linking into the Godot godot_physx module.">
   <platform targetPlatform="linux" compiler="clang" />

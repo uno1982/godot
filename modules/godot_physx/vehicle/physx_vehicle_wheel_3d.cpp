@@ -30,6 +30,7 @@
 #include "physx_vehicle_wheel_3d.h"
 
 #include "physx_motorcycle_3d.h"
+#include "physx_tank_3d.h"
 #include "physx_vehicle_3d.h"
 
 #include "core/object/class_db.h"
@@ -45,6 +46,10 @@ void PhysXVehicleWheel3D::_notification(int p_what) {
 				motorcycle = m;
 				m->wheels.push_back(this);
 				m->_rebuild_if_live();
+			} else if (PhysXTank3D *t = Object::cast_to<PhysXTank3D>(get_parent())) {
+				tank = t;
+				t->wheels.push_back(this);
+				t->_rebuild_if_live();
 			}
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
@@ -56,6 +61,10 @@ void PhysXVehicleWheel3D::_notification(int p_what) {
 				motorcycle->wheels.erase(this);
 				motorcycle->_rebuild_if_live();
 				motorcycle = nullptr;
+			} else if (tank) {
+				tank->wheels.erase(this);
+				tank->_rebuild_if_live();
+				tank = nullptr;
 			}
 		} break;
 	}
@@ -66,6 +75,8 @@ void PhysXVehicleWheel3D::_rebuild_parent_if_live() {
 		vehicle->_rebuild_if_live();
 	} else if (motorcycle) {
 		motorcycle->_rebuild_if_live();
+	} else if (tank) {
+		tank->_rebuild_if_live();
 	}
 }
 
@@ -139,8 +150,8 @@ void PhysXVehicleWheel3D::set_use_as_traction(bool p_v) {
 
 PackedStringArray PhysXVehicleWheel3D::get_configuration_warnings() const {
 	PackedStringArray warnings = Node3D::get_configuration_warnings();
-	if (!Object::cast_to<PhysXVehicle3D>(get_parent()) && !Object::cast_to<PhysXMotorcycle3D>(get_parent())) {
-		warnings.push_back(RTR("PhysXVehicleWheel3D serves to provide a wheel to a PhysXVehicle3D or PhysXMotorcycle3D. Please use it as a child of one of those."));
+	if (!Object::cast_to<PhysXVehicle3D>(get_parent()) && !Object::cast_to<PhysXMotorcycle3D>(get_parent()) && !Object::cast_to<PhysXTank3D>(get_parent())) {
+		warnings.push_back(RTR("PhysXVehicleWheel3D serves to provide a wheel to a PhysXVehicle3D, PhysXMotorcycle3D, or PhysXTank3D. Please use it as a child of one of those."));
 	}
 	return warnings;
 }

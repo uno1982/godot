@@ -33,24 +33,29 @@
 
 class PhysXVehicle3D;
 class PhysXMotorcycle3D;
+class PhysXTank3D;
 
-// One wheel of a PhysXVehicle3D OR a PhysXMotorcycle3D -- same role/
-// registration mechanism as VehicleWheel3D on a VehicleBody3D (this node's
-// own `position` IS the suspension attachment hardpoint, exactly like
-// VehicleWheel3D's). Shared between both vehicle types rather than split into
-// a separate PhysXMotorcycleWheel3D: the only thing that looked different at
-// first (a motorcycle's fixed front-steers/rear-drives roles) is already
-// exactly what use_as_steering/use_as_traction express when left at their
-// natural per-wheel values -- a motorcycle just never has more than one wheel
-// with either flag true. Only one of `vehicle`/`motorcycle` is ever non-null
-// on a given instance.
+// One wheel of a PhysXVehicle3D, PhysXMotorcycle3D, OR a PhysXTank3D -- same
+// role/registration mechanism as VehicleWheel3D on a VehicleBody3D (this
+// node's own `position` IS the suspension attachment hardpoint, exactly like
+// VehicleWheel3D's). Shared between all three vehicle types rather than
+// split into per-type wheel classes: the only thing that looked different at
+// first (a motorcycle's fixed front-steers/rear-drives roles, or a tank's
+// every-wheel-driven/none-steer roles) is already exactly what
+// use_as_steering/use_as_traction express when left at their natural
+// per-wheel values -- a tank wheel simply never has use_as_steering set (see
+// PhysXTank3D's own doc comment for how it decides track side instead, which
+// doesn't use either flag at all). Only one of `vehicle`/`motorcycle`/`tank`
+// is ever non-null on a given instance.
 class PhysXVehicleWheel3D : public Node3D {
 	GDCLASS(PhysXVehicleWheel3D, Node3D);
 
 	friend class PhysXVehicle3D;
 	friend class PhysXMotorcycle3D;
+	friend class PhysXTank3D;
 	PhysXVehicle3D *vehicle = nullptr;
 	PhysXMotorcycle3D *motorcycle = nullptr;
+	PhysXTank3D *tank = nullptr;
 
 protected:
 	static void _bind_methods();

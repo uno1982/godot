@@ -29,35 +29,20 @@ Visual Studio with the C++ workload and Windows SDK, the D3D12 Agility SDK):
   `CUDA_PATH`; open a fresh terminal afterwards). The end-user machine only
   needs an NVIDIA driver (`nvcuda.dll`), not the toolkit.
 
-Win64 / MSVC is the only build that has actually been run and tested. A Linux
-build has been *prepped but not verified* — `SCsub` has a `linuxbsd` branch and
-`misc/physx_presets/linux64-godot[-gpu].xml` presets exist, and
-`build_physx.py --platform linuxbsd` will attempt it, but nobody has run it
-against a real Linux toolchain yet. If you're the first to try, treat these as
-the checklist of what's still unconfirmed:
+On **Linux**, on top of a normal Godot Linux editor build: **CMake**, **git**
+and **clang** (the PhysX SDK is built with clang even when Godot itself is built
+with GCC; the two link together fine). Tested with clang 22.
 
-- **Preset acceptance** — `linux64-godot.xml` uses `targetPlatform="linux"
-  compiler="clang"`, matching PhysX's own public preset naming from memory, not
-  from a tested run against this pinned `PHYSX_REF`. If `generate_projects.sh`
-  rejects it, check `physx/buildtools/presets/public/` in the cloned checkout
-  for the exact accepted spelling.
-- **Install `bin/` layout** — `SCsub` and `build_physx.py` guess
-  `bin/linux.clang.x86_64/release` for the static `.a` libraries (by analogy
-  with Windows' `bin/win.x86_64.vc143.mt/release`). Confirm this against what
-  the build actually installs and fix both files if it differs.
-- **GPU link mechanism** — the Windows GPU build links an import lib
-  (`PhysXGpu_64.lib`) for a DLL loaded at runtime; whether Linux needs the
-  equivalent `-lPhysXGpu_64` against `libPhysXGpu_64.so`, an rpath/
-  `LD_LIBRARY_PATH` entry instead, or nothing at link time at all (pure
-  `dlopen`) hasn't been checked.
-- The two bundled `misc/physx_patches/` (heightfield GPU boundary crash, Turing
-  `sm_75` SASS) are platform-generic source/CMake changes, not Windows-specific,
-  so they should apply and matter the same way on Linux — but that's also
-  unverified.
-
-CPU-only static libraries otherwise link the same way SCons resolves any Unix
-lib (`env.Append(LIBS=...)`), so the Linux CPU path is the smaller lift; the
-GPU/CUDA path is the bigger unknown.
+Win64 / MSVC is built and tested, CPU and GPU. Linux x86-64 is built and
+tested for the CPU build only. The Linux **GPU** build (`--gpu` /
+`physx_gpu=yes`) has a preset (`misc/physx_presets/linux64-godot-gpu.xml`) but
+has not been run yet: whether Linux links `libPhysXGpu_64.so` like the Windows
+import lib, needs an rpath/`LD_LIBRARY_PATH` entry instead, or nothing at link
+time at all (pure `dlopen`) hasn't been checked, and `SCsub` doesn't copy the
+`.so` next to the binary. The same applies to the Blast `.so` files
+(`blast_sdk=`). The bundled `misc/physx_patches/` apply on Linux too; the two
+GPU ones (heightfield GPU boundary crash, Turing `sm_75` SASS) are
+platform-generic, but their effect is untested there for the same reason.
 
 ### Step 1 — build the PhysX SDK
 
@@ -85,6 +70,7 @@ with `physx_sdk=<path>` or the `PHYSX_SDK` environment variable.
 ```
 scons platform=windows target=editor physx_sdk=<path from step 1>            # CPU
 scons platform=windows target=editor physx_sdk=<path> physx_gpu=yes          # GPU
+scons platform=linuxbsd target=editor physx_sdk=<path from step 1>           # Linux (CPU)
 ```
 
 For a **GPU** build, `SCsub` also copies `PhysXGpu_64.dll` next to the built
@@ -429,11 +415,9 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   only, as in most engines.
 - **Cloth self-collision** is disabled; a cloth can pass through itself. Cloth
   tearing is not implemented.
-- Windows x86-64 is the only platform actually built and tested. Linux has been
-  prepped (`SCsub`, `misc/physx_presets/linux64-godot*.xml`,
-  `build_physx.py --platform linuxbsd`) but not run against a real toolchain —
-  see the Linux checklist under [Building](#building) for the specific
-  unknowns to resolve first if it doesn't work out of the box.
+- Windows and Linux x86-64 are the only platforms built and tested, and on
+  Linux only the CPU build — see [Building](#building) for what's unverified
+  about a Linux GPU build.
 
 ## Layout
 

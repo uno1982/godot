@@ -24,18 +24,20 @@ physx_gpu = ARGUMENTS.get("physx_gpu", "no") not in ("no", "0", "false", "False"
 physx_sdk = ARGUMENTS.get("physx_sdk", os.environ.get("PHYSX_SDK", ""))
 physx_inc = os.path.join(physx_sdk, "include")
 
+# Ordered so each library comes before the ones it depends on: GNU ld resolves
+# static libraries in a single left-to-right pass (MSVC doesn't care).
 physx_static_libs = [
-    "PhysX_static_64",
-    "PhysXExtensions_static_64",
-    "PhysXPvdSDK_static_64",
-    "PhysXCooking_static_64",
-    "PhysXCommon_static_64",
-    "PhysXFoundation_static_64",
-    # PxVehicle2 -- ships in the same PhysX SDK build as everything else above,
+    # PxVehicle2 -- ships in the same PhysX SDK build as everything else below,
     # no separate SDK checkout/build step (unlike Blast). Headers under
     # include/vehicle/ use their own subdir-qualified #includes, so no extra
     # per-subdir CPPPATH entries are needed either.
     "PhysXVehicle_static_64",
+    "PhysXExtensions_static_64",
+    "PhysX_static_64",
+    "PhysXPvdSDK_static_64",
+    "PhysXCooking_static_64",
+    "PhysXCommon_static_64",
+    "PhysXFoundation_static_64",
 ]
 
 if env["platform"] == "windows":
@@ -45,13 +47,7 @@ if env["platform"] == "windows":
     if physx_gpu:
         physx_libs.append("PhysXGpu_64")  # import lib for PhysXGpu_64.dll
 elif env["platform"] == "linuxbsd":
-    # UNVERIFIED: no Linux build of this module has been run yet (see
-    # misc/physx_presets/linux64-godot*.xml and README.md's Linux section).
-    # `bin/linux.clang.x86_64/release` matches PhysX's own Linux preset output
-    # layout, but has not been confirmed against an actual build here -- check
-    # it against whatever `install/linux64-godot/PhysX/bin/` actually contains
-    # and adjust if it differs.
-    physx_lib = os.path.join(physx_sdk, "bin", "linux.clang.x86_64", "release")
+    physx_lib = os.path.join(physx_sdk, "bin", "linux.x86_64", "release")
     physx_libs = list(physx_static_libs)
     if physx_gpu:
         # UNVERIFIED: on Windows this links an import lib for a DLL loaded at

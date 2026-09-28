@@ -698,6 +698,19 @@ void GodotPhysXBody3D::apply_central_force(const Vector3 &p_force) {
 	}
 }
 
+void GodotPhysXBody3D::apply_force(const Vector3 &p_force, const Vector3 &p_position) {
+	if (px_actor) {
+		if (PxRigidDynamic *dyn = px_actor->is<PxRigidDynamic>()) {
+			// Same offset-position convention fix as apply_impulse() above:
+			// p_position is an offset from the body origin in global-aligned
+			// axes, and PxRigidBodyExt::addForceAtPos wants an absolute world
+			// position, so convert by adding the body's current origin.
+			const PxVec3 world_pos = dyn->getGlobalPose().p + to_px(p_position);
+			PxRigidBodyExt::addForceAtPos(*dyn, to_px(p_force), world_pos, PxForceMode::eFORCE);
+		}
+	}
+}
+
 void GodotPhysXBody3D::_apply_solver_iterations() {
 	if (!px_actor) {
 		return;

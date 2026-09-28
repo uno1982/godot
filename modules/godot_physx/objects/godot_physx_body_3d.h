@@ -243,6 +243,7 @@ public:
 	void apply_central_impulse(const Vector3 &p_impulse);
 	void apply_torque_impulse(const Vector3 &p_impulse);
 	void apply_central_force(const Vector3 &p_force);
+	void apply_force(const Vector3 &p_force, const Vector3 &p_position);
 	void apply_torque(const Vector3 &p_torque);
 
 	GodotPhysXDirectBodyState3D *get_direct_state();

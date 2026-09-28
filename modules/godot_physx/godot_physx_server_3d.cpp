@@ -594,6 +594,18 @@ void GodotPhysXServer3D::body_apply_central_force(RID p_body, const Vector3 &p_f
 	body->apply_central_force(p_force);
 }
 
+void GodotPhysXServer3D::body_apply_force(RID p_body, const Vector3 &p_force, const Vector3 &p_position) {
+	GodotPhysXBody3D *body = body_owner.get_or_null(p_body);
+	ERR_FAIL_NULL(body);
+	body->apply_force(p_force, p_position);
+}
+
+void GodotPhysXServer3D::body_apply_torque(RID p_body, const Vector3 &p_torque) {
+	GodotPhysXBody3D *body = body_owner.get_or_null(p_body);
+	ERR_FAIL_NULL(body);
+	body->apply_torque(p_torque);
+}
+
 void GodotPhysXServer3D::body_set_axis_lock(RID p_body, BodyAxis p_axis, bool p_lock) {
 	GodotPhysXBody3D *body = body_owner.get_or_null(p_body);
 	ERR_FAIL_NULL(body);

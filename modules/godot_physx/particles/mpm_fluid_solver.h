@@ -167,6 +167,9 @@ private:
 	int _last_surf_tris = 0; // running estimate used to size the async vert/normal reads
 	void _rt_free_buffers();
 	void _rt_rebuild_uniform_sets();
+	// Compiles PASS_BS_MARCH's shader/pipeline on first real use; see the note in
+	// rt_compile() for why it isn't compiled up front with everything else.
+	bool _ensure_bs_march_pipeline();
 	// Local path only: sync and pull mm / impulses / surface straight back.
 	void _local_reap();
 };

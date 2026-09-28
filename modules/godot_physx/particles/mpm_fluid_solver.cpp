@@ -135,6 +135,17 @@ void MPMFluidSolverGPU::rt_compile(Ref<MPMFluidSolverGPU> p_self) {
 		mpm_bs_render_shader_glsl,
 	};
 	for (int i = 0; i < PASS_MAX; i++) {
+		// PASS_BS_MARCH is compiled lazily (see _ensure_bs_march_pipeline()), not
+		// here -- a defense-in-depth precaution left in place after root-causing
+		// and fixing a real hang in this shader's own source (see the big comment
+		// at the top of mpm_bs_march.glsl for the full story: on a confirmed RTX
+		// 5070/Blackwell + driver combination, compute_pipeline_create() hung
+		// outright compiling the shader's old normal-computation approach). Even
+		// with that fixed, there's no reason to pay this pipeline's compile cost
+		// for every granular/non-surface MPM instance, which never dispatch it.
+		if (i == PASS_BS_MARCH) {
+			continue;
+		}
 		Ref<RDShaderFile> sf;
 		sf.instantiate();
 		if (sf->parse_versions_from_text(src[i]) != OK) {
@@ -147,6 +158,24 @@ void MPMFluidSolverGPU::rt_compile(Ref<MPMFluidSolverGPU> p_self) {
 		ERR_FAIL_COND(pipeline[i].is_null());
 	}
 	_shaders_ok = true;
+}
+
+bool MPMFluidSolverGPU::_ensure_bs_march_pipeline() {
+	if (pipeline[PASS_BS_MARCH].is_valid()) {
+		return true;
+	}
+	Ref<RDShaderFile> sf;
+	sf.instantiate();
+	if (sf->parse_versions_from_text(mpm_bs_march_shader_glsl) != OK) {
+		ERR_PRINT("MPMFluidSolver: block-sparse march (isosurface) shader failed to compile.");
+		return false;
+	}
+	shader[PASS_BS_MARCH] = rd->shader_create_from_spirv(sf->get_spirv_stages());
+	if (shader[PASS_BS_MARCH].is_null()) {
+		return false;
+	}
+	pipeline[PASS_BS_MARCH] = rd->compute_pipeline_create(shader[PASS_BS_MARCH]);
+	return pipeline[PASS_BS_MARCH].is_valid();
 }
 
 void MPMFluidSolverGPU::_rt_free_buffers() {
@@ -186,6 +215,9 @@ void MPMFluidSolverGPU::_rt_rebuild_uniform_sets() {
 	const int hi = block_sparse ? (int)PASS_MAX : (int)PASS_BS_CLEAR;
 	const int nbind = block_sparse ? 12 : 8;
 	for (int p = lo; p < hi; p++) {
+		if (p == PASS_BS_MARCH && !shader[p].is_valid()) {
+			continue; // lazily compiled on first surface_mesh request; see _ensure_bs_march_pipeline()
+		}
 		Vector<RD::Uniform> uniforms;
 		for (int bnd = 0; bnd < nbind; bnd++) {
 			RD::Uniform u;
@@ -198,7 +230,7 @@ void MPMFluidSolverGPU::_rt_rebuild_uniform_sets() {
 		ERR_FAIL_COND(uset[p].is_null());
 	}
 
-	if (buf_mverts.is_valid()) {
+	if (buf_mverts.is_valid() && shader[block_sparse ? PASS_BS_MARCH : PASS_MARCH].is_valid()) {
 		Vector<RD::Uniform> m;
 		const RID mesh_bufs[3] = { buf_mverts, buf_mnorms, buf_mcount };
 		for (int b = 0; b < 3; b++) {
@@ -328,6 +360,16 @@ void MPMFluidSolverGPU::rt_step(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p
 	const uint32_t pg = groups_for(p_pcount);
 	const int cells = (p_grid_dims.x - 1) * (p_grid_dims.y - 1) * (p_grid_dims.z - 1);
 
+	// Compile the block-sparse march pipeline on first actual use, not up front --
+	// see the note in rt_compile(). Must happen before compute_list_begin(): once
+	// recorded, an open compute list can't have its uniform sets freed/rebuilt
+	// safely without touching binds already recorded in it.
+	if (block_sparse && p_want_surface && !pipeline[PASS_BS_MARCH].is_valid()) {
+		if (_ensure_bs_march_pipeline()) {
+			_rt_rebuild_uniform_sets();
+		}
+	}
+
 	if (p_bench) {
 		rd->capture_timestamp("mpm_a");
 	}
@@ -361,7 +403,7 @@ void MPMFluidSolverGPU::rt_step(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p
 			}
 			pass(PASS_BS_G2P, pg);
 		}
-		if (p_want_surface) {
+		if (p_want_surface && pipeline[PASS_BS_MARCH].is_valid()) {
 			pass(PASS_BS_SURFACE, pg);
 			rd->compute_list_bind_compute_pipeline(cl, pipeline[PASS_BS_MARCH]);
 			rd->compute_list_bind_uniform_set(cl, uset[PASS_BS_MARCH], 0);

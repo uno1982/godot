@@ -37,8 +37,6 @@ class MeshInstance3D;
 class ShaderMaterial;
 class Texture2DRD;
 class PlaneMesh;
-class SubViewport;
-class Camera3D;
 class Texture2D;
 
 // The real water surface node: owns a WaterSolver (ripple + FFT ocean
@@ -100,20 +98,23 @@ public:
 	void set_water_material(const Ref<ShaderMaterial> &p_material);
 	Ref<ShaderMaterial> get_water_material() const { return water_material; }
 
-	// Cheap grid-projection caustics (the technique caustic-volume's own
-	// `lite` build uses, NOT its full SDF/photon-volume renderer -- see the
-	// project plan's own note on why only this cheap technique is in scope).
-	// One rasterized pass: the water's own grid mesh, refracted per-vertex
-	// down to caustic_floor_y and additively blended -- no ray marching.
+	// Light-space caustics: a direct RenderingDevice draw pass that projects
+	// refracted surface-grid samples into a texture, without a SubViewport.
 	void set_caustics_enabled(bool p_enabled);
 	bool get_caustics_enabled() const { return caustics_enabled; }
-	void set_caustic_floor_y(float p_y);
-	float get_caustic_floor_y() const { return caustic_floor_y; }
+	void set_caustics_sun_direction(Vector3 p_direction);
+	Vector3 get_caustics_sun_direction() const { return caustics_sun_direction; }
+	void set_caustics_reference_depth(float p_depth);
+	float get_caustics_reference_depth() const { return caustics_reference_depth; }
 	// The resulting texture -- assign it to a floor material's albedo/
-	// emission (e.g. via a ShaderMaterial sampling it by world XZ) to show
-	// the light pattern. Null until caustics_enabled and the node has built
-	// (never in the editor, same as the water simulation itself).
+	// emission using get_caustics_light_right(), get_caustics_light_up(),
+	// get_caustics_origin(), and get_caustics_half_extent() as projection
+	// metadata. Null until caustics_enabled and the node has built.
 	Ref<Texture2D> get_caustics_texture() const;
+	Vector3 get_caustics_light_right() const { return solver.get_caustics_light_right(); }
+	Vector3 get_caustics_light_up() const { return solver.get_caustics_light_up(); }
+	Vector3 get_caustics_origin() const { return solver.get_caustics_origin(); }
+	float get_caustics_half_extent() const { return solver.get_caustics_half_extent(); }
 
 	// CPU-side, safe every physics tick -- bilinear samples of the last
 	// texture refresh (see _refresh_textures()'s throttle), summed across
@@ -149,14 +150,12 @@ private:
 	Ref<ShaderMaterial> water_material;
 	Ref<Texture2DRD> ripple_height_tex;
 	Ref<Texture2DRD> ocean_height_tex;
+	Ref<Texture2DRD> caustics_texture;
 	bool textures_bound = false; // set once, after the solver's RD textures actually exist (see _update())
 
 	bool caustics_enabled = true;
-	float caustic_floor_y = -2.5f;
-	SubViewport *caustics_viewport = nullptr;
-	Camera3D *caustics_camera = nullptr;
-	MeshInstance3D *caustics_mesh_instance = nullptr;
-	Ref<ShaderMaterial> caustics_material;
+	Vector3 caustics_sun_direction = Vector3(-0.35f, -1.0f, -0.25f);
+	float caustics_reference_depth = 2.5f;
 
 	Vector<float> cached_ripple_height;
 	int cached_ripple_n = 0;
@@ -169,7 +168,6 @@ private:
 	static constexpr int REFRESH_EVERY_FRAMES = 4; // throttled CPU cache refresh for sample_height() only -- rendering is unthrottled/automatic via the zero-copy textures
 
 	void _rebuild();
-	void _rebuild_caustics();
 	void _bind_textures();
 	void _refresh_cpu_cache();
 	void _update(double p_delta);

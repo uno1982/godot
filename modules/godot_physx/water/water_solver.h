@@ -88,6 +88,28 @@ public:
 	RID buf_blit_ripple_params, buf_blit_ocean_params; // just {n}, uploaded once at build (grid resolution is fixed per configure())
 	RID uset_blit_ripple, uset_blit_ocean;
 
+	// Light-space caustic map -- a real RD graphics (vertex+fragment) pipeline,
+	// not a SubViewport (see water_caustics_map.glsl's own header comment for
+	// why: a second live SubViewport was confirmed this session to corrupt the
+	// MAIN viewport's transparent-object rendering in this engine fork).
+	// Vertex/index buffers are built once per configure() (fixed topology --
+	// a flat grid over ocean_domain_size, denser than the ocean layer to
+	// reduce faceting in refracted-ray projection),
+	// not regenerated per frame; only the uniform buffer's light-space basis/
+	// reference-depth/sun direction change per step.
+	RID shader_caustics, pipeline_caustics;
+	RID sampler_linear;
+	RID buf_caustics_params;
+	RID caustics_vertex_buffer, caustics_index_buffer;
+	int64_t caustics_vertex_format = -1;
+	RID caustics_vertex_array, caustics_index_array;
+	RID tex_caustics; // R8_UNORM, wrapped by Texture2DRD on the caller side, same as tex_ripple_height/tex_ocean_height
+	RID caustics_framebuffer;
+	RID uset_caustics;
+	int caustics_index_count = 0;
+	static constexpr int CAUSTICS_MAP_SIZE = 2048;
+	static constexpr int CAUSTICS_GRID_MIN_RESOLUTION = 256;
+
 	int ocean_log2n = 0;
 	double ocean_time_accum = 0.0;
 	bool a_is_current = true;
@@ -107,7 +129,7 @@ public:
 	void rt_compile(Ref<WaterSolverGPU> p_self);
 	// Wind/amplitude only matter here -- they feed the ONE-TIME h0 spectrum
 	// generation (see rt_build()'s body), not the per-step evolution.
-	void rt_build(Ref<WaterSolverGPU> p_self, int p_grid_resolution, Vector2 p_domain_size, int p_ocean_grid_resolution, Vector2 p_ocean_domain_size, float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_gravity);
+	void rt_build(Ref<WaterSolverGPU> p_self, int p_grid_resolution, Vector2 p_domain_size, int p_ocean_grid_resolution, Vector2 p_ocean_domain_size, float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_gravity, bool p_caustics_enabled);
 	// p_spheres/p_impulses: flat, 4 floats/entry (world_x, world_z, radius,
 	// strength), packed on the calling thread into an immutable value-copy
 	// snapshot before dispatch -- same thread-safety pattern
@@ -119,6 +141,17 @@ public:
 	// callback landing "a few frames later" already provides natural,
 	// implicit throttling).
 	void rt_step(Ref<WaterSolverGPU> p_self, double p_delta, float p_depth, float p_damping, float p_gravity, float p_water_level, PackedFloat32Array p_spheres, PackedFloat32Array p_impulses);
+	// Light-space caustic map render -- a real RD draw pass (see this class's
+	// own field comments for why not a SubViewport). p_sun_direction need not
+	// be normalized (normalized on upload); p_light_right/p_light_up are the
+	// light-space projection basis (both unit, perpendicular to the sun
+	// direction and each other -- computed on the calling thread, not here,
+	// since building an arbitrary-direction orthonormal basis is a plain, pure
+	// CPU computation with no GPU dependency). Called once per step, separate
+	// from rt_step() itself so caustics-specific state doesn't have to route
+	// through that function's already-large signature; no-ops if the caustics
+	// pipeline was never built (caustics_enabled false at configure() time).
+	void rt_render_caustics(Ref<WaterSolverGPU> p_self, Vector3 p_sun_direction, Vector3 p_light_right, Vector3 p_light_up, Vector3 p_origin, float p_half_extent, float p_reference_depth, float p_ior);
 	void rt_free(Ref<WaterSolverGPU> p_self);
 
 	// Async readback callbacks: RenderingDevice invokes them with the data as
@@ -145,9 +178,11 @@ private:
 	Vector2 _init_wind_direction = Vector2(1, 0);
 	float _init_wave_amplitude = 1.0f;
 	float _init_gravity = 9.81f;
+	bool _init_caustics_enabled = false;
 
 	void _rt_free_buffers();
 	void _rt_build_buffers();
+	void _rt_build_caustics_grid();
 };
 
 /* ===================================================================== */
@@ -186,6 +221,12 @@ public:
 		float wind_speed = 8.0f;
 		Vector2 wind_direction = Vector2(1, 0); // need not be normalized, normalized on upload
 		float wave_amplitude = 1.0f; // Phillips spectrum's A constant
+
+		// Light-space caustic map (see water_caustics_map.glsl). The grid/
+		// buffers are only built if this is true at configure() time -- keep
+		// it false (the default) for a water surface that never wants
+		// caustics to skip that cost entirely.
+		bool caustics_enabled = false;
 	};
 
 	static constexpr int MAX_SPHERES = WaterSolverGPU::MAX_SPHERES;
@@ -225,6 +266,22 @@ public:
 	Vector2 get_domain_size() const { return settings.domain_size; }
 	Vector2 get_ocean_domain_size() const { return settings.ocean_domain_size; }
 
+	// Light-space caustic map (see water_caustics_map.glsl's own header for
+	// the real design: a shadow-map-like technique so ANY receiving surface
+	// -- a flat floor, a wall, an uneven terrain, a submerged prop -- can
+	// sample the same map, not just a fixed flat plane). p_sun_direction
+	// need not be normalized. Call once per step, alongside step() itself;
+	// no-ops if caustics_enabled was false at configure() time.
+	void render_caustics(const Vector3 &p_origin, const Vector3 &p_sun_direction, float p_reference_depth = 2.5f, float p_ior = 1.333f);
+	// Zero-copy RD texture RID (R8_UNORM intensity), same convention as
+	// get_ripple_height_texture_rd_rid(). The light-space basis/extent used
+	// to produce it, needed by any receiver's own lookup shader code.
+	RID get_caustics_texture_rd_rid() const;
+	Vector3 get_caustics_light_right() const { return caustics_light_right; }
+	Vector3 get_caustics_light_up() const { return caustics_light_up; }
+	Vector3 get_caustics_origin() const { return caustics_origin; }
+	float get_caustics_half_extent() const { return caustics_half_extent; }
+
 	// CPU-side cached readback, for buoyancy sampling (a consumer with very
 	// different freshness/precision needs than rendering -- see the project
 	// plan's note on why these stay separate paths from the zero-copy
@@ -247,6 +304,14 @@ public:
 private:
 	Ref<WaterSolverGPU> gpu;
 	Settings settings;
+	// CPU-side light-space basis, recomputed each render_caustics() call and
+	// cached here for get_caustics_light_right()/get_caustics_light_up()/
+	// get_caustics_half_extent() -- a receiver's own lookup shader needs
+	// these to match whatever the map was actually rendered with.
+	Vector3 caustics_light_right = Vector3(1, 0, 0);
+	Vector3 caustics_light_up = Vector3(0, 0, 1);
+	Vector3 caustics_origin;
+	float caustics_half_extent = 1.0f;
 
 	struct SphereSlot {
 		uint64_t owner = 0;

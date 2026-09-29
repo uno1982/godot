@@ -4,7 +4,7 @@
 		A real animated water surface: a GPU FFT ocean spectrum layer plus a local ripple layer that bodies can disturb, rendered as a displaced mesh.
 	</brief_description>
 	<description>
-		Two coupled simulation layers, both real-time GPU compute (a private [RenderingDevice], not the CPU): a local iWave-style ripple layer (a damped 2D wave equation you can disturb via [method submit_sphere]/[method submit_impulse]) and a Tessendorf FFT ocean spectrum layer (large-scale wind-driven chop, tuned by [member wind_speed]/[member wind_direction]/[member wave_amplitude]). Both are ported from the caustic-volume reference project's simulation approach, not its full ray-marched photon-caustics renderer -- rendering here is a plain displaced mesh with refraction, not that technique.
+		Two coupled simulation layers, both real-time GPU compute through the shared main [RenderingDevice] when windowed: a local iWave-style ripple layer (a damped 2D wave equation you can disturb via [method submit_sphere]/[method submit_impulse]) and a Tessendorf FFT ocean spectrum layer (large-scale wind-driven chop, tuned by [member wind_speed]/[member wind_direction]/[member wave_amplitude]). Rendering also produces optional light-space caustics with a direct [RenderingDevice] graphics pass; it does not create a second [SubViewport].
 		A child [MeshInstance3D] (a subdivided [PlaneMesh], sized to [member ocean_domain_size]) is created automatically and displaced by both layers, summed. Call [method sample_height] to query the same combined surface on the CPU -- e.g. from a buoyancy script (see [code]demo/common/buoyant_body.gd[/code] in the paired demo project) -- and [method submit_sphere] once per physics tick per floating body so it actually disturbs the ripple layer, not just receives a height back.
 		No [RenderingDevice] compute support (e.g. running headless) leaves the surface flat and [method sample_height] returning [member water_level] plus zero -- a graceful no-op, not an error, matching every other GPU solver in this module.
 		Only runs in an actual running game, never in the editor -- placing or moving the node in the Inspector does not simulate.
@@ -15,8 +15,24 @@
 		<method name="get_caustics_texture" qualifiers="const">
 			<return type="Texture2D" />
 			<description>
-				The rendered caustics light-pattern texture (see [member caustics_enabled]) -- assign it to a floor material's albedo/emission, sampled by world XZ against the same extent as [member ocean_domain_size], to show the pattern. Null until [member caustics_enabled] is true and the node has built (never in the editor, same as the water simulation itself).
+				The zero-copy caustics light-pattern texture. Project a receiving surface's world position onto [method get_caustics_light_right] and [method get_caustics_light_up], relative to [method get_caustics_origin], and map the result through [method get_caustics_half_extent] to sample the texture. Null until [member caustics_enabled] is true and the node has built.
 			</description>
+		</method>
+		<method name="get_caustics_half_extent" qualifiers="const">
+			<return type="float" />
+			<description>Half-width of the square light-space projection in world units, used to map receiver positions to [method get_caustics_texture] UV coordinates.</description>
+		</method>
+		<method name="get_caustics_light_right" qualifiers="const">
+			<return type="Vector3" />
+			<description>Light-space horizontal projection axis used to sample [method get_caustics_texture].</description>
+		</method>
+		<method name="get_caustics_light_up" qualifiers="const">
+			<return type="Vector3" />
+			<description>Light-space vertical projection axis used to sample [method get_caustics_texture].</description>
+		</method>
+		<method name="get_caustics_origin" qualifiers="const">
+			<return type="Vector3" />
+			<description>World-space center of the light-space caustics projection.</description>
 		</method>
 		<method name="clear_sphere">
 			<return type="void" />
@@ -53,11 +69,14 @@
 		</method>
 	</methods>
 	<members>
-		<member name="caustic_floor_y" type="float" setter="set_caustic_floor_y" getter="get_caustic_floor_y" default="-2.5">
-			World-space Y of the floor the caustics pass projects onto (see [member caustics_enabled]). Set to match the actual floor under the water in your scene.
+		<member name="caustics_reference_depth" type="float" setter="set_caustics_reference_depth" getter="get_caustics_reference_depth" default="2.5">
+			Approximate distance the refracted light travels below the surface before it is mapped into the caustics texture. Larger values spread the pattern farther sideways for oblique light.
 		</member>
 		<member name="caustics_enabled" type="bool" setter="set_caustics_enabled" getter="get_caustics_enabled" default="true">
-			Enables the cheap grid-projection caustics pass (the technique the caustic-volume reference's `lite` build uses -- a single rasterized draw of the water's own grid mesh, refracted per-vertex onto [member caustic_floor_y], not ray marching). See [method get_caustics_texture].
+			Enables the light-space caustics draw pass and its render target. When disabled, the extra GPU buffers and draw are skipped. See [method get_caustics_texture].
+		</member>
+		<member name="caustics_sun_direction" type="Vector3" setter="set_caustics_sun_direction" getter="get_caustics_sun_direction" default="Vector3(-0.35, -1, -0.25)">
+			World-space direction that light travels from the source toward the water. It need not be normalized.
 		</member>
 		<member name="damping" type="float" setter="set_damping" getter="get_damping" default="0.5">
 			Damping (ALPHA) on the local ripple layer's wave equation -- higher settles disturbances faster.

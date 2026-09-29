@@ -249,6 +249,11 @@ _water_blit_glsl = ("water_blit_ripple.glsl", "water_blit_ocean.glsl")
 for _glsl in _water_blit_glsl:
     env_physx.GLSL_HEADER(os.path.join("water", _glsl))
 
+# Light-space caustic map -- a real RD graphics (vertex+fragment) pipeline,
+# not a SubViewport (see water_caustics_map.glsl's own header for why).
+# Self-contained (its own Params block), no shared _inc.glsl.
+env_physx.GLSL_HEADER(os.path.join("water", "water_caustics_map.glsl"))
+
 # Godot source files
 module_obj = []
 env_physx.add_source_files(module_obj, "*.cpp")

@@ -12,6 +12,12 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="get_caustics_texture" qualifiers="const">
+			<return type="Texture2D" />
+			<description>
+				The rendered caustics light-pattern texture (see [member caustics_enabled]) -- assign it to a floor material's albedo/emission, sampled by world XZ against the same extent as [member ocean_domain_size], to show the pattern. Null until [member caustics_enabled] is true and the node has built (never in the editor, same as the water simulation itself).
+			</description>
+		</method>
 		<method name="clear_sphere">
 			<return type="void" />
 			<param index="0" name="owner" type="int" />
@@ -47,6 +53,12 @@
 		</method>
 	</methods>
 	<members>
+		<member name="caustic_floor_y" type="float" setter="set_caustic_floor_y" getter="get_caustic_floor_y" default="-2.5">
+			World-space Y of the floor the caustics pass projects onto (see [member caustics_enabled]). Set to match the actual floor under the water in your scene.
+		</member>
+		<member name="caustics_enabled" type="bool" setter="set_caustics_enabled" getter="get_caustics_enabled" default="true">
+			Enables the cheap grid-projection caustics pass (the technique the caustic-volume reference's `lite` build uses -- a single rasterized draw of the water's own grid mesh, refracted per-vertex onto [member caustic_floor_y], not ray marching). See [method get_caustics_texture].
+		</member>
 		<member name="damping" type="float" setter="set_damping" getter="get_damping" default="0.5">
 			Damping (ALPHA) on the local ripple layer's wave equation -- higher settles disturbances faster.
 		</member>

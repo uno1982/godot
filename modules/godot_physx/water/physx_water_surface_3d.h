@@ -37,6 +37,9 @@ class MeshInstance3D;
 class ShaderMaterial;
 class Texture2DRD;
 class PlaneMesh;
+class SubViewport;
+class Camera3D;
+class Texture2D;
 
 // The real water surface node: owns a WaterSolver (ripple + FFT ocean
 // layers), renders it via a plain child MeshInstance3D (a subdivided
@@ -97,6 +100,21 @@ public:
 	void set_water_material(const Ref<ShaderMaterial> &p_material);
 	Ref<ShaderMaterial> get_water_material() const { return water_material; }
 
+	// Cheap grid-projection caustics (the technique caustic-volume's own
+	// `lite` build uses, NOT its full SDF/photon-volume renderer -- see the
+	// project plan's own note on why only this cheap technique is in scope).
+	// One rasterized pass: the water's own grid mesh, refracted per-vertex
+	// down to caustic_floor_y and additively blended -- no ray marching.
+	void set_caustics_enabled(bool p_enabled);
+	bool get_caustics_enabled() const { return caustics_enabled; }
+	void set_caustic_floor_y(float p_y);
+	float get_caustic_floor_y() const { return caustic_floor_y; }
+	// The resulting texture -- assign it to a floor material's albedo/
+	// emission (e.g. via a ShaderMaterial sampling it by world XZ) to show
+	// the light pattern. Null until caustics_enabled and the node has built
+	// (never in the editor, same as the water simulation itself).
+	Ref<Texture2D> get_caustics_texture() const;
+
 	// CPU-side, safe every physics tick -- bilinear samples of the last
 	// texture refresh (see _refresh_textures()'s throttle), summed across
 	// both layers (ripple + ocean), matching what the rendered mesh shows.
@@ -133,6 +151,13 @@ private:
 	Ref<Texture2DRD> ocean_height_tex;
 	bool textures_bound = false; // set once, after the solver's RD textures actually exist (see _update())
 
+	bool caustics_enabled = true;
+	float caustic_floor_y = -2.5f;
+	SubViewport *caustics_viewport = nullptr;
+	Camera3D *caustics_camera = nullptr;
+	MeshInstance3D *caustics_mesh_instance = nullptr;
+	Ref<ShaderMaterial> caustics_material;
+
 	Vector<float> cached_ripple_height;
 	int cached_ripple_n = 0;
 	Vector2 cached_ripple_domain;
@@ -144,6 +169,7 @@ private:
 	static constexpr int REFRESH_EVERY_FRAMES = 4; // throttled CPU cache refresh for sample_height() only -- rendering is unthrottled/automatic via the zero-copy textures
 
 	void _rebuild();
+	void _rebuild_caustics();
 	void _bind_textures();
 	void _refresh_cpu_cache();
 	void _update(double p_delta);

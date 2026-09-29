@@ -32,7 +32,9 @@
 
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
+#include "scene/3d/camera_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
+#include "scene/main/viewport.h"
 #include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/material.h"
 #include "scene/resources/shader.h"
@@ -108,6 +110,88 @@ void fragment() {
 	METALLIC = 0.0;
 }
 )";
+
+// Cheap grid-projection caustics -- the technique caustic-volume's own `lite`
+// build uses (single rasterized pass, no ray marching), NOT its `sandbox`
+// build's full SDF/photon-volume renderer (out of scope, see the project
+// plan's own note). Renders the water's own grid mesh from directly above
+// into a small SubViewport: each vertex is refracted per the same
+// height-field normal the main water shader computes, projected straight
+// down onto a fixed floor_y, and written via a raw POSITION override --
+// bypassing the camera's real projection entirely (confirmed a real,
+// existing `POSITION` vec4 vertex built-in via a direct read of this
+// engine's servers/rendering/shader_types.cpp). Per-fragment intensity comes
+// from the screen-space area compression of that mapping (dFdx/dFdy) --
+// where refracted rays converge, light concentrates, exactly like a real
+// caustic. blend_add accumulates overlapping triangles' contributions.
+const char *CAUSTICS_SHADER_SRC = R"(
+shader_type spatial;
+render_mode blend_add, depth_draw_never, depth_test_disabled, cull_disabled, unshaded;
+
+uniform sampler2D ripple_height_tex : hint_default_black, filter_linear, repeat_disable;
+uniform sampler2D ocean_height_tex : hint_default_black, filter_linear, repeat_disable;
+uniform vec2 ripple_domain_size = vec2(20.0, 20.0);
+uniform vec2 ocean_domain_size = vec2(40.0, 40.0);
+uniform vec3 sun_direction = vec3(0.0, -1.0, 0.0);
+uniform float floor_y = -2.0;
+uniform vec2 caustic_domain_size = vec2(40.0, 40.0);
+uniform float ior = 1.333;
+uniform float intensity_scale = 1.0;
+
+varying vec2 v_flat_xz;
+varying float v_intensity;
+
+float sample_h(vec2 world_xz) {
+	vec2 uv_r = world_xz / ripple_domain_size + 0.5;
+	vec2 uv_o = world_xz / ocean_domain_size + 0.5;
+	return texture(ripple_height_tex, clamp(uv_r, vec2(0.0), vec2(1.0))).r + texture(ocean_height_tex, clamp(uv_o, vec2(0.0), vec2(1.0))).r;
+}
+
+void vertex() {
+	vec3 world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	vec2 xz = world_pos.xz;
+	float h = sample_h(xz);
+
+	const float e = 0.2;
+	float hx1 = sample_h(xz + vec2(e, 0.0));
+	float hx0 = sample_h(xz - vec2(e, 0.0));
+	float hz1 = sample_h(xz + vec2(0.0, e));
+	float hz0 = sample_h(xz - vec2(0.0, e));
+	vec3 n = normalize(vec3(hx0 - hx1, 2.0 * e, hz0 - hz1));
+
+	vec3 lin = normalize(sun_direction);
+	vec3 r = refract(lin, n, 1.0 / ior);
+	float t = (h - floor_y) / max(-r.y, 0.05);
+	vec3 f = vec3(xz.x, h, xz.y) + r * t;
+
+	float ci = max(dot(-lin, n), 0.0);
+	v_intensity = ci * intensity_scale;
+	v_flat_xz = xz;
+
+	POSITION = vec4(f.x / (caustic_domain_size.x * 0.5), f.z / (caustic_domain_size.y * 0.5), 0.0, 1.0);
+}
+
+void fragment() {
+	vec2 a = dFdx(v_flat_xz);
+	vec2 b = dFdy(v_flat_xz);
+	float area = abs(a.x * b.y - a.y * b.x);
+	// Baseline per-fragment world-space area with zero distortion (a flat,
+	// undisplaced mapping) -- the caustic_domain_size world extent spread
+	// evenly over the render target's actual pixel count. Normalizing
+	// against this (rather than a fixed magic constant) keeps concentration
+	// centered near 1.0 for undistorted regions regardless of viewport
+	// resolution or domain size, so convergence/divergence from real wave
+	// curvature is what shows, not a baseline that's already saturated.
+	float area_baseline = caustic_domain_size.x * caustic_domain_size.y / (VIEWPORT_SIZE.x * VIEWPORT_SIZE.y);
+	float concentration = clamp(area_baseline / max(area, 1e-9), 0.0, 8.0);
+	// Bias the undistorted baseline (concentration ~= 1) down below white so
+	// real convergence peaks have headroom to actually stand out instead of
+	// every near-flat region clipping to solid white -- a real caustic
+	// pattern reads as mostly-dark with bright veins, not the inverse.
+	const float exposure = 0.35;
+	ALBEDO = vec3(v_intensity * concentration * exposure);
+}
+)";
 } // namespace
 
 void PhysXWaterSurface3D::_bind_methods() {
@@ -136,6 +220,12 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_water_material", "material"), &PhysXWaterSurface3D::set_water_material);
 	ClassDB::bind_method(D_METHOD("get_water_material"), &PhysXWaterSurface3D::get_water_material);
 
+	ClassDB::bind_method(D_METHOD("set_caustics_enabled", "enabled"), &PhysXWaterSurface3D::set_caustics_enabled);
+	ClassDB::bind_method(D_METHOD("get_caustics_enabled"), &PhysXWaterSurface3D::get_caustics_enabled);
+	ClassDB::bind_method(D_METHOD("set_caustic_floor_y", "y"), &PhysXWaterSurface3D::set_caustic_floor_y);
+	ClassDB::bind_method(D_METHOD("get_caustic_floor_y"), &PhysXWaterSurface3D::get_caustic_floor_y);
+	ClassDB::bind_method(D_METHOD("get_caustics_texture"), &PhysXWaterSurface3D::get_caustics_texture);
+
 	ClassDB::bind_method(D_METHOD("sample_height", "world_pos"), &PhysXWaterSurface3D::sample_height);
 	ClassDB::bind_method(D_METHOD("submit_sphere", "owner", "world_pos", "radius", "strength"), &PhysXWaterSurface3D::submit_sphere, DEFVAL(1.0f));
 	ClassDB::bind_method(D_METHOD("clear_sphere", "owner"), &PhysXWaterSurface3D::clear_sphere);
@@ -156,6 +246,10 @@ void PhysXWaterSurface3D::_bind_methods() {
 
 	ADD_GROUP("Rendering", "");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "water_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_water_material", "get_water_material");
+
+	ADD_GROUP("Caustics", "caustic");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "caustics_enabled"), "set_caustics_enabled", "get_caustics_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "caustic_floor_y"), "set_caustic_floor_y", "get_caustic_floor_y");
 }
 
 void PhysXWaterSurface3D::set_domain_size(Vector2 p_size) {
@@ -220,6 +314,25 @@ void PhysXWaterSurface3D::set_water_material(const Ref<ShaderMaterial> &p_materi
 	if (mesh_instance != nullptr && water_material.is_valid()) {
 		mesh_instance->set_material_override(water_material);
 	}
+}
+
+void PhysXWaterSurface3D::set_caustics_enabled(bool p_enabled) {
+	caustics_enabled = p_enabled;
+	_rebuild();
+}
+
+void PhysXWaterSurface3D::set_caustic_floor_y(float p_y) {
+	caustic_floor_y = p_y;
+	if (caustics_material.is_valid()) {
+		caustics_material->set_shader_parameter("floor_y", caustic_floor_y);
+	}
+}
+
+Ref<Texture2D> PhysXWaterSurface3D::get_caustics_texture() const {
+	if (caustics_viewport == nullptr) {
+		return Ref<Texture2D>();
+	}
+	return caustics_viewport->get_texture();
 }
 
 void PhysXWaterSurface3D::_notification(int p_what) {
@@ -303,6 +416,52 @@ void PhysXWaterSurface3D::_rebuild() {
 
 	textures_bound = false; // solver was just rebuilt -- its old texture RIDs (if any) are gone, rebind once available
 	frames_since_refresh = REFRESH_EVERY_FRAMES; // force an immediate CPU cache refresh on the next _update()
+
+	_rebuild_caustics();
+}
+
+void PhysXWaterSurface3D::_rebuild_caustics() {
+	if (!caustics_enabled) {
+		if (caustics_viewport != nullptr) {
+			caustics_viewport->queue_free();
+			caustics_viewport = nullptr;
+			caustics_camera = nullptr;
+			caustics_mesh_instance = nullptr;
+			caustics_material.unref();
+		}
+		return;
+	}
+	if (caustics_viewport == nullptr) {
+		caustics_viewport = memnew(SubViewport);
+		caustics_viewport->set_size(Vector2i(512, 512));
+		caustics_viewport->set_update_mode(SubViewport::UPDATE_ALWAYS);
+		caustics_viewport->set_use_own_world_3d(true);
+		caustics_viewport->set_transparent_background(false);
+		add_child(caustics_viewport, false, INTERNAL_MODE_BACK);
+
+		caustics_camera = memnew(Camera3D);
+		// Real projection is irrelevant -- the shader's own POSITION override
+		// fully determines clip space (see CAUSTICS_SHADER_SRC's own comment).
+		// The camera only needs to exist and be current for the viewport to
+		// render its world at all.
+		caustics_camera->set_current(true);
+		caustics_viewport->add_child(caustics_camera);
+
+		caustics_mesh_instance = memnew(MeshInstance3D);
+		caustics_viewport->add_child(caustics_mesh_instance);
+
+		Ref<Shader> shader;
+		shader.instantiate();
+		shader->set_code(CAUSTICS_SHADER_SRC);
+		caustics_material.instantiate();
+		caustics_material->set_shader(shader);
+		caustics_mesh_instance->set_material_override(caustics_material);
+	}
+	caustics_mesh_instance->set_mesh(water_mesh);
+	caustics_material->set_shader_parameter("ripple_domain_size", domain_size);
+	caustics_material->set_shader_parameter("ocean_domain_size", ocean_domain_size);
+	caustics_material->set_shader_parameter("caustic_domain_size", ocean_domain_size);
+	caustics_material->set_shader_parameter("floor_y", caustic_floor_y);
 }
 
 void PhysXWaterSurface3D::_update(double p_delta) {
@@ -339,6 +498,10 @@ void PhysXWaterSurface3D::_bind_textures() {
 	if (water_material.is_valid()) {
 		water_material->set_shader_parameter("ripple_height_tex", ripple_height_tex);
 		water_material->set_shader_parameter("ocean_height_tex", ocean_height_tex);
+	}
+	if (caustics_material.is_valid()) {
+		caustics_material->set_shader_parameter("ripple_height_tex", ripple_height_tex);
+		caustics_material->set_shader_parameter("ocean_height_tex", ocean_height_tex);
 	}
 	textures_bound = true;
 }

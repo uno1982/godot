@@ -118,7 +118,7 @@ private:
 	int grid_resolution = 96;
 	float depth = 3.0f;
 	float water_level = 0.0f;
-	float damping = 0.5f;
+	float damping = 0.08f; // see WaterSolver::Settings::damping's own note on this value
 
 	int ocean_grid_resolution = 64;
 	Vector2 ocean_domain_size = Vector2(40, 40);

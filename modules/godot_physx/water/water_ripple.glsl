@@ -48,23 +48,42 @@ void main() {
 	// Body-disturbance coupling: pull the surface toward a soft target set by
 	// nearby spheres/impulses, rather than snapping to it instantly -- a
 	// single-pole low-pass keeps this from injecting energy discontinuously.
+	//
+	// `weight` gates how much this blend actually applies at this cell --
+	// real, load-bearing, not a nicety. target defaults to 0 with no body
+	// nearby, and the naive `hn += (target-hn)*rate` (no weight) that used to
+	// be here applied that unconditionally EVERYWHERE, every step: with
+	// target=0 almost everywhere, it collapsed to hn *= 0.9 -- an ambient,
+	// unintended ~10%/tick pull toward zero across the WHOLE field, every
+	// tick, dwarfing the wave equation's own ALPHA damping (which is what a
+	// real user correctly read as "feels like jello/syrup, ripples don't
+	// travel" -- confirmed empirically: lowering ALPHA alone did nothing,
+	// because this term, not ALPHA, was the dominant damping mechanism the
+	// whole time). Gating by proximity weight makes the blend vanish far
+	// from any body, letting the wave equation's own dynamics actually
+	// govern how ripples propagate and persist.
 	vec2 xz = (vec2(c) + 0.5) / float(GRID_N) * DOMAIN * 2.0 - DOMAIN;
 	float target = 0.0;
+	float weight = 0.0;
 	for (int i = 0; i < NUM_SPHERES; i++) {
 		vec4 s = spheres[i];
 		float t = length(xz - s.xy) / max(s.z, 1e-4);
 		if (t < 1.6) {
-			target -= s.z * exp(-pow(t * 1.1, 6.0)) * s.w;
+			float w = exp(-pow(t * 1.1, 6.0)) * s.w;
+			target -= s.z * w;
+			weight = max(weight, w);
 		}
 	}
 	for (int i = 0; i < NUM_IMPULSES; i++) {
 		vec4 imp = impulses[i];
 		float t = length(xz - imp.xy) / max(imp.z, 1e-4);
 		if (t < 1.0) {
-			target += imp.z * (1.0 - t) * imp.w;
+			float w = (1.0 - t) * imp.w;
+			target += imp.z * w;
+			weight = max(weight, w);
 		}
 	}
-	hn += (target - hn) * clamp(6.0 * DT, 0.0, 1.0);
+	hn += (target - hn) * weight * clamp(6.0 * DT, 0.0, 1.0);
 
 	state_out[idx] = vec4(hn, h, st.z, 0.0);
 	height_out[idx] = WATER_LEVEL + hn;

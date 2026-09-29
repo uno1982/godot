@@ -162,7 +162,18 @@ public:
 		int grid_resolution = 128; // N, ripple grid cells per side (power of two not required for the ripple layer)
 		Vector2 domain_size = Vector2(20, 20); // world-space extents (full width/depth, not half)
 		float depth = 3.0f; // used by the FFT layer's dispersion relation
-		float damping = 0.5f; // ALPHA in water_ripple.glsl
+		// ALPHA in water_ripple.glsl. Originally tuned to 0.5 purely so the
+		// Phase 1 probe test's impulse would settle within ~90 steps -- that
+		// was optimizing for a fast, bounded test, not for how real water
+		// actually looks. At 0.5, ripples die out almost as fast as they're
+		// created and never travel far, reading as thick/viscous ("jello or
+		// syrup", a real user observation) rather than water. Lowered so
+		// ripples persist and travel a meaningfully longer distance before
+		// dissipating -- see the probe test for the real before/after decay
+		// numbers this was checked against, including over a longer horizon
+		// than Phase 1's original ~90-step window to confirm it stays
+		// bounded/stable, not just slower to settle.
+		float damping = 0.08f;
 		float gravity = 9.81f;
 		float water_level = 0.0f; // mean surface world Y
 

@@ -30,6 +30,7 @@
 
 #include "physx_water_surface_3d.h"
 
+#include "core/config/engine.h"
 #include "core/object/class_db.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/resources/3d/primitive_meshes.h"
@@ -264,6 +265,24 @@ void PhysXWaterSurface3D::_rebuild() {
 	water_mesh = plane;
 	mesh_instance->set_mesh(water_mesh);
 
+	water_material->set_shader_parameter("ripple_domain_size", domain_size);
+	water_material->set_shader_parameter("ocean_domain_size", ocean_domain_size);
+
+	// NOTIFICATION_INTERNAL_PHYSICS_PROCESS fires in the editor too, not just
+	// Play -- same gotcha PhysXVehicle3D/PhysXDestructible3D already guard
+	// against (see PhysXVehicle3D::_build()'s own comment on it). Without
+	// this, just having the scene open dispatches real GPU compute work
+	// every physics tick, which is exactly what a user reported seeing (the
+	// water visibly animating while only hovering nodes in the editor,
+	// followed by an editor crash likely from the render-thread dispatch
+	// getting into an inconsistent state under the editor's non-realtime
+	// update loop). No solver setup at all in the editor -- the node shows
+	// a static flat mesh there instead, matching this class's own doc
+	// comment ("only runs in an actual running game").
+	if (Engine::get_singleton()->is_editor_hint()) {
+		return;
+	}
+
 	WaterSolver::Settings s;
 	s.grid_resolution = grid_resolution;
 	s.domain_size = domain_size;
@@ -282,13 +301,14 @@ void PhysXWaterSurface3D::_rebuild() {
 		WARN_PRINT("PhysXWaterSurface3D: the water compute solver could not start (no RenderingDevice / compute support).");
 	}
 
-	water_material->set_shader_parameter("ripple_domain_size", domain_size);
-	water_material->set_shader_parameter("ocean_domain_size", ocean_domain_size);
 	textures_bound = false; // solver was just rebuilt -- its old texture RIDs (if any) are gone, rebind once available
 	frames_since_refresh = REFRESH_EVERY_FRAMES; // force an immediate CPU cache refresh on the next _update()
 }
 
 void PhysXWaterSurface3D::_update(double p_delta) {
+	if (Engine::get_singleton()->is_editor_hint()) {
+		return;
+	}
 	if (!solver.has_device()) {
 		return;
 	}

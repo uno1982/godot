@@ -33,6 +33,7 @@
 #include "core/object/class_db.h"
 
 void WaterRippleProbe::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("has_device"), &WaterRippleProbe::has_device);
 	ClassDB::bind_method(D_METHOD("is_available"), &WaterRippleProbe::is_available);
 	ClassDB::bind_method(D_METHOD("configure", "grid_resolution", "domain_size", "depth", "damping", "gravity", "water_level"), &WaterRippleProbe::configure);
 	ClassDB::bind_method(D_METHOD("configure_ocean", "ocean_grid_resolution", "ocean_domain_size", "wind_speed", "wind_direction", "wave_amplitude"), &WaterRippleProbe::configure_ocean);
@@ -45,6 +46,10 @@ void WaterRippleProbe::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("refresh_ocean_height_grid"), &WaterRippleProbe::refresh_ocean_height_grid);
 	ClassDB::bind_method(D_METHOD("get_ocean_height_array"), &WaterRippleProbe::get_ocean_height_array);
 	ClassDB::bind_method(D_METHOD("get_ocean_imag_array"), &WaterRippleProbe::get_ocean_imag_array);
+}
+
+bool WaterRippleProbe::has_device() const {
+	return solver.has_device();
 }
 
 bool WaterRippleProbe::is_available() const {
@@ -87,6 +92,11 @@ void WaterRippleProbe::submit_impulse(Vector3 p_world_pos, float p_radius, float
 }
 
 void WaterRippleProbe::refresh_height_grid() {
+	// Force a render-thread sync first -- get_height_grid() otherwise just
+	// returns whatever the last async callback landed (fine for real
+	// per-tick usage, but this probe's tests want a deterministic "definitely
+	// fresh after the preceding step()" read).
+	solver.sync_now();
 	solver.get_height_grid(cached_height, cached_n, cached_domain_size);
 }
 
@@ -112,6 +122,7 @@ float WaterRippleProbe::sample_height(float p_world_x, float p_world_z) const {
 }
 
 void WaterRippleProbe::refresh_ocean_height_grid() {
+	solver.sync_now();
 	int n;
 	Vector2 domain;
 	solver.get_ocean_height_grid(cached_ocean_height, cached_ocean_imag, n, domain);

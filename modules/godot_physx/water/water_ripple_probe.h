@@ -47,6 +47,13 @@ private:
 	WaterSolver solver;
 
 public:
+	// Device present (independent of whether configure() has finished
+	// building on the render thread yet) -- check this before the first
+	// configure() call.
+	bool has_device() const;
+	// Device present AND the render thread has finished building for the
+	// current configure() -- ready to step(). Async dispatch means this can
+	// take a frame or two to flip true after configure() returns.
 	bool is_available() const;
 	void configure(int p_grid_resolution, Vector2 p_domain_size, float p_depth, float p_damping, float p_gravity, float p_water_level);
 	// Ocean (FFT) layer settings -- must be called before the first step() to

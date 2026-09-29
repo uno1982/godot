@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXWaterSurface3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A real animated water surface: a GPU FFT ocean spectrum layer plus a local ripple layer that bodies can disturb, rendered as a displaced mesh.
+	</brief_description>
+	<description>
+		Two coupled simulation layers, both real-time GPU compute (a private [RenderingDevice], not the CPU): a local iWave-style ripple layer (a damped 2D wave equation you can disturb via [method submit_sphere]/[method submit_impulse]) and a Tessendorf FFT ocean spectrum layer (large-scale wind-driven chop, tuned by [member wind_speed]/[member wind_direction]/[member wave_amplitude]). Both are ported from the caustic-volume reference project's simulation approach, not its full ray-marched photon-caustics renderer -- rendering here is a plain displaced mesh with refraction, not that technique.
+		A child [MeshInstance3D] (a subdivided [PlaneMesh], sized to [member ocean_domain_size]) is created automatically and displaced by both layers, summed. Call [method sample_height] to query the same combined surface on the CPU -- e.g. from a buoyancy script (see [code]demo/common/buoyant_body.gd[/code] in the paired demo project) -- and [method submit_sphere] once per physics tick per floating body so it actually disturbs the ripple layer, not just receives a height back.
+		No [RenderingDevice] compute support (e.g. running headless) leaves the surface flat and [method sample_height] returning [member water_level] plus zero -- a graceful no-op, not an error, matching every other GPU solver in this module.
+		Only runs in an actual running game, never in the editor -- placing or moving the node in the Inspector does not simulate.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="clear_sphere">
+			<return type="void" />
+			<param index="0" name="owner" type="int" />
+			<description>
+				Removes a previously-submitted sphere proxy (see [method submit_sphere]) by its owner id. Call this when a floating body leaves the water or is freed; a proxy left in place otherwise keeps disturbing the ripple layer at its last submitted position.
+			</description>
+		</method>
+		<method name="sample_height" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="world_pos" type="Vector3" />
+			<description>
+				The combined surface height (ripple + ocean layers, plus [member water_level]) at [code]world_pos[/code]'s XZ, bilinearly sampled from the last periodic readback (a few frames behind the GPU simulation -- fine for buoyancy, not meant for sub-frame precision). [code]world_pos.y[/code] is ignored.
+			</description>
+		</method>
+		<method name="submit_impulse">
+			<return type="void" />
+			<param index="0" name="world_pos" type="Vector3" />
+			<param index="1" name="radius" type="float" />
+			<param index="2" name="strength" type="float" />
+			<description>
+				A one-shot local disturbance (a splash) at [code]world_pos[/code]'s XZ -- consumed by the next simulation step, then cleared automatically. Call it once per event (e.g. on impact), not every tick.
+			</description>
+		</method>
+		<method name="submit_sphere">
+			<return type="void" />
+			<param index="0" name="owner" type="int" />
+			<param index="1" name="world_pos" type="Vector3" />
+			<param index="2" name="radius" type="float" />
+			<param index="3" name="strength" type="float" default="1.0" />
+			<description>
+				A persistent body proxy that pushes the ripple layer's surface down near [code]world_pos[/code]'s XZ, proportional to [code]radius[/code] and [code]strength[/code]. Call once per physics tick while a body is in the water (e.g. from its own [code]_physics_process[/code]), keyed by any id stable for that body's lifetime -- [code]get_instance_id()[/code] works well. Call [method clear_sphere] with the same id when the body leaves.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="damping" type="float" setter="set_damping" getter="get_damping" default="0.5">
+			Damping (ALPHA) on the local ripple layer's wave equation -- higher settles disturbances faster.
+		</member>
+		<member name="depth" type="float" setter="set_depth" getter="get_depth" default="3.0">
+			Water depth, used by the FFT ocean layer's dispersion relation (shallower water changes how wave speed relates to wavelength).
+		</member>
+		<member name="domain_size" type="Vector2" setter="set_domain_size" getter="get_domain_size" default="Vector2(20, 20)">
+			World-space extent (X, Z) of the local ripple layer -- independent of [member ocean_domain_size], see [member ocean_grid_resolution]'s own note on why.
+		</member>
+		<member name="grid_resolution" type="int" setter="set_grid_resolution" getter="get_grid_resolution" default="96">
+			Cell count per side of the local ripple layer's grid. Not required to be a power of two, unlike [member ocean_grid_resolution].
+		</member>
+		<member name="ocean_domain_size" type="Vector2" setter="set_ocean_domain_size" getter="get_ocean_domain_size" default="Vector2(40, 40)">
+			World-space extent (X, Z) of the FFT ocean layer -- also the size of the rendered [PlaneMesh].
+		</member>
+		<member name="ocean_grid_resolution" type="int" setter="set_ocean_grid_resolution" getter="get_ocean_grid_resolution" default="64">
+			Cell count per side of the FFT ocean layer's grid. Rounded up to the nearest power of two if set otherwise -- the Stockham FFT passes require it. Independent of [member grid_resolution]/[member domain_size] (the ripple layer's own grid) by design: they're two different consumers of "water height" with very different resolution/precision needs, kept architecturally separate rather than forced to share one grid.
+		</member>
+		<member name="water_level" type="float" setter="set_water_level" getter="get_water_level" default="0.0">
+			Mean world-space Y of the surface -- place the node here rather than relying on its own transform, since the rendered mesh and both simulation layers are displaced relative to this baseline.
+		</member>
+		<member name="water_material" type="ShaderMaterial" setter="set_water_material" getter="get_water_material">
+			The material driving the surface mesh's displacement/shading. A default is created automatically if left unset -- assign your own only if you need to customize the look; it must keep sampling [code]ripple_height_tex[/code]/[code]ocean_height_tex[/code] in its vertex shader the same way the default does, or the mesh will stop moving.
+		</member>
+		<member name="wave_amplitude" type="float" setter="set_wave_amplitude" getter="get_wave_amplitude" default="1.0">
+			The FFT ocean layer's Phillips spectrum amplitude constant -- higher makes larger waves. Empirically tuned, not a physical unit (see the module's own build notes on the FFT solver for how the default scale was calibrated).
+		</member>
+		<member name="wind_direction" type="Vector2" setter="set_wind_direction" getter="get_wind_direction" default="Vector2(1, 0)">
+			Wind direction (X, Z) driving the FFT ocean layer's wave alignment. Need not be normalized.
+		</member>
+		<member name="wind_speed" type="float" setter="set_wind_speed" getter="get_wind_speed" default="8.0">
+			Wind speed driving the FFT ocean layer's spectrum -- higher produces longer, larger waves.
+		</member>
+	</members>
+</class>

@@ -244,6 +244,11 @@ _water_fft_glsl = ("water_spectrum_init.glsl", "water_spectrum_evolve.glsl", "wa
 for _glsl in _water_fft_glsl:
     env_physx.GLSL_HEADER(os.path.join("water", _glsl))
 
+# Blit-to-texture (Phase 3, shared-device rewrite) -- also self-contained.
+_water_blit_glsl = ("water_blit_ripple.glsl", "water_blit_ocean.glsl")
+for _glsl in _water_blit_glsl:
+    env_physx.GLSL_HEADER(os.path.join("water", _glsl))
+
 # Godot source files
 module_obj = []
 env_physx.add_source_files(module_obj, "*.cpp")

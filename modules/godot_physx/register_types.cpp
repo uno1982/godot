@@ -51,6 +51,7 @@
 #include "vehicle/physx_tank_3d.h"
 #include "vehicle/physx_vehicle_3d.h"
 #include "vehicle/physx_vehicle_wheel_3d.h"
+#include "water/water_ripple_probe.h"
 
 #include "core/config/project_settings.h"
 #include "core/object/callable_mp.h"
@@ -87,6 +88,8 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(PhysXChunkEmitter3D);
 		GDREGISTER_CLASS(PhysXGas3D);
 		GDREGISTER_CLASS(PhysXGasEmitter3D);
+		// Runtime-bridge MVP probe, not public API yet -- see water/water_ripple_probe.h.
+		GDREGISTER_CLASS(WaterRippleProbe);
 		// Runtime-bridge MVP probe, not public API yet -- see vehicle/godot_physx_vehicle_probe.h.
 		GDREGISTER_CLASS(GodotPhysXVehicleProbe);
 		GDREGISTER_CLASS(PhysXVehicle3D);

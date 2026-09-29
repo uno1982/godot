@@ -28,9 +28,11 @@ layout(set = 0, binding = 3, std430) restrict buffer HeightOut { float height_ou
 
 // Body-disturbance sources, submitted by the node once per physics tick from
 // buoyant_body.gd (or similar) via PhysXWaterSurface3D::submit_sphere()/
-// submit_impulse() -- see the plan's "push, not discovery" rationale.
-layout(set = 0, binding = 4, std430) restrict buffer Spheres { vec4 spheres[]; }; // xyz pos (world), w radius
-layout(set = 0, binding = 5, std430) restrict buffer Impulses { vec4 impulses[]; }; // xyz pos (world), w radius; strength is a separate field once the splat shader needs it
+// submit_impulse() -- see the plan's "push, not discovery" rationale. The
+// ripple field is 2D (height over XZ), so these pack world XZ, not a full
+// 3D point: x=world_x, y=world_z, z=radius, w=strength (0..1).
+layout(set = 0, binding = 4, std430) restrict buffer Spheres { vec4 spheres[]; };
+layout(set = 0, binding = 5, std430) restrict buffer Impulses { vec4 impulses[]; };
 
 #define DOMAIN (domain_dt.xy)
 #define DEPTH (domain_dt.z)

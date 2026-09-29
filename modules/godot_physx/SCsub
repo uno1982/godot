@@ -244,6 +244,7 @@ env_physx.add_source_files(module_obj, "particles/*.cpp")
 env_physx.add_source_files(module_obj, "shapes/*.cpp")
 env_physx.add_source_files(module_obj, "spaces/*.cpp")
 env_physx.add_source_files(module_obj, "vehicle/*.cpp")
+env_physx.add_source_files(module_obj, "water/*.cpp")
 
 if env.editor_build:
     env_physx.add_source_files(module_obj, "editor/*.cpp")

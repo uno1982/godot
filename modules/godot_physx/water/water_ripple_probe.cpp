@@ -35,12 +35,16 @@
 void WaterRippleProbe::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_available"), &WaterRippleProbe::is_available);
 	ClassDB::bind_method(D_METHOD("configure", "grid_resolution", "domain_size", "depth", "damping", "gravity", "water_level"), &WaterRippleProbe::configure);
+	ClassDB::bind_method(D_METHOD("configure_ocean", "ocean_grid_resolution", "ocean_domain_size", "wind_speed", "wind_direction", "wave_amplitude"), &WaterRippleProbe::configure_ocean);
 	ClassDB::bind_method(D_METHOD("step", "delta"), &WaterRippleProbe::step);
 	ClassDB::bind_method(D_METHOD("submit_sphere", "owner", "world_pos", "radius", "strength"), &WaterRippleProbe::submit_sphere);
 	ClassDB::bind_method(D_METHOD("clear_sphere", "owner"), &WaterRippleProbe::clear_sphere);
 	ClassDB::bind_method(D_METHOD("submit_impulse", "world_pos", "radius", "strength"), &WaterRippleProbe::submit_impulse);
 	ClassDB::bind_method(D_METHOD("refresh_height_grid"), &WaterRippleProbe::refresh_height_grid);
 	ClassDB::bind_method(D_METHOD("sample_height", "world_x", "world_z"), &WaterRippleProbe::sample_height);
+	ClassDB::bind_method(D_METHOD("refresh_ocean_height_grid"), &WaterRippleProbe::refresh_ocean_height_grid);
+	ClassDB::bind_method(D_METHOD("get_ocean_height_array"), &WaterRippleProbe::get_ocean_height_array);
+	ClassDB::bind_method(D_METHOD("get_ocean_imag_array"), &WaterRippleProbe::get_ocean_imag_array);
 }
 
 bool WaterRippleProbe::is_available() const {
@@ -48,14 +52,22 @@ bool WaterRippleProbe::is_available() const {
 }
 
 void WaterRippleProbe::configure(int p_grid_resolution, Vector2 p_domain_size, float p_depth, float p_damping, float p_gravity, float p_water_level) {
-	WaterSolver::Settings s;
-	s.grid_resolution = p_grid_resolution;
-	s.domain_size = p_domain_size;
-	s.depth = p_depth;
-	s.damping = p_damping;
-	s.gravity = p_gravity;
-	s.water_level = p_water_level;
-	solver.configure(s);
+	pending_settings.grid_resolution = p_grid_resolution;
+	pending_settings.domain_size = p_domain_size;
+	pending_settings.depth = p_depth;
+	pending_settings.damping = p_damping;
+	pending_settings.gravity = p_gravity;
+	pending_settings.water_level = p_water_level;
+	solver.configure(pending_settings);
+}
+
+void WaterRippleProbe::configure_ocean(int p_ocean_grid_resolution, Vector2 p_ocean_domain_size, float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude) {
+	pending_settings.ocean_grid_resolution = p_ocean_grid_resolution;
+	pending_settings.ocean_domain_size = p_ocean_domain_size;
+	pending_settings.wind_speed = p_wind_speed;
+	pending_settings.wind_direction = p_wind_direction;
+	pending_settings.wave_amplitude = p_wave_amplitude;
+	solver.configure(pending_settings); // rebuild -- h0 (re)generated here
 }
 
 void WaterRippleProbe::step(double p_delta) {
@@ -97,4 +109,28 @@ float WaterRippleProbe::sample_height(float p_world_x, float p_world_z) const {
 	const float h01 = cached_height[z1 * cached_n + x0];
 	const float h11 = cached_height[z1 * cached_n + x1];
 	return Math::lerp(Math::lerp(h00, h10, fx), Math::lerp(h01, h11, fx), fz);
+}
+
+void WaterRippleProbe::refresh_ocean_height_grid() {
+	int n;
+	Vector2 domain;
+	solver.get_ocean_height_grid(cached_ocean_height, cached_ocean_imag, n, domain);
+}
+
+PackedFloat32Array WaterRippleProbe::get_ocean_height_array() const {
+	PackedFloat32Array arr;
+	arr.resize(cached_ocean_height.size());
+	for (int i = 0; i < cached_ocean_height.size(); i++) {
+		arr.set(i, cached_ocean_height[i]);
+	}
+	return arr;
+}
+
+PackedFloat32Array WaterRippleProbe::get_ocean_imag_array() const {
+	PackedFloat32Array arr;
+	arr.resize(cached_ocean_imag.size());
+	for (int i = 0; i < cached_ocean_imag.size(); i++) {
+		arr.set(i, cached_ocean_imag[i]);
+	}
+	return arr;
 }

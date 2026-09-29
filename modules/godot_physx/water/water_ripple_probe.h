@@ -49,6 +49,10 @@ private:
 public:
 	bool is_available() const;
 	void configure(int p_grid_resolution, Vector2 p_domain_size, float p_depth, float p_damping, float p_gravity, float p_water_level);
+	// Ocean (FFT) layer settings -- must be called before the first step() to
+	// take effect (rebuilds ocean buffers via a fresh WaterSolver::configure()
+	// call under the hood).
+	void configure_ocean(int p_ocean_grid_resolution, Vector2 p_ocean_domain_size, float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude);
 	void step(double p_delta);
 	void submit_sphere(int p_owner, Vector3 p_world_pos, float p_radius, float p_strength);
 	void clear_sphere(int p_owner);
@@ -60,8 +64,18 @@ public:
 	void refresh_height_grid();
 	float sample_height(float p_world_x, float p_world_z) const;
 
+	// Raw ocean (FFT) layer readback -- a probe-only accessor. Real height
+	// height_out. r_imag is the FFT's imaginary-part residual (should stay
+	// near zero -- a correctness signal, see water_solver.h).
+	void refresh_ocean_height_grid();
+	PackedFloat32Array get_ocean_height_array() const;
+	PackedFloat32Array get_ocean_imag_array() const;
+
 private:
+	WaterSolver::Settings pending_settings;
 	Vector<float> cached_height;
 	int cached_n = 0;
 	Vector2 cached_domain_size;
+	Vector<float> cached_ocean_height;
+	Vector<float> cached_ocean_imag;
 };

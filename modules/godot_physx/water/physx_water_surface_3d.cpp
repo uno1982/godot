@@ -138,6 +138,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_water_level"), &PhysXWaterSurface3D::get_water_level);
 	ClassDB::bind_method(D_METHOD("set_damping", "damping"), &PhysXWaterSurface3D::set_damping);
 	ClassDB::bind_method(D_METHOD("get_damping"), &PhysXWaterSurface3D::get_damping);
+	ClassDB::bind_method(D_METHOD("set_ripple_amplitude", "amplitude"), &PhysXWaterSurface3D::set_ripple_amplitude);
+	ClassDB::bind_method(D_METHOD("get_ripple_amplitude"), &PhysXWaterSurface3D::get_ripple_amplitude);
 
 	ClassDB::bind_method(D_METHOD("set_ocean_grid_resolution", "n"), &PhysXWaterSurface3D::set_ocean_grid_resolution);
 	ClassDB::bind_method(D_METHOD("get_ocean_grid_resolution"), &PhysXWaterSurface3D::get_ocean_grid_resolution);
@@ -175,6 +177,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "depth"), "set_depth", "get_depth");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "water_level"), "set_water_level", "get_water_level");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "damping"), "set_damping", "get_damping");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ripple_amplitude", PROPERTY_HINT_RANGE, "0,2,0.01,or_greater"), "set_ripple_amplitude", "get_ripple_amplitude");
 
 	ADD_GROUP("Ocean", "ocean_");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "ocean_grid_resolution"), "set_ocean_grid_resolution", "get_ocean_grid_resolution");
@@ -214,6 +217,11 @@ void PhysXWaterSurface3D::set_water_level(float p_level) {
 
 void PhysXWaterSurface3D::set_damping(float p_damping) {
 	damping = p_damping;
+	_rebuild();
+}
+
+void PhysXWaterSurface3D::set_ripple_amplitude(float p_amplitude) {
+	ripple_amplitude = MAX(p_amplitude, 0.0f);
 	_rebuild();
 }
 
@@ -343,6 +351,7 @@ void PhysXWaterSurface3D::_rebuild() {
 	s.domain_size = domain_size;
 	s.depth = depth;
 	s.damping = damping;
+	s.ripple_amplitude = ripple_amplitude;
 	s.gravity = 9.81f;
 	s.water_level = water_level;
 	s.ocean_grid_resolution = ocean_grid_resolution;

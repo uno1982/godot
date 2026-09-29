@@ -83,6 +83,8 @@ public:
 	float get_water_level() const { return water_level; }
 	void set_damping(float p_damping);
 	float get_damping() const { return damping; }
+	void set_ripple_amplitude(float p_amplitude);
+	float get_ripple_amplitude() const { return ripple_amplitude; }
 
 	void set_ocean_grid_resolution(int p_n);
 	int get_ocean_grid_resolution() const { return ocean_grid_resolution; }
@@ -138,6 +140,7 @@ private:
 	float depth = 3.0f;
 	float water_level = 0.0f;
 	float damping = 0.08f; // see WaterSolver::Settings::damping's own note on this value
+	float ripple_amplitude = 1.0f;
 
 	int ocean_grid_resolution = 64;
 	Vector2 ocean_domain_size = Vector2(40, 40);

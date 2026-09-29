@@ -43,7 +43,10 @@ void main() {
 	// Explicit damped wave equation, backward-difference damping (h_t ~=
 	// (h-hp)/dt): hn = h*(2-a) - hp*(1-a) + c^2*dt^2*lap(h), a = ALPHA*DT.
 	float a = ALPHA * DT;
-	float hn = h * (2.0 - a) - hp * (1.0 - a) + (GRAV * DT * DT * lap) / (CELL * CELL);
+	// Shallow-water wave speed is sqrt(g * depth). Cap the 2D explicit
+	// scheme's coefficient at its CFL stability limit.
+	float wave_coefficient = min(GRAV * max(DEPTH, 0.1) * DT * DT / (CELL * CELL), 0.5);
+	float hn = h * (2.0 - a) - hp * (1.0 - a) + wave_coefficient * lap;
 
 	// Body-disturbance coupling: pull the surface toward a soft target set by
 	// nearby spheres/impulses, rather than snapping to it instantly -- a
@@ -83,7 +86,7 @@ void main() {
 			weight = max(weight, w);
 		}
 	}
-	hn += (target - hn) * weight * clamp(6.0 * DT, 0.0, 1.0);
+	hn += (target * RIPPLE_AMPLITUDE - hn) * weight * clamp(6.0 * DT, 0.0, 1.0);
 
 	state_out[idx] = vec4(hn, h, st.z, 0.0);
 	height_out[idx] = WATER_LEVEL + hn;

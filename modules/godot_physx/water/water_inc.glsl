@@ -13,6 +13,7 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 domain_dt; // xy domain half-size (world), z depth, w dt
 	vec4 ripple; // x alpha (damping), y gravity, z cell size, w water_level (mean surface y)
 	ivec4 res_count; // x grid resolution N (ripple grid, cells per side), y num_spheres, z num_impulses, w unused
+	vec4 ripple_control; // x body disturbance amplitude, yzw unused
 };
 
 // Ripple state: x=h (height above water_level), y=h_prev, z=foam, w unused.
@@ -41,6 +42,7 @@ layout(set = 0, binding = 5, std430) restrict buffer Impulses { vec4 impulses[];
 #define GRAV (ripple.y)
 #define CELL (ripple.z)
 #define WATER_LEVEL (ripple.w)
+#define RIPPLE_AMPLITUDE (ripple_control.x)
 #define GRID_N (res_count.x)
 #define NUM_SPHERES (res_count.y)
 #define NUM_IMPULSES (res_count.z)

@@ -46,7 +46,7 @@
 #include "servers/rendering/rendering_server.h"
 
 namespace {
-constexpr int PARAMS_BYTES = 48; // 3 * vec4, std140 -- see water_inc.glsl's Params
+constexpr int PARAMS_BYTES = 64; // 4 * vec4, std140 -- see water_inc.glsl's Params
 constexpr int OCEAN_INIT_PARAMS_BYTES = 48; // 3 * vec4 -- see water_spectrum_init.glsl's Params
 constexpr int OCEAN_EVOLVE_PARAMS_BYTES = 32; // 2 * vec4 -- see water_spectrum_evolve.glsl's Params
 constexpr int FFT_PARAMS_BYTES = 16; // 1 * ivec4 -- see water_fft.glsl's Params
@@ -348,7 +348,7 @@ void WaterSolverGPU::_rt_build_buffers() {
 		put_f(12, _init_wind_direction.x);
 		put_f(16, _init_wind_direction.y);
 		put_f(20, _init_gravity);
-		put_f(24, _init_wave_amplitude);
+		put_f(24, _init_wave_amplitude * _init_wave_amplitude);
 		put_f(28, 0.0f);
 		put_i(32, on);
 		put_i(36, 0);
@@ -469,7 +469,7 @@ void WaterSolverGPU::rt_build(Ref<WaterSolverGPU> p_self, int p_grid_resolution,
 	built.set_to(true);
 }
 
-void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, double p_delta, float p_depth, float p_damping, float p_gravity, float p_water_level, PackedFloat32Array p_spheres, PackedFloat32Array p_impulses) {
+void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, double p_delta, float p_depth, float p_damping, float p_gravity, float p_water_level, float p_ripple_amplitude, PackedFloat32Array p_spheres, PackedFloat32Array p_impulses) {
 	if (rd == nullptr || !shaders_ok || buf_params.is_null()) {
 		return;
 	}
@@ -495,6 +495,10 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, double p_delta, float p
 		put_i(36, p_spheres.size() / 4);
 		put_i(40, p_impulses.size() / 4);
 		put_i(44, 0);
+		put_f(48, p_ripple_amplitude);
+		put_f(52, 0.0f);
+		put_f(56, 0.0f);
+		put_f(60, 0.0f);
 		rd->buffer_update(buf_params, 0, PARAMS_BYTES, b.ptr());
 	}
 	{
@@ -818,7 +822,7 @@ void WaterSolver::step(double p_delta) {
 	if (!is_available()) {
 		return;
 	}
-	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_step).bind(gpu, p_delta, settings.depth, settings.damping, settings.gravity, settings.water_level, _pack_spheres(), _pack_impulses()));
+	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_step).bind(gpu, p_delta, settings.depth, settings.damping, settings.gravity, settings.water_level, settings.ripple_amplitude, _pack_spheres(), _pack_impulses()));
 	// One-shot: consumed by exactly one step, then cleared. Persistent
 	// sphere proxies stay until explicitly cleared/overwritten by the caller.
 	pending_impulses.clear();

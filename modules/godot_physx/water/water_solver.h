@@ -140,7 +140,7 @@ public:
 	// rt_step()'s own precedent -- no separate throttle needed, the async
 	// callback landing "a few frames later" already provides natural,
 	// implicit throttling).
-	void rt_step(Ref<WaterSolverGPU> p_self, double p_delta, float p_depth, float p_damping, float p_gravity, float p_water_level, PackedFloat32Array p_spheres, PackedFloat32Array p_impulses);
+	void rt_step(Ref<WaterSolverGPU> p_self, double p_delta, float p_depth, float p_damping, float p_gravity, float p_water_level, float p_ripple_amplitude, PackedFloat32Array p_spheres, PackedFloat32Array p_impulses);
 	// Light-space caustic map render -- a real RD draw pass (see this class's
 	// own field comments for why not a SubViewport). p_sun_direction need not
 	// be normalized (normalized on upload); p_light_right/p_light_up are the
@@ -211,6 +211,7 @@ public:
 		float damping = 0.08f;
 		float gravity = 9.81f;
 		float water_level = 0.0f; // mean surface world Y
+		float ripple_amplitude = 1.0f; // multiplier on body-driven ripple displacement
 
 		// FFT ocean spectrum layer (Phase 2). Independent grid/resolution from
 		// the ripple layer above -- see water_solver.h's own note on why these
@@ -220,7 +221,7 @@ public:
 		Vector2 ocean_domain_size = Vector2(40, 40);
 		float wind_speed = 8.0f;
 		Vector2 wind_direction = Vector2(1, 0); // need not be normalized, normalized on upload
-		float wave_amplitude = 1.0f; // Phillips spectrum's A constant
+		float wave_amplitude = 1.0f; // linear height multiplier; squared when used as Phillips spectrum energy
 
 		// Light-space caustic map (see water_caustics_map.glsl). The grid/
 		// buffers are only built if this is true at configure() time -- keep

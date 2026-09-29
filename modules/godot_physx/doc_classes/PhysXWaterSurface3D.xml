@@ -82,7 +82,7 @@
 			Damping (ALPHA) on the local ripple layer's wave equation -- higher settles disturbances faster.
 		</member>
 		<member name="depth" type="float" setter="set_depth" getter="get_depth" default="3.0">
-			Water depth, used by the FFT ocean layer's dispersion relation (shallower water changes how wave speed relates to wavelength).
+			Water depth used by the ripple wave equation and FFT ocean dispersion relation. Shallower water reduces ripple propagation speed and changes ocean-wave timing; it does not directly reduce wave height.
 		</member>
 		<member name="domain_size" type="Vector2" setter="set_domain_size" getter="get_domain_size" default="Vector2(20, 20)">
 			World-space extent (X, Z) of the local ripple layer -- independent of [member ocean_domain_size], see [member ocean_grid_resolution]'s own note on why.
@@ -96,6 +96,9 @@
 		<member name="ocean_grid_resolution" type="int" setter="set_ocean_grid_resolution" getter="get_ocean_grid_resolution" default="64">
 			Cell count per side of the FFT ocean layer's grid. Rounded up to the nearest power of two if set otherwise -- the Stockham FFT passes require it. Independent of [member grid_resolution]/[member domain_size] (the ripple layer's own grid) by design: they're two different consumers of "water height" with very different resolution/precision needs, kept architecturally separate rather than forced to share one grid.
 		</member>
+		<member name="ripple_amplitude" type="float" setter="set_ripple_amplitude" getter="get_ripple_amplitude" default="1.0">
+			Multiplier on the ripple displacement driven by submitted floating-body proxies and impulses. Set lower for small splashes and wakes in a pool; this does not scale the FFT ocean waves.
+		</member>
 		<member name="water_level" type="float" setter="set_water_level" getter="get_water_level" default="0.0">
 			Mean world-space Y of the surface -- place the node here rather than relying on its own transform, since the rendered mesh and both simulation layers are displaced relative to this baseline.
 		</member>
@@ -103,7 +106,7 @@
 			The material driving the surface mesh's displacement/shading. A default is created automatically if left unset -- assign your own only if you need to customize the look; it must keep sampling [code]ripple_height_tex[/code]/[code]ocean_height_tex[/code] in its vertex shader the same way the default does, or the mesh will stop moving.
 		</member>
 		<member name="wave_amplitude" type="float" setter="set_wave_amplitude" getter="get_wave_amplitude" default="1.0">
-			The FFT ocean layer's Phillips spectrum amplitude constant -- higher makes larger waves. Empirically tuned, not a physical unit (see the module's own build notes on the FFT solver for how the default scale was calibrated).
+			Linear height multiplier for the FFT ocean waves. Values below 1 reduce wave height proportionally; 0 removes the FFT ocean waves. This does not scale local ripple disturbances.
 		</member>
 		<member name="wind_direction" type="Vector2" setter="set_wind_direction" getter="get_wind_direction" default="Vector2(1, 0)">
 			Wind direction (X, Z) driving the FFT ocean layer's wave alignment. Need not be normalized.

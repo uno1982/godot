@@ -329,7 +329,11 @@ void fragment() {
 	float water_a = mix(base_a, foam_color.a, foam) * smoothstep(0.0, soft, shore);
 	// Wet sand under and behind the swash: blended in where the water is
 	// thin or gone, so it shows through the film and lingers after it.
-	float wet_a = texture(swash_tex, cuv_fade).g * wet_sand_color.a * (1.0 - water_a);
+	// Noise eats into the wet edge, so it dries back ragged rather than
+	// along a clean line.
+	float wn = 0.6 * foam_value_noise(v_rest_xz * 1.7) + 0.4 * foam_value_noise(v_rest_xz * 5.3 + 7.0);
+	float wet = clamp((texture(swash_tex, cuv_fade).g - 0.35 * wn) / 0.65, 0.0, 1.0);
+	float wet_a = wet * wet * (3.0 - 2.0 * wet) * wet_sand_color.a * (1.0 - water_a);
 	ALPHA = water_a + wet_a;
 	ALBEDO = (ALBEDO * water_a + wet_sand_color.rgb * wet_a) / max(ALPHA, 1e-4);
 }

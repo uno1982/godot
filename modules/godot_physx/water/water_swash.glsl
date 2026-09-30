@@ -107,6 +107,8 @@ void main() {
 	}
 	float r = target > s.r ? min(target, s.r + misc.z * swash.x) : max(target, s.r - swash.z * swash.x);
 
-	float wet = depth + r > 0.005 ? 1.0 : s.g * swash.w;
+	// Partial coverage across the edge (r and the depth vary smoothly), so the
+	// wet line falls between cells instead of stepping cell by cell.
+	float wet = max(smoothstep(-0.01, 0.02, depth + r), s.g * swash.w);
 	imageStore(dst_tex, c, vec4(r, wet, ms, 0.0));
 }

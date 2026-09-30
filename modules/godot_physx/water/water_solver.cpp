@@ -481,6 +481,18 @@ void WaterSolverGPU::_rt_build_buffers() {
 		tex_shore_foam = rd->texture_create(shore_tf, RD::TextureView(), shore_data);
 		tex_shore_foam_tmp = rd->texture_create(shore_tf, RD::TextureView(), shore_data);
 	}
+	{
+		RD::TextureFormat swash_tf = ripple_tf;
+		swash_tf.format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT;
+		swash_tf.usage_bits |= RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
+		Vector<uint8_t> zeros;
+		zeros.resize(cells * 4 * sizeof(float));
+		memset(zeros.ptrw(), 0, zeros.size());
+		Vector<Vector<uint8_t>> swash_data;
+		swash_data.push_back(zeros);
+		tex_swash = rd->texture_create(swash_tf, RD::TextureView(), swash_data);
+		tex_swash_tmp = rd->texture_create(swash_tf, RD::TextureView(), swash_data);
+	}
 	buf_shore_foam_params = rd->uniform_buffer_create(SHORE_FOAM_PARAMS_BYTES);
 	buf_shore_foam_copy_params = rd->uniform_buffer_create(SHORE_FOAM_PARAMS_BYTES);
 	{
@@ -518,23 +530,17 @@ void WaterSolverGPU::_rt_build_buffers() {
 			u.append_id(images[i]);
 			uniforms.push_back(u);
 		}
+		RD::Uniform us;
+		us.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
+		us.binding = 6;
+		us.append_id(sampler_linear);
+		us.append_id(tex_swash);
+		uniforms.push_back(us);
 		return rd->uniform_set_create(uniforms, shader_shore_foam, 0);
 	};
 	uset_shore_foam = make_shore_uset(buf_shore_foam_params, tex_shore_foam, tex_shore_foam_tmp);
 	uset_shore_foam_copy = make_shore_uset(buf_shore_foam_copy_params, tex_shore_foam_tmp, tex_shore_foam);
 
-	{
-		RD::TextureFormat swash_tf = ripple_tf;
-		swash_tf.format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT;
-		swash_tf.usage_bits |= RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
-		Vector<uint8_t> zeros;
-		zeros.resize(cells * 4 * sizeof(float));
-		memset(zeros.ptrw(), 0, zeros.size());
-		Vector<Vector<uint8_t>> swash_data;
-		swash_data.push_back(zeros);
-		tex_swash = rd->texture_create(swash_tf, RD::TextureView(), swash_data);
-		tex_swash_tmp = rd->texture_create(swash_tf, RD::TextureView(), swash_data);
-	}
 	buf_swash_params = rd->uniform_buffer_create(SWASH_PARAMS_BYTES);
 	buf_swash_copy_params = rd->uniform_buffer_create(SWASH_PARAMS_BYTES);
 	{

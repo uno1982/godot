@@ -106,6 +106,20 @@ uniform vec4 foam_color : source_color = vec4(0.92, 0.95, 0.97, 0.95);
 uniform float foam_breakup : hint_range(0.0, 1.0) = 0.6;
 // Size of that lace: noise cells per metre, fixed to the water.
 uniform float foam_detail_scale = 1.5;
+// Shore foam (0..1) on the ripple grid: the foamy sheet where waves wash in
+// over the shallows (set by PhysXWaterSurface3D; needs a seabed).
+uniform sampler2D shore_foam_tex : hint_default_black, filter_linear, repeat_disable;
+// Shore foam is a thin sheet, not a whitecap: fainter, finer and lacier.
+uniform float shore_foam_strength : hint_range(0.0, 1.0) = 0.65;
+uniform float shore_foam_breakup : hint_range(0.0, 1.0) = 0.85;
+// Churned, milky water over the shallows: tints toward shallow_color as the
+// ocean fade drops off near the shore (shallow_tint 0 = off). Its alpha also
+// replaces water_color's there.
+uniform vec4 shallow_color : source_color = vec4(0.42, 0.66, 0.64, 0.55);
+uniform float shallow_tint : hint_range(0.0, 1.0) = 0.6;
+// Soft contact with the shore: the surface fades out over this much of the
+// fade ramp at the waterline instead of meeting the sand at a hard line.
+uniform float shore_edge_softness : hint_range(0.0, 1.0) = 0.12;
 
 varying vec3 v_world_normal;
 varying float v_foam;
@@ -170,7 +184,20 @@ float foam_at(vec2 world_xz) {
 	// Gentle ramp: fresh foam is solid, thinning foam turns translucent and
 	// lacy as the noise eats into it, rather than cutting off at an edge.
 	float f = clamp(amount * (1.0 + foam_breakup) - n * foam_breakup, 0.0, 1.0);
-	return f * f * (3.0 - 2.0 * f);
+	f = f * f * (3.0 - 2.0 * f);
+	// Shore foam: finer, heavier lace at partial strength.
+	vec2 q = world_xz * foam_detail_scale * 2.2 + 31.0;
+	float ns = 0.5 * foam_value_noise(q) + 0.5 * foam_value_noise(q * 2.3 - 11.0);
+	float shore = texture(shore_foam_tex, cuv_r).r;
+	float g = clamp(shore * (1.0 + shore_foam_breakup) - ns * shore_foam_breakup, 0.0, 1.0);
+	g = g * g * (3.0 - 2.0 * g) * shore_foam_strength;
+	return max(f, g);
+}
+
+// 0 in deep water, rising to 1 at the waterline (from the ocean fade).
+float shallowness_at(vec2 world_xz) {
+	vec2 cuv_r = clamp((world_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
+	return 1.0 - texture(ocean_fade_tex, cuv_r).r;
 }
 
 void vertex() {
@@ -224,8 +251,11 @@ void fragment() {
 	// session in the first place), capped to a small multiplier so it can
 	// never itself become a source of overexposure.
 	float ndotl = clamp(dot(n, vec3(0.3, 0.85, 0.4)), 0.0, 1.0);
-	ALBEDO = mix(water_color.rgb * mix(0.75, 1.15, ndotl), foam_color.rgb, foam);
-	ALPHA = mix(water_color.a, foam_color.a, foam);
+	float shallow = shallowness_at(v_rest_xz) * shallow_tint;
+	vec3 base_rgb = mix(water_color.rgb, shallow_color.rgb, shallow) * mix(0.75, 1.15, ndotl);
+	float base_a = mix(water_color.a, shallow_color.a, shallow);
+	ALBEDO = mix(base_rgb, foam_color.rgb, foam);
+	ALPHA = mix(base_a, foam_color.a, foam) * smoothstep(0.0, max(shore_edge_softness, 1e-3), 1.0 - shallowness_at(v_rest_xz));
 }
 )";
 
@@ -344,6 +374,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_foam_threshold"), &PhysXWaterSurface3D::get_foam_threshold);
 	ClassDB::bind_method(D_METHOD("set_foam_persistence", "seconds"), &PhysXWaterSurface3D::set_foam_persistence);
 	ClassDB::bind_method(D_METHOD("get_foam_persistence"), &PhysXWaterSurface3D::get_foam_persistence);
+	ClassDB::bind_method(D_METHOD("set_shore_foam_band", "depth"), &PhysXWaterSurface3D::set_shore_foam_band);
+	ClassDB::bind_method(D_METHOD("get_shore_foam_band"), &PhysXWaterSurface3D::get_shore_foam_band);
 
 	ClassDB::bind_method(D_METHOD("set_surface_mesh", "mesh"), &PhysXWaterSurface3D::set_surface_mesh);
 	ClassDB::bind_method(D_METHOD("get_surface_mesh"), &PhysXWaterSurface3D::get_surface_mesh);
@@ -400,6 +432,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "choppiness", PROPERTY_HINT_RANGE, "0,3,0.01,or_greater"), "set_choppiness", "get_choppiness");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "foam_enabled"), "set_foam_enabled", "get_foam_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_threshold", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_foam_threshold", "get_foam_threshold");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_foam_band", PROPERTY_HINT_RANGE, "0,5,0.05,or_greater,suffix:m"), "set_shore_foam_band", "get_shore_foam_band");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_persistence", PROPERTY_HINT_RANGE, "0.05,20,0.05,or_greater,suffix:s"), "set_foam_persistence", "get_foam_persistence");
 
 	ADD_GROUP("Rendering", "");
@@ -479,22 +512,27 @@ void PhysXWaterSurface3D::set_choppiness(float p_choppiness) {
 	if (water_material.is_valid()) {
 		water_material->set_shader_parameter("choppiness", choppiness);
 	}
-	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence);
+	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band);
 }
 
 void PhysXWaterSurface3D::set_foam_enabled(bool p_enabled) {
 	foam_enabled = p_enabled;
-	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence);
+	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band);
+}
+
+void PhysXWaterSurface3D::set_shore_foam_band(float p_depth) {
+	shore_foam_band = MAX(p_depth, 0.0f);
+	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band);
 }
 
 void PhysXWaterSurface3D::set_foam_threshold(float p_threshold) {
 	foam_threshold = p_threshold;
-	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence);
+	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band);
 }
 
 void PhysXWaterSurface3D::set_foam_persistence(float p_seconds) {
 	foam_persistence = MAX(p_seconds, 0.05f);
-	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence);
+	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band);
 }
 
 void PhysXWaterSurface3D::set_normal_mode(NormalMode p_mode) {
@@ -674,7 +712,7 @@ void PhysXWaterSurface3D::_rebuild() {
 		cell_depth.resize(cells);
 		float *dw = cell_depth.ptrw();
 		for (int i = 0; i < cells; i++) {
-			dw[i] = footprint_mask[i] ? depth : -1.0f;
+			dw[i] = footprint_mask[i] ? depth : WaterSolver::WALL_DEPTH;
 		}
 	}
 	_configure_solver();
@@ -701,7 +739,7 @@ void PhysXWaterSurface3D::_sample_seabed() {
 		for (int x = 0; x < n; x++) {
 			const int i = z * n + x;
 			if (!footprint_mask.is_empty() && !footprint_mask[i]) {
-				dw[i] = -1.0f;
+				dw[i] = WaterSolver::WALL_DEPTH;
 				continue;
 			}
 			const Vector2 p = grid_min + Vector2(x + 0.5f, z + 0.5f) * cell;
@@ -731,7 +769,16 @@ void PhysXWaterSurface3D::_sample_seabed() {
 	}
 }
 
+void PhysXWaterSurface3D::_update_cell_fade() {
+	cell_fade.resize(cell_depth.size());
+	float *fw = cell_fade.ptrw();
+	for (int i = 0; i < cell_depth.size(); i++) {
+		fw[i] = WaterSolver::shallow_fade(cell_depth[i], shallow_fade_depth);
+	}
+}
+
 void PhysXWaterSurface3D::_configure_solver() {
+	_update_cell_fade();
 	WaterSolver::Settings s;
 	s.grid_resolution = grid_resolution;
 	s.domain_size = active_domain_size;
@@ -751,7 +798,7 @@ void PhysXWaterSurface3D::_configure_solver() {
 	s.fetch = get_effective_fetch();
 	s.caustics_enabled = caustics_enabled;
 	solver.configure(s);
-	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence);
+	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band);
 	if (!solver.has_device() && !warned_no_device) {
 		warned_no_device = true;
 		WARN_PRINT("PhysXWaterSurface3D: the water compute solver could not start (no RenderingDevice / compute support).");
@@ -817,6 +864,10 @@ void PhysXWaterSurface3D::_bind_textures() {
 		ocean_foam_tex.instantiate();
 	}
 	ocean_foam_tex->set_texture_rd_rid(solver.get_ocean_foam_texture_rd_rid());
+	if (shore_foam_tex.is_null()) {
+		shore_foam_tex.instantiate();
+	}
+	shore_foam_tex->set_texture_rd_rid(solver.get_shore_foam_texture_rd_rid());
 	ripple_height_tex->set_texture_rd_rid(solver.get_ripple_height_texture_rd_rid());
 	ocean_height_tex->set_texture_rd_rid(solver.get_ocean_height_texture_rd_rid());
 	ocean_fade_tex->set_texture_rd_rid(solver.get_ocean_fade_texture_rd_rid());
@@ -833,6 +884,7 @@ void PhysXWaterSurface3D::_bind_textures() {
 		water_material->set_shader_parameter("ocean_disp_tex", ocean_disp_tex);
 		water_material->set_shader_parameter("ocean_deriv_tex", ocean_deriv_tex);
 		water_material->set_shader_parameter("ocean_foam_tex", ocean_foam_tex);
+		water_material->set_shader_parameter("shore_foam_tex", shore_foam_tex);
 	}
 	textures_bound = true;
 }
@@ -877,7 +929,7 @@ float PhysXWaterSurface3D::sample_height(Vector3 p_world_pos) const {
 	// height the renderer draws), so only fall back to it before the first
 	// readback lands. Both are relative to the node, like the rendered mesh.
 	const float ripple = cached_ripple_height.is_empty() ? water_level : _bilinear_sample(cached_ripple_height, cached_ripple_n, cached_ripple_domain, x, z);
-	const float fade = cell_depth.is_empty() ? 1.0f : WaterSolver::shallow_fade(_bilinear_sample(cell_depth, grid_resolution, active_domain_size, x, z), shallow_fade_depth);
+	const float fade = cell_fade.is_empty() ? 1.0f : _bilinear_sample(cell_fade, grid_resolution, active_domain_size, x, z);
 	// With choppy displacement the surface point above (x, z) rested
 	// somewhere else: find p0 with p0 + s * D(p0) = (x, z) by fixed-point
 	// iteration (s matches the shader's -choppiness * fade), then read the

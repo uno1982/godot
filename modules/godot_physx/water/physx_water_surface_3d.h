@@ -135,6 +135,10 @@ public:
 	float get_foam_threshold() const { return foam_threshold; }
 	void set_foam_persistence(float p_seconds);
 	float get_foam_persistence() const { return foam_persistence; }
+	// Shore foam: waves arriving over water shallower than this (metres,
+	// from the seabed) leave a foamy sheet at the waterline. 0 = none.
+	void set_shore_foam_band(float p_depth);
+	float get_shore_foam_band() const { return shore_foam_band; }
 
 	// Optional shape: any flat mesh whose X/Z footprint (node-local) is the
 	// water's outline -- a disc, a kidney bean, a lake with an island. When
@@ -218,6 +222,7 @@ private:
 	bool foam_enabled = true;
 	float foam_threshold = 0.7f;
 	float foam_persistence = 2.5f;
+	float shore_foam_band = 0.5f;
 	// Longest side of the surface_mesh footprint (0 = none), for auto fetch.
 	real_t footprint_extent = 0.0;
 
@@ -236,6 +241,10 @@ private:
 	// sample_height().
 	PackedByteArray footprint_mask;
 	PackedFloat32Array cell_depth;
+	// WaterSolver::shallow_fade() of each cell_depth, for sample_height()'s
+	// ocean fade (bilinear on this, so a wall cell doesn't drag it down).
+	PackedFloat32Array cell_fade;
+	void _update_cell_fade();
 	bool seabed_from_floor = false;
 	uint32_t seabed_collision_mask = 1;
 	float shallow_fade_depth = 1.0f;
@@ -249,6 +258,7 @@ private:
 	Ref<Texture2DRD> ocean_disp_tex;
 	Ref<Texture2DRD> ocean_deriv_tex;
 	Ref<Texture2DRD> ocean_foam_tex;
+	Ref<Texture2DRD> shore_foam_tex;
 	Ref<Texture2DRD> caustics_texture;
 	bool textures_bound = false; // set once, after the solver's RD textures actually exist (see _update())
 

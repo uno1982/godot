@@ -146,8 +146,8 @@ void WaterSolverGPU::rt_compile(Ref<WaterSolverGPU> p_self) {
 
 		Vector<RD::AttachmentFormat> afs;
 		RD::AttachmentFormat af;
-		af.format = RD::DATA_FORMAT_R8_UNORM;
-		af.usage_flags = RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT;
+		af.format = RD::DATA_FORMAT_R8G8B8A8_UNORM; // R caustics, G water mask (4 channels: a 2-channel texture got sampled with a luminance-alpha swizzle)
+		af.usage_flags = RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
 		afs.push_back(af);
 		RD::FramebufferFormatID fb_format = rd->framebuffer_format_create(afs);
 
@@ -671,16 +671,16 @@ void WaterSolverGPU::_rt_build_caustics_grid() {
 	caustics_vertex_array = rd->vertex_array_create(vertex_count, caustics_vertex_format, vertex_buffers);
 
 	RD::TextureFormat texture_format;
-	texture_format.format = RD::DATA_FORMAT_R8_UNORM;
+	texture_format.format = RD::DATA_FORMAT_R8G8B8A8_UNORM;
 	texture_format.width = CAUSTICS_MAP_SIZE;
 	texture_format.height = CAUSTICS_MAP_SIZE;
-	texture_format.usage_bits = RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT;
+	texture_format.usage_bits = RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
 	tex_caustics = rd->texture_create(texture_format, RD::TextureView());
 
 	Vector<RD::AttachmentFormat> attachment_formats;
 	RD::AttachmentFormat attachment_format;
-	attachment_format.format = RD::DATA_FORMAT_R8_UNORM;
-	attachment_format.usage_flags = RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT;
+	attachment_format.format = RD::DATA_FORMAT_R8G8B8A8_UNORM;
+	attachment_format.usage_flags = RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
 	attachment_formats.push_back(attachment_format);
 	const RD::FramebufferFormatID framebuffer_format = rd->framebuffer_format_create(attachment_formats);
 	Vector<RID> attachments;
@@ -997,7 +997,7 @@ void WaterSolverGPU::rt_on_ocean_dz(const PackedByteArray &p_data, Ref<WaterSolv
 	}
 }
 
-void WaterSolverGPU::rt_render_caustics(Ref<WaterSolverGPU> p_self, Vector3 p_sun_direction, Vector3 p_light_right, Vector3 p_light_up, Vector3 p_origin, float p_half_extent, float p_reference_depth, float p_ior) {
+void WaterSolverGPU::rt_render_caustics(Ref<WaterSolverGPU> p_self, Vector3 p_sun_direction, Vector3 p_light_right, Vector3 p_light_up, Vector3 p_origin, float p_half_extent, float p_reference_depth, float p_ior, bool p_open_beyond) {
 	if (rd == nullptr || !shaders_ok || uset_caustics.is_null() || caustics_framebuffer.is_null()) {
 		return;
 	}
@@ -1018,7 +1018,7 @@ void WaterSolverGPU::rt_render_caustics(Ref<WaterSolverGPU> p_self, Vector3 p_su
 	put_v3(32, p_light_up, p_reference_depth);
 	put_f(48, domain_size.x);
 	put_f(52, domain_size.y);
-	put_f(56, has_cell_depth ? 1.0f : 0.0f);
+	put_f(56, (has_cell_depth ? 1.0f : 0.0f) + (p_open_beyond ? 2.0f : 0.0f));
 	put_f(60, shallow_fade_depth);
 	put_f(64, ocean_domain_size.x);
 	put_f(68, ocean_domain_size.y);
@@ -1037,7 +1037,8 @@ void WaterSolverGPU::rt_render_caustics(Ref<WaterSolverGPU> p_self, Vector3 p_su
 	rd->draw_list_bind_uniform_set(draw_list, uset_caustics, 0);
 	rd->draw_list_bind_vertex_array(draw_list, caustics_vertex_array);
 	rd->draw_list_bind_index_array(draw_list, caustics_index_array);
-	rd->draw_list_draw(draw_list, true);
+	// Instance 0: the refracted caustics (R); instance 1: the water mask (G).
+	rd->draw_list_draw(draw_list, true, 2);
 	rd->draw_list_end();
 }
 
@@ -1260,7 +1261,7 @@ void WaterSolver::submit_impulse(const Vector3 &p_world_pos, float p_radius, flo
 	pending_impulses.push_back(imp);
 }
 
-void WaterSolver::render_caustics(const Vector3 &p_origin, const Vector3 &p_sun_direction, float p_reference_depth, float p_ior) {
+void WaterSolver::render_caustics(const Vector3 &p_origin, const Vector3 &p_sun_direction, float p_reference_depth, float p_ior, bool p_open_beyond) {
 	if (!settings.caustics_enabled || !is_available()) {
 		return;
 	}
@@ -1275,7 +1276,7 @@ void WaterSolver::render_caustics(const Vector3 &p_origin, const Vector3 &p_sun_
 	p_reference_depth = MAX(p_reference_depth, 0.1f);
 	p_ior = MAX(p_ior, 1.001f);
 	caustics_half_extent = MAX(settings.ocean_domain_size.x, settings.ocean_domain_size.y) * 0.5f * WaterSolverGPU::CAUSTICS_TILE_MARGIN + p_reference_depth * 0.75f;
-	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_render_caustics).bind(gpu, sun_direction, caustics_light_right, caustics_light_up, caustics_origin, caustics_half_extent, p_reference_depth, p_ior));
+	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_render_caustics).bind(gpu, sun_direction, caustics_light_right, caustics_light_up, caustics_origin, caustics_half_extent, p_reference_depth, p_ior, p_open_beyond));
 }
 
 RID WaterSolver::get_ripple_height_texture_rd_rid() const {

@@ -18,7 +18,7 @@
 		<method name="get_caustics_texture" qualifiers="const">
 			<return type="Texture2D" />
 			<description>
-				The zero-copy caustics light-pattern texture. Project a receiving surface's world position onto [method get_caustics_light_right] and [method get_caustics_light_up], relative to [method get_caustics_origin], and map the result through [method get_caustics_half_extent] to sample the texture. Null until [member caustics_enabled] is true and the node has built.
+				The zero-copy caustics light-pattern texture. Project a receiving surface's world position onto [method get_caustics_light_right] and [method get_caustics_light_up], relative to [method get_caustics_origin], and map the result through [method get_caustics_half_extent] to sample the texture. Red is the caustic light; green is 1 where the sun ray through that spot crossed the water's surface over water and 0 where it didn't. Multiply by green, or the outside of a pool's wall, which lines up with lit spots inside the pool, gets caustics its light never passed through. Past the simulated square, light counts as coming through water only when the surface is rendered out there ([member render_extent]). Null until [member caustics_enabled] is true and the node has built.
 			</description>
 		</method>
 		<method name="get_caustics_tile_size" qualifiers="const">

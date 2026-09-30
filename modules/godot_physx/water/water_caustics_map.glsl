@@ -44,13 +44,19 @@ layout(set = 0, binding = 3) uniform sampler2D cell_depth_tex;
 
 float depth_at(vec2 xz) {
 	vec2 uv = xz / ripple_domain.xy + 0.5;
-	if (ripple_domain.z < 0.5 && (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))))) {
-		// Beyond the ripple grid with no per-cell depth: open water.
-		return 1e6;
+	// ripple_domain.z: +1 per-cell depth is set, +2 the water carries on past
+	// the grid (rendered out there: render_extent).
+	bool has_depth = mod(ripple_domain.z, 2.0) > 0.5;
+	bool outside = any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)));
+	if (outside && ripple_domain.z < 1.5) {
+		return 0.0; // the water ends at the grid (a pool's walls, a lake's banks)
 	}
-	// With per-cell depth the edge carries on past the grid (the map spans a
-	// little more than one ocean tile, see _rt_build_caustics_grid), the same
-	// way the surface material treats it.
+	if (outside && !has_depth) {
+		return 1e6; // open water
+	}
+	// Per-cell depth carries on past the grid edge (the map spans a little
+	// more than one ocean tile, see _rt_build_caustics_grid), the same way
+	// the surface material treats it.
 	return texture(cell_depth_tex, clamp(uv, vec2(0.0), vec2(1.0))).r;
 }
 
@@ -65,6 +71,8 @@ float ocean_fade(vec2 xz) {
 layout(location = 0) in vec2 in_xz;
 
 layout(location = 0) out vec2 v_flat_xz;
+// 0 = refracted caustics, 1 = the flat water mask (see main()).
+layout(location = 1) flat out int v_mode;
 
 float sample_h(vec2 world_xz) {
 	// Ocean wraps (it's periodic -- that's what lets receivers tile the
@@ -106,6 +114,18 @@ void main() {
 	float lv = dot(ref_point - origin, light_up) / half_extent;
 
 	v_flat_xz = xz;
+	v_mode = gl_InstanceIndex;
+	if (gl_InstanceIndex == 1) {
+		// Second instance: the flat water surface projected straight along
+		// the sun, unrefracted, writing the water mask into G. Every point on
+		// one light-space line shares where that sun ray crosses the water's
+		// height, so a receiver reads G at its own UV to know whether its
+		// sunlight came through water -- the outside of a pool's wall lines up
+		// with lit photons inside the pool, but its light never touched water.
+		vec3 flat_pos = origin + vec3(xz.x, 0.0, xz.y);
+		lu = dot(flat_pos - origin, light_right) / half_extent;
+		lv = dot(flat_pos - origin, light_up) / half_extent;
+	}
 
 	gl_Position = vec4(lu, lv, 0.0, 1.0);
 }
@@ -132,13 +152,19 @@ layout(set = 0, binding = 3) uniform sampler2D cell_depth_tex;
 
 float depth_at(vec2 xz) {
 	vec2 uv = xz / ripple_domain.xy + 0.5;
-	if (ripple_domain.z < 0.5 && (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))))) {
-		// Beyond the ripple grid with no per-cell depth: open water.
-		return 1e6;
+	// ripple_domain.z: +1 per-cell depth is set, +2 the water carries on past
+	// the grid (rendered out there: render_extent).
+	bool has_depth = mod(ripple_domain.z, 2.0) > 0.5;
+	bool outside = any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)));
+	if (outside && ripple_domain.z < 1.5) {
+		return 0.0; // the water ends at the grid (a pool's walls, a lake's banks)
 	}
-	// With per-cell depth the edge carries on past the grid (the map spans a
-	// little more than one ocean tile, see _rt_build_caustics_grid), the same
-	// way the surface material treats it.
+	if (outside && !has_depth) {
+		return 1e6; // open water
+	}
+	// Per-cell depth carries on past the grid edge (the map spans a little
+	// more than one ocean tile, see _rt_build_caustics_grid), the same way
+	// the surface material treats it.
 	return texture(cell_depth_tex, clamp(uv, vec2(0.0), vec2(1.0))).r;
 }
 
@@ -151,6 +177,7 @@ float ocean_fade(vec2 xz) {
 }
 
 layout(location = 0) in vec2 v_flat_xz;
+layout(location = 1) flat in int v_mode;
 
 layout(location = 0) out vec4 out_color;
 
@@ -185,6 +212,10 @@ float wet_at(vec2 xz) {
 }
 
 void main() {
+	if (v_mode == 1) {
+		out_color = vec4(0.0, wet_at(v_flat_xz), 0.0, 0.0);
+		return;
+	}
 	vec2 source_dx = dFdx(v_flat_xz);
 	vec2 source_dy = dFdy(v_flat_xz);
 	float incidence;
@@ -199,5 +230,5 @@ void main() {
 	float concentration = flat_projection_area * source_area / max(refracted_area, 1e-9);
 	float focused_light = max(concentration - 1.0, 0.0);
 	float tone = focused_light / (focused_light + 8.0);
-	out_color = vec4(vec3(incidence * tone * wet_at(v_flat_xz)), 1.0);
+	out_color = vec4(incidence * tone * wet_at(v_flat_xz), 0.0, 0.0, 0.0);
 }

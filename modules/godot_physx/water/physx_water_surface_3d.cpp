@@ -987,7 +987,8 @@ void PhysXWaterSurface3D::_update(double p_delta) {
 		_bind_textures();
 	}
 	if (solver.is_available() && caustics_enabled) {
-		solver.render_caustics(Vector3(grid_center.x, get_global_position().y, grid_center.y), caustics_sun_direction, caustics_reference_depth);
+		const bool open_beyond = surface_mesh.is_null() && render_extent > MAX(domain_size.x, domain_size.y);
+		solver.render_caustics(Vector3(grid_center.x, get_global_position().y, grid_center.y), caustics_sun_direction, caustics_reference_depth, 1.333f, open_beyond);
 	}
 	frames_since_refresh++;
 	if (frames_since_refresh >= REFRESH_EVERY_FRAMES) {

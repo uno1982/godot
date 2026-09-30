@@ -128,6 +128,9 @@ public:
 	// (area Jacobian below foam_threshold -- 1 = unsqueezed, 0 = folding over)
 	// and fading with a time constant of foam_persistence seconds, so crests
 	// leave streaks behind. Lower threshold = fewer whitecaps.
+	// Off = no whitecap foam at all (a pool, a sheltered pond).
+	void set_foam_enabled(bool p_enabled);
+	bool get_foam_enabled() const { return foam_enabled; }
 	void set_foam_threshold(float p_threshold);
 	float get_foam_threshold() const { return foam_threshold; }
 	void set_foam_persistence(float p_seconds);
@@ -212,6 +215,7 @@ private:
 	float fetch = 0.0f;
 	float choppiness = 1.0f;
 	NormalMode normal_mode = NORMAL_MODE_PER_PIXEL;
+	bool foam_enabled = true;
 	float foam_threshold = 0.7f;
 	float foam_persistence = 2.5f;
 	// Longest side of the surface_mesh footprint (0 = none), for auto fetch.

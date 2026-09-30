@@ -104,6 +104,9 @@
 		<member name="fetch" type="float" setter="set_fetch" getter="get_fetch" default="0.0">
 			How far the wind has blown over open water, in metres. The ocean layer is a fetch-limited JONSWAP spectrum, so fetch sets how tall and how long the wind waves get at a given [member wind_speed]: a few metres give tiny, short ripples, kilometres give a developed sea. [code]0[/code] (auto) uses the [member surface_mesh] footprint's longest side for enclosed water, or a fully developed open sea (100 km) without one. Only wavelengths up to [member ocean_domain_size] are represented, and waves shorter than two ocean grid cells aren't, so a small fetch at a coarse [member ocean_grid_resolution] can leave the ocean layer flat.
 		</member>
+		<member name="foam_enabled" type="bool" setter="set_foam_enabled" getter="get_foam_enabled" default="true">
+			Whether whitecap foam forms at all. Turn it off for water that should never show foam, like a pool or a sheltered pond; turning it off also clears any foam already there. Foam only comes from the ocean waves folding (see [member foam_threshold]) -- bodies disturbing the water don't create it.
+		</member>
 		<member name="foam_persistence" type="float" setter="set_foam_persistence" getter="get_foam_persistence" default="2.5">
 			Time constant in seconds over which whitecap foam fades once its wave has passed. The foam is kept in a texture that moves with the water rather than the wave shape, so a longer persistence leaves longer streaks behind the crests. The default material also breaks fading foam into lace ([code]foam_breakup[/code], [code]foam_detail_scale[/code] and [code]foam_color[/code] shader parameters).
 		</member>

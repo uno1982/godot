@@ -338,6 +338,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_choppiness"), &PhysXWaterSurface3D::get_choppiness);
 	ClassDB::bind_method(D_METHOD("set_normal_mode", "mode"), &PhysXWaterSurface3D::set_normal_mode);
 	ClassDB::bind_method(D_METHOD("get_normal_mode"), &PhysXWaterSurface3D::get_normal_mode);
+	ClassDB::bind_method(D_METHOD("set_foam_enabled", "enabled"), &PhysXWaterSurface3D::set_foam_enabled);
+	ClassDB::bind_method(D_METHOD("get_foam_enabled"), &PhysXWaterSurface3D::get_foam_enabled);
 	ClassDB::bind_method(D_METHOD("set_foam_threshold", "threshold"), &PhysXWaterSurface3D::set_foam_threshold);
 	ClassDB::bind_method(D_METHOD("get_foam_threshold"), &PhysXWaterSurface3D::get_foam_threshold);
 	ClassDB::bind_method(D_METHOD("set_foam_persistence", "seconds"), &PhysXWaterSurface3D::set_foam_persistence);
@@ -396,6 +398,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wave_amplitude"), "set_wave_amplitude", "get_wave_amplitude");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fetch", PROPERTY_HINT_RANGE, "0,100000,1,or_greater,suffix:m"), "set_fetch", "get_fetch");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "choppiness", PROPERTY_HINT_RANGE, "0,3,0.01,or_greater"), "set_choppiness", "get_choppiness");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "foam_enabled"), "set_foam_enabled", "get_foam_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_threshold", PROPERTY_HINT_RANGE, "0,1.5,0.01"), "set_foam_threshold", "get_foam_threshold");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_persistence", PROPERTY_HINT_RANGE, "0.05,20,0.05,or_greater,suffix:s"), "set_foam_persistence", "get_foam_persistence");
 
@@ -476,17 +479,22 @@ void PhysXWaterSurface3D::set_choppiness(float p_choppiness) {
 	if (water_material.is_valid()) {
 		water_material->set_shader_parameter("choppiness", choppiness);
 	}
-	solver.set_foam_settings(choppiness, foam_threshold, foam_persistence);
+	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence);
+}
+
+void PhysXWaterSurface3D::set_foam_enabled(bool p_enabled) {
+	foam_enabled = p_enabled;
+	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence);
 }
 
 void PhysXWaterSurface3D::set_foam_threshold(float p_threshold) {
 	foam_threshold = p_threshold;
-	solver.set_foam_settings(choppiness, foam_threshold, foam_persistence);
+	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence);
 }
 
 void PhysXWaterSurface3D::set_foam_persistence(float p_seconds) {
 	foam_persistence = MAX(p_seconds, 0.05f);
-	solver.set_foam_settings(choppiness, foam_threshold, foam_persistence);
+	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence);
 }
 
 void PhysXWaterSurface3D::set_normal_mode(NormalMode p_mode) {
@@ -743,7 +751,7 @@ void PhysXWaterSurface3D::_configure_solver() {
 	s.fetch = get_effective_fetch();
 	s.caustics_enabled = caustics_enabled;
 	solver.configure(s);
-	solver.set_foam_settings(choppiness, foam_threshold, foam_persistence);
+	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence);
 	if (!solver.has_device() && !warned_no_device) {
 		warned_no_device = true;
 		WARN_PRINT("PhysXWaterSurface3D: the water compute solver could not start (no RenderingDevice / compute support).");

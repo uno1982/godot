@@ -746,7 +746,7 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, double p_delta, float p
 	// Persistent foam: inject where the surface folds, fade the rest.
 	{
 		float fp[4] = { Math::exp(-(float)p_delta / MAX(foam_persistence, 0.01f)), foam_choppiness, foam_threshold, 0.25f };
-		int32_t fr[4] = { on, 0, 0, 0 };
+		int32_t fr[4] = { on, foam_enabled ? 1 : 0, 0, 0 };
 		Vector<uint8_t> fb;
 		fb.resize(FOAM_PARAMS_BYTES);
 		memcpy(fb.ptrw(), fp, sizeof(fp));
@@ -893,7 +893,8 @@ void WaterSolverGPU::rt_on_ocean_height(const PackedByteArray &p_data, Ref<Water
 	}
 }
 
-void WaterSolverGPU::rt_set_foam(Ref<WaterSolverGPU> p_self, float p_choppiness, float p_threshold, float p_persistence) {
+void WaterSolverGPU::rt_set_foam(Ref<WaterSolverGPU> p_self, bool p_enabled, float p_choppiness, float p_threshold, float p_persistence) {
+	foam_enabled = p_enabled;
 	foam_choppiness = p_choppiness;
 	foam_threshold = p_threshold;
 	foam_persistence = p_persistence;
@@ -1111,8 +1112,8 @@ RID WaterSolver::get_ocean_foam_texture_rd_rid() const {
 	return gpu->tex_ocean_foam;
 }
 
-void WaterSolver::set_foam_settings(float p_choppiness, float p_threshold, float p_persistence) {
-	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_foam).bind(gpu, p_choppiness, p_threshold, p_persistence));
+void WaterSolver::set_foam_settings(bool p_enabled, float p_choppiness, float p_threshold, float p_persistence) {
+	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_foam).bind(gpu, p_enabled, p_choppiness, p_threshold, p_persistence));
 }
 
 RID WaterSolver::get_ocean_derivative_texture_rd_rid() const {

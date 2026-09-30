@@ -120,6 +120,15 @@ uniform float shallow_tint : hint_range(0.0, 1.0) = 0.6;
 // Soft contact with the shore: the surface fades out over this much of the
 // fade ramp at the waterline instead of meeting the sand at a hard line.
 uniform float shore_edge_softness : hint_range(0.0, 1.0) = 0.12;
+// Moving waterline: how far (in ocean-fade units) the visible edge can sit
+// back from the still-water line. Arriving crests push it toward the sand,
+// troughs pull it back, and slow ground-fixed noise keeps it irregular --
+// so the edge scallops with the waves instead of following a depth contour.
+uniform float swash_reach : hint_range(0.0, 0.9) = 0.35;
+// Wave height (m) that pushes the waterline all the way in.
+uniform float swash_wave_height = 0.3;
+// Thin bright foam rim just behind the moving edge.
+uniform float shore_rim_strength : hint_range(0.0, 1.0) = 0.8;
 
 varying vec3 v_world_normal;
 varying float v_foam;
@@ -184,20 +193,37 @@ float foam_at(vec2 world_xz) {
 	// Gentle ramp: fresh foam is solid, thinning foam turns translucent and
 	// lacy as the noise eats into it, rather than cutting off at an edge.
 	float f = clamp(amount * (1.0 + foam_breakup) - n * foam_breakup, 0.0, 1.0);
-	f = f * f * (3.0 - 2.0 * f);
-	// Shore foam: finer, heavier lace at partial strength.
+	return f * f * (3.0 - 2.0 * f);
+}
+
+// Visible shore foam at world_xz: finer, heavier lace at partial strength.
+float shore_foam_at(vec2 world_xz) {
+	vec2 cuv_r = clamp((world_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	vec2 q = world_xz * foam_detail_scale * 2.2 + 31.0;
 	float ns = 0.5 * foam_value_noise(q) + 0.5 * foam_value_noise(q * 2.3 - 11.0);
 	float shore = texture(shore_foam_tex, cuv_r).r;
 	float g = clamp(shore * (1.0 + shore_foam_breakup) - ns * shore_foam_breakup, 0.0, 1.0);
-	g = g * g * (3.0 - 2.0 * g) * shore_foam_strength;
-	return max(f, g);
+	return g * g * (3.0 - 2.0 * g) * shore_foam_strength;
 }
 
-// 0 in deep water, rising to 1 at the waterline (from the ocean fade).
-float shallowness_at(vec2 world_xz) {
-	vec2 cuv_r = clamp((world_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
-	return 1.0 - texture(ocean_fade_tex, cuv_r).r;
+// Distance-to-shore signal (1 in deep water, 0 at the waterline) with the
+// waterline moved by the waves: the still-water fade is remapped so the edge
+// sits where fade == offset, offset in [0, swash_reach] -- small under an
+// arriving crest (the edge reaches in), large under a trough, jittered by
+// slow noise. Deep water and walls (fade 1) stay at 1.
+float shore_signal(vec2 world_xz, float time) {
+	vec2 rel = world_xz - grid_center;
+	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
+	vec2 cuv_o = clamp(rel / ocean_domain_size + 0.5, vec2(0.0), vec2(1.0));
+	float fade = texture(ocean_fade_tex, cuv_r).r;
+	float eta = texture(ocean_height_tex, cuv_o).r; // unfaded: the waves arriving here
+	// Lobes a few metres across (like real swash), drifting, with the waves
+	// pushing the whole edge in and out over time.
+	vec2 p = world_xz * 0.45;
+	float n = 0.65 * foam_value_noise(p + vec2(time * 0.12, time * 0.05)) + 0.35 * foam_value_noise(p * 2.4 - vec2(time * 0.07, 0.0));
+	float wave = clamp(eta / max(swash_wave_height, 1e-3), -1.0, 1.0);
+	float offset = swash_reach * clamp(0.5 + (n - 0.5) * 1.6 - 0.35 * wave, 0.0, 1.0);
+	return clamp((fade - offset) / max(1.0 - offset, 1e-3), 0.0, 1.0);
 }
 
 void vertex() {
@@ -251,11 +277,21 @@ void fragment() {
 	// session in the first place), capped to a small multiplier so it can
 	// never itself become a source of overexposure.
 	float ndotl = clamp(dot(n, vec3(0.3, 0.85, 0.4)), 0.0, 1.0);
-	float shallow = shallowness_at(v_rest_xz) * shallow_tint;
+	float shore = shore_signal(v_rest_xz, TIME);
+	// Shore foam belongs to the moving edge: full at it, thinning seaward, so
+	// the white sheet scallops with the edge instead of filling the band.
+	// (Whitecaps are left alone.)
+	foam = max(foam, shore_foam_at(v_rest_xz) * (1.0 - smoothstep(0.1, 0.75, shore)));
+	// Bright rim right behind the moving edge, broken into lace.
+	float soft = max(shore_edge_softness, 1e-3);
+	float rim = smoothstep(0.0, soft * 0.5, shore) * (1.0 - smoothstep(soft * 0.6, soft * 2.2, shore));
+	rim *= shore_rim_strength * (0.55 + 0.45 * foam_value_noise(v_rest_xz * 6.0));
+	foam = max(foam, rim);
+	float shallow = (1.0 - shore) * shallow_tint;
 	vec3 base_rgb = mix(water_color.rgb, shallow_color.rgb, shallow) * mix(0.75, 1.15, ndotl);
 	float base_a = mix(water_color.a, shallow_color.a, shallow);
 	ALBEDO = mix(base_rgb, foam_color.rgb, foam);
-	ALPHA = mix(base_a, foam_color.a, foam) * smoothstep(0.0, max(shore_edge_softness, 1e-3), 1.0 - shallowness_at(v_rest_xz));
+	ALPHA = mix(base_a, foam_color.a, foam) * smoothstep(0.0, soft, shore);
 }
 )";
 

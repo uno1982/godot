@@ -462,7 +462,8 @@ Without it, the constant `depth` applies everywhere. On a beach, each arriving
 crest also leaves a thin foam sheet at the waterline (`shore_foam_band`) that
 surges in with the wave and slides back out with the backwash and undertow
 (`shore_undertow`), the shallows turn milky, and the surface feathers out onto
-the sand.
+the sand along a waterline that scallops with the arriving waves rather than
+following the depth contour.
 
 `sample_height(position)` returns the same combined surface height on the CPU,
 for buoyancy scripts. Over dry cells (outside a `surface_mesh` footprint, or

@@ -28,7 +28,7 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 sun_dir_ior;       // xyz sun_direction (unit, pointing FROM sun TOWARD scene), w ior
 	vec4 light_right_ext;   // xyz light-space "right" basis vector (unit), w half_extent (world units)
 	vec4 light_up_refdepth; // xyz light-space "up" basis vector (unit), w reference_depth (world units along the refracted ray)
-	vec4 ripple_domain;     // xy ripple layer's domain size, zw unused
+	vec4 ripple_domain;     // xy ripple layer's domain size, z 1 if a wet/dry mask is set, w unused
 	vec4 ocean_domain;      // xy ocean layer's domain size, zw unused
 	vec4 viewport_wh;       // xy render target size in pixels, zw unused
 	vec4 light_origin;      // xyz center of the projected map, w unused
@@ -97,6 +97,9 @@ layout(set = 0, binding = 0, std140) uniform Params {
 
 layout(set = 0, binding = 1) uniform sampler2D ripple_height_tex;
 layout(set = 0, binding = 2) uniform sampler2D ocean_height_tex;
+// Wet/dry mask over the ripple domain (see water_inc.glsl). Light only passes
+// through wet texels; outside the ripple domain it is dry when a mask is set.
+layout(set = 0, binding = 3) uniform sampler2D wet_mask_tex;
 
 layout(location = 0) in vec2 v_flat_xz;
 
@@ -128,6 +131,14 @@ vec2 project_refracted_point(vec2 xz, out float incidence) {
 			dot(ref_point - origin, light_up_refdepth.xyz));
 }
 
+float wet_at(vec2 xz) {
+	vec2 uv = xz / ripple_domain.xy + 0.5;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		return 1.0 - ripple_domain.z;
+	}
+	return texture(wet_mask_tex, uv).r;
+}
+
 void main() {
 	vec2 source_dx = dFdx(v_flat_xz);
 	vec2 source_dy = dFdy(v_flat_xz);
@@ -143,5 +154,5 @@ void main() {
 	float concentration = flat_projection_area * source_area / max(refracted_area, 1e-9);
 	float focused_light = max(concentration - 1.0, 0.0);
 	float tone = focused_light / (focused_light + 8.0);
-	out_color = vec4(vec3(incidence * tone), 1.0);
+	out_color = vec4(vec3(incidence * tone * wet_at(v_flat_xz)), 1.0);
 }

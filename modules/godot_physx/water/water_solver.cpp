@@ -204,7 +204,7 @@ void WaterSolverGPU::_rt_free_buffers() {
 			*b = RID();
 		}
 	}
-	RID *texs[] = { &tex_ripple_height, &tex_ocean_height, &tex_caustics };
+	RID *texs[] = { &tex_ripple_height, &tex_ocean_height, &tex_caustics, &tex_wet_mask };
 	for (RID *t : texs) {
 		if (t->is_valid()) {
 			rd->free_rid(*t);
@@ -223,11 +223,43 @@ void WaterSolverGPU::_rt_build_buffers() {
 	a_is_current = true;
 
 	buf_params = rd->uniform_buffer_create(PARAMS_BYTES);
-	buf_state_a = rd->storage_buffer_create(cells * 4 * sizeof(float));
-	buf_state_b = rd->storage_buffer_create(cells * 4 * sizeof(float));
-	buf_height = rd->storage_buffer_create(cells * sizeof(float));
+	// Zero-filled: storage_buffer_create() without data leaves the memory
+	// uninitialized, and the wave equation reads its previous state -- any
+	// NaN left in recycled GPU memory spreads across the whole surface.
+	{
+		Vector<uint8_t> zeros;
+		zeros.resize(cells * 4 * sizeof(float));
+		memset(zeros.ptrw(), 0, zeros.size());
+		buf_state_a = rd->storage_buffer_create(zeros.size(), zeros);
+		buf_state_b = rd->storage_buffer_create(zeros.size(), zeros);
+		zeros.resize(cells * sizeof(float));
+		buf_height = rd->storage_buffer_create(zeros.size(), zeros);
+	}
 	buf_spheres = rd->storage_buffer_create(MAX_SPHERES * 4 * sizeof(float));
 	buf_impulses = rd->storage_buffer_create(MAX_IMPULSES * 4 * sizeof(float));
+
+	// Wet/dry mask, uploaded once. No mask = every cell wet.
+	{
+		PackedByteArray mask = _init_wet_mask;
+		has_wet_mask = mask.size() == cells;
+		if (!has_wet_mask) {
+			mask.resize(cells);
+			memset(mask.ptrw(), 255, cells);
+		} else {
+			uint8_t *mw = mask.ptrw();
+			for (int i = 0; i < cells; i++) {
+				mw[i] = mw[i] ? 255 : 0;
+			}
+		}
+		RD::TextureFormat mask_tf;
+		mask_tf.format = RD::DATA_FORMAT_R8_UNORM;
+		mask_tf.width = n;
+		mask_tf.height = n;
+		mask_tf.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_UPDATE_BIT;
+		Vector<Vector<uint8_t>> mask_data;
+		mask_data.push_back(mask);
+		tex_wet_mask = rd->texture_create(mask_tf, RD::TextureView(), mask_data);
+	}
 
 	auto make_uset = [&](RID p_state_in, RID p_state_out) {
 		const RID by_binding[6] = { buf_params, p_state_in, p_state_out, buf_height, buf_spheres, buf_impulses };
@@ -239,6 +271,12 @@ void WaterSolverGPU::_rt_build_buffers() {
 			u.append_id(by_binding[bnd]);
 			uniforms.push_back(u);
 		}
+		RD::Uniform mask_uniform;
+		mask_uniform.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
+		mask_uniform.binding = 6;
+		mask_uniform.append_id(sampler_linear);
+		mask_uniform.append_id(tex_wet_mask);
+		uniforms.push_back(mask_uniform);
 		return rd->uniform_set_create(uniforms, shader_ripple, 0);
 	};
 	uset_atob = make_uset(buf_state_a, buf_state_b);
@@ -447,10 +485,16 @@ void WaterSolverGPU::_rt_build_caustics_grid() {
 		height_uniform.append_id(i == 0 ? tex_ripple_height : tex_ocean_height);
 		uniforms.push_back(height_uniform);
 	}
+	RD::Uniform mask_uniform;
+	mask_uniform.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
+	mask_uniform.binding = 3;
+	mask_uniform.append_id(sampler_linear);
+	mask_uniform.append_id(tex_wet_mask);
+	uniforms.push_back(mask_uniform);
 	uset_caustics = rd->uniform_set_create(uniforms, shader_caustics, 0);
 }
 
-void WaterSolverGPU::rt_build(Ref<WaterSolverGPU> p_self, int p_grid_resolution, Vector2 p_domain_size, int p_ocean_grid_resolution, Vector2 p_ocean_domain_size, float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_gravity, bool p_caustics_enabled) {
+void WaterSolverGPU::rt_build(Ref<WaterSolverGPU> p_self, int p_grid_resolution, Vector2 p_domain_size, int p_ocean_grid_resolution, Vector2 p_ocean_domain_size, float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_gravity, bool p_caustics_enabled, PackedByteArray p_wet_mask) {
 	if (rd == nullptr || !shaders_ok) {
 		return;
 	}
@@ -465,6 +509,7 @@ void WaterSolverGPU::rt_build(Ref<WaterSolverGPU> p_self, int p_grid_resolution,
 	_init_wave_amplitude = p_wave_amplitude;
 	_init_gravity = p_gravity;
 	_init_caustics_enabled = p_caustics_enabled;
+	_init_wet_mask = p_wet_mask;
 	_rt_build_buffers();
 	built.set_to(true);
 }
@@ -650,6 +695,7 @@ void WaterSolverGPU::rt_render_caustics(Ref<WaterSolverGPU> p_self, Vector3 p_su
 	put_v3(32, p_light_up, p_reference_depth);
 	put_f(48, domain_size.x);
 	put_f(52, domain_size.y);
+	put_f(56, has_wet_mask ? 1.0f : 0.0f);
 	put_f(64, ocean_domain_size.x);
 	put_f(68, ocean_domain_size.y);
 	put_f(72, ocean_grid_resolution);
@@ -790,7 +836,7 @@ void WaterSolver::configure(const Settings &p_settings) {
 		s = SphereSlot();
 	}
 	pending_impulses.clear();
-	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_build).bind(gpu, settings.grid_resolution, settings.domain_size, settings.ocean_grid_resolution, settings.ocean_domain_size, settings.wind_speed, settings.wind_direction, settings.wave_amplitude, settings.gravity, settings.caustics_enabled));
+	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_build).bind(gpu, settings.grid_resolution, settings.domain_size, settings.ocean_grid_resolution, settings.ocean_domain_size, settings.wind_speed, settings.wind_direction, settings.wave_amplitude, settings.gravity, settings.caustics_enabled, settings.wet_mask));
 }
 
 PackedFloat32Array WaterSolver::_pack_spheres() const {
@@ -799,8 +845,8 @@ PackedFloat32Array WaterSolver::_pack_spheres() const {
 		if (!s.enabled) {
 			continue;
 		}
-		out.push_back(s.world_pos.x);
-		out.push_back(s.world_pos.z);
+		out.push_back(s.world_pos.x - settings.grid_center.x);
+		out.push_back(s.world_pos.z - settings.grid_center.y);
 		out.push_back(s.radius);
 		out.push_back(s.strength);
 	}
@@ -810,8 +856,8 @@ PackedFloat32Array WaterSolver::_pack_spheres() const {
 PackedFloat32Array WaterSolver::_pack_impulses() const {
 	PackedFloat32Array out;
 	for (const ImpulseSlot &imp : pending_impulses) {
-		out.push_back(imp.world_pos.x);
-		out.push_back(imp.world_pos.z);
+		out.push_back(imp.world_pos.x - settings.grid_center.x);
+		out.push_back(imp.world_pos.z - settings.grid_center.y);
 		out.push_back(imp.radius);
 		out.push_back(imp.strength);
 	}

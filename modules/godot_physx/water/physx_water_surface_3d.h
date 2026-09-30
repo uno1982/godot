@@ -30,13 +30,14 @@
 
 #pragma once
 
-#include "scene/3d/node_3d.h"
 #include "water_solver.h"
 
+#include "scene/3d/node_3d.h"
+
+class Mesh;
 class MeshInstance3D;
 class ShaderMaterial;
 class Texture2DRD;
-class PlaneMesh;
 class Texture2D;
 
 // The real water surface node: owns a WaterSolver (ripple + FFT ocean
@@ -97,6 +98,15 @@ public:
 	void set_wave_amplitude(float p_amp);
 	float get_wave_amplitude() const { return wave_amplitude; }
 
+	// Optional shape: any flat mesh whose X/Z footprint (node-local) is the
+	// water's outline -- a disc, a kidney bean, a lake with an island. When
+	// set, the ripple grid is fitted to its bounds (domain_size is ignored),
+	// cells outside it are dry land that waves reflect off, and the rendered
+	// surface is the footprint resampled into an even grid clipped to its
+	// outline. Unset = the square domain_size / ocean_domain_size plane.
+	void set_surface_mesh(const Ref<Mesh> &p_mesh);
+	Ref<Mesh> get_surface_mesh() const { return surface_mesh; }
+
 	void set_water_material(const Ref<ShaderMaterial> &p_material);
 	Ref<ShaderMaterial> get_water_material() const { return water_material; }
 
@@ -121,7 +131,10 @@ public:
 	// CPU-side, safe every physics tick -- bilinear samples of the last
 	// texture refresh (see _refresh_textures()'s throttle), summed across
 	// both layers (ripple + ocean), matching what the rendered mesh shows.
+	// Returns -INF over dry cells when a surface_mesh is set.
 	float sample_height(Vector3 p_world_pos) const;
+	// False outside the surface_mesh footprint (always true without one).
+	bool is_wet(Vector3 p_world_pos) const;
 
 	void submit_sphere(int p_owner, Vector3 p_world_pos, float p_radius, float p_strength = 1.0f);
 	void clear_sphere(int p_owner);
@@ -149,7 +162,16 @@ private:
 	float wave_amplitude = 1.0f;
 
 	MeshInstance3D *mesh_instance = nullptr;
-	Ref<PlaneMesh> water_mesh;
+	Ref<Mesh> surface_mesh;
+	Ref<Mesh> water_mesh; // what mesh_instance draws: a PlaneMesh, or the resampled surface_mesh footprint
+
+	// World XZ the simulation grids are centred on (node origin, plus the
+	// footprint's centre when surface_mesh is set), and the ripple domain
+	// actually in use -- both fixed at _rebuild().
+	Vector2 grid_center;
+	Vector2 active_domain_size;
+	// CPU copy of the wet/dry mask for is_wet()/sample_height(); empty = all wet.
+	PackedByteArray wet_mask;
 	Ref<ShaderMaterial> water_material;
 	Ref<Texture2DRD> ripple_height_tex;
 	Ref<Texture2DRD> ocean_height_tex;
@@ -171,6 +193,10 @@ private:
 	static constexpr int REFRESH_EVERY_FRAMES = 4; // throttled CPU cache refresh for sample_height() only -- rendering is unthrottled/automatic via the zero-copy textures
 
 	void _rebuild();
+	// Footprint triangles of surface_mesh in node-local XZ (degenerates dropped).
+	Vector<Vector2> _collect_footprint() const;
+	static PackedByteArray _rasterize_wet_mask(const Vector<Vector2> &p_tris, Vector2 p_center, Vector2 p_domain, int p_n);
+	Ref<Mesh> _build_footprint_mesh(const Vector<Vector2> &p_tris, const Rect2 &p_bounds, int p_cells) const;
 	void _bind_textures();
 	void _refresh_cpu_cache();
 	void _update(double p_delta);

@@ -27,18 +27,48 @@ void main() {
 		return;
 	}
 	int idx = grid_index(c);
+	if (!is_wet(c)) {
+		// Dry (outside the surface mesh's footprint): never simulated. Its
+		// rendered height continues the adjacent water (mean of its wet 3x3
+		// neighbours, last step's values) instead of pinning to WATER_LEVEL:
+		// the surface mesh's rim lies between the last wet and first dry cell
+		// centres, and a flat dry texel there turns every wave crest at the
+		// staircase shoreline into a one-cell sawtooth. Matches the zero-
+		// gradient wall the wet cells see.
+		float sum = 0.0;
+		float count = 0.0;
+		for (int dy = -1; dy <= 1; dy++) {
+			for (int dx = -1; dx <= 1; dx++) {
+				ivec2 nc = clamp(c + ivec2(dx, dy), ivec2(0), ivec2(GRID_N - 1));
+				if (is_wet(nc)) {
+					sum += state_in[grid_index(nc)].x;
+					count += 1.0;
+				}
+			}
+		}
+		state_out[idx] = vec4(0.0);
+		height_out[idx] = WATER_LEVEL + (count > 0.0 ? sum / count : 0.0);
+		return;
+	}
 	vec4 st = state_in[idx];
 	float h = st.x, hp = st.y;
 
 	int xl = max(c.x - 1, 0), xr = min(c.x + 1, GRID_N - 1);
 	int yl = max(c.y - 1, 0), yr = min(c.y + 1, GRID_N - 1);
+	// A dry neighbor is a wall: use this cell's own height in its place (zero
+	// gradient across the shoreline), the same reflecting condition the
+	// clamped grid edge above gives, so waves bounce off the real shore.
+	float h_xl = is_wet(ivec2(xl, c.y)) ? state_in[grid_index(ivec2(xl, c.y))].x : h;
+	float h_xr = is_wet(ivec2(xr, c.y)) ? state_in[grid_index(ivec2(xr, c.y))].x : h;
+	float h_yl = is_wet(ivec2(c.x, yl)) ? state_in[grid_index(ivec2(c.x, yl))].x : h;
+	float h_yr = is_wet(ivec2(c.x, yr)) ? state_in[grid_index(ivec2(c.x, yr))].x : h;
 	// At a local bump (h above its neighbors) this is negative -- the
 	// restoring term below must carry a POSITIVE coefficient so it pulls the
 	// bump back down, not up. Getting this sign backwards was a real bug
 	// caught by the probe test: it turned the restoring force into a runaway
 	// positive-feedback amplifier (a small impulse blew up to 1e8+ within
 	// ~150 steps instead of decaying).
-	float lap = state_in[grid_index(ivec2(xl, c.y))].x + state_in[grid_index(ivec2(xr, c.y))].x + state_in[grid_index(ivec2(c.x, yl))].x + state_in[grid_index(ivec2(c.x, yr))].x - 4.0 * h;
+	float lap = h_xl + h_xr + h_yl + h_yr - 4.0 * h;
 
 	// Explicit damped wave equation, backward-difference damping (h_t ~=
 	// (h-hp)/dt): hn = h*(2-a) - hp*(1-a) + c^2*dt^2*lap(h), a = ALPHA*DT.

@@ -35,6 +35,11 @@ layout(set = 0, binding = 3, std430) restrict buffer HeightOut { float height_ou
 layout(set = 0, binding = 4, std430) restrict buffer Spheres { vec4 spheres[]; };
 layout(set = 0, binding = 5, std430) restrict buffer Impulses { vec4 impulses[]; };
 
+// Wet/dry mask, one texel per ripple cell (R8: 1 = water, 0 = shore/land),
+// rasterized once from PhysXWaterSurface3D::surface_mesh's footprint. All
+// wet when no surface mesh is set. Read with texelFetch only.
+layout(set = 0, binding = 6) uniform sampler2D wet_mask_tex;
+
 #define DOMAIN (domain_dt.xy)
 #define DEPTH (domain_dt.z)
 #define DT (domain_dt.w)
@@ -49,4 +54,8 @@ layout(set = 0, binding = 5, std430) restrict buffer Impulses { vec4 impulses[];
 
 int grid_index(ivec2 c) {
 	return c.y * GRID_N + c.x;
+}
+
+bool is_wet(ivec2 c) {
+	return texelFetch(wet_mask_tex, c, 0).r > 0.5;
 }

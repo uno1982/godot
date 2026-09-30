@@ -435,8 +435,17 @@ wind-driven chop (`wind_speed`, `wind_direction`, `wave_amplitude`, over
 equation over `domain_size` whose wave speed follows `depth` — that bodies
 disturb.
 
+The water is a square by default. Set `surface_mesh` to any flat mesh (a disc
+baked from `CSGCylinder3D`, a kidney bean, a lake with an island) and its X/Z
+footprint becomes the water: the ripple grid fits itself to the outline, waves
+reflect off the shoreline, and the rendered surface is the footprint resampled
+into an even grid, so a coarse or fan-triangulated mesh still animates
+everywhere. The simulation is centred on the node's position; keep the node
+unrotated and unscaled.
+
 `sample_height(position)` returns the same combined surface height on the CPU,
-for buoyancy scripts. Call `submit_sphere()` once per physics tick per floating
+for buoyancy scripts. Outside a `surface_mesh` footprint it returns `-INF`
+(`is_wet()` is false there), so floaters on dry land don't float. Call `submit_sphere()` once per physics tick per floating
 body so it actually pushes the water (`ripple_amplitude` scales the wake), or
 `submit_impulse()` for one-off splashes.
 

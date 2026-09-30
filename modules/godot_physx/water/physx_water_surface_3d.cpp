@@ -31,10 +31,14 @@
 #include "physx_water_surface_3d.h"
 
 #include "core/config/engine.h"
+#include "core/math/face3.h"
 #include "core/object/class_db.h"
+#include "core/templates/hash_map.h"
+#include "core/templates/local_vector.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/material.h"
+#include "scene/resources/mesh.h"
 #include "scene/resources/shader.h"
 #include "scene/resources/texture_rd.h"
 
@@ -73,13 +77,16 @@ uniform sampler2D ripple_height_tex : hint_default_black, filter_linear, repeat_
 uniform sampler2D ocean_height_tex : hint_default_black, filter_linear, repeat_disable;
 uniform vec2 ripple_domain_size = vec2(20.0, 20.0);
 uniform vec2 ocean_domain_size = vec2(40.0, 40.0);
+// World XZ both height fields are centred on (set by PhysXWaterSurface3D).
+uniform vec2 grid_center = vec2(0.0);
 uniform vec4 water_color : source_color = vec4(0.09, 0.32, 0.42, 0.65);
 
 varying vec3 v_world_normal;
 
 float sample_h(vec2 world_xz) {
-	vec2 uv_r = world_xz / ripple_domain_size + 0.5;
-	vec2 uv_o = world_xz / ocean_domain_size + 0.5;
+	vec2 rel = world_xz - grid_center;
+	vec2 uv_r = rel / ripple_domain_size + 0.5;
+	vec2 uv_o = rel / ocean_domain_size + 0.5;
 	return texture(ripple_height_tex, clamp(uv_r, vec2(0.0), vec2(1.0))).r + texture(ocean_height_tex, clamp(uv_o, vec2(0.0), vec2(1.0))).r;
 }
 
@@ -125,6 +132,82 @@ void fragment() {
 }
 )";
 
+// Sign of the X/Z cross product of an up-facing PlaneMesh triangle -- measured
+// from PlaneMesh itself rather than assumed from a winding convention.
+real_t plane_mesh_xz_winding() {
+	Ref<PlaneMesh> ref_plane;
+	ref_plane.instantiate();
+	const Vector<Face3> faces = ref_plane->get_faces();
+	if (faces.is_empty()) {
+		return 1.0;
+	}
+	const Face3 &f = faces[0];
+	const Vector2 a(f.vertex[0].x, f.vertex[0].z), b(f.vertex[1].x, f.vertex[1].z), c(f.vertex[2].x, f.vertex[2].z);
+	return (b - a).cross(c - a) < 0 ? -1.0 : 1.0;
+}
+
+// Inside or on the edge of triangle abc, either winding.
+bool point_in_triangle(const Vector2 &p_p, const Vector2 &p_a, const Vector2 &p_b, const Vector2 &p_c) {
+	const real_t d1 = (p_b - p_a).cross(p_p - p_a);
+	const real_t d2 = (p_c - p_b).cross(p_p - p_b);
+	const real_t d3 = (p_a - p_c).cross(p_p - p_c);
+	const bool has_neg = d1 < 0 || d2 < 0 || d3 < 0;
+	const bool has_pos = d1 > 0 || d2 > 0 || d3 > 0;
+	return !(has_neg && has_pos);
+}
+
+// Liang-Barsky: does segment p0-p1 touch the box [p_min, p_max]?
+bool segment_touches_box(const Vector2 &p_p0, const Vector2 &p_p1, const Vector2 &p_min, const Vector2 &p_max) {
+	real_t t0 = 0.0, t1 = 1.0;
+	const Vector2 d = p_p1 - p_p0;
+	for (int axis = 0; axis < 2; axis++) {
+		const real_t q0 = p_min[axis] - p_p0[axis];
+		const real_t q1 = p_max[axis] - p_p0[axis];
+		if (Math::abs(d[axis]) < (real_t)1e-12) {
+			if (q0 > 0 || q1 < 0) {
+				return false;
+			}
+			continue;
+		}
+		real_t ta = q0 / d[axis];
+		real_t tb = q1 / d[axis];
+		if (ta > tb) {
+			SWAP(ta, tb);
+		}
+		t0 = MAX(t0, ta);
+		t1 = MIN(t1, tb);
+		if (t0 > t1) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// Sutherland-Hodgman: clip a convex polygon to a counter-clockwise triangle.
+void clip_to_triangle(LocalVector<Vector2> &r_poly, const Vector2 p_tri[3]) {
+	LocalVector<Vector2> out;
+	for (int e = 0; e < 3 && r_poly.size() >= 3; e++) {
+		const Vector2 a = p_tri[e];
+		const Vector2 edge = p_tri[(e + 1) % 3] - a;
+		out.clear();
+		for (uint32_t i = 0; i < r_poly.size(); i++) {
+			const Vector2 cur = r_poly[i];
+			const Vector2 prev = r_poly[(i + r_poly.size() - 1) % r_poly.size()];
+			const real_t side_cur = edge.cross(cur - a);
+			const real_t side_prev = edge.cross(prev - a);
+			if (side_cur >= 0) {
+				if (side_prev < 0) {
+					out.push_back(prev + (cur - prev) * (side_prev / (side_prev - side_cur)));
+				}
+				out.push_back(cur);
+			} else if (side_prev >= 0) {
+				out.push_back(prev + (cur - prev) * (side_prev / (side_prev - side_cur)));
+			}
+		}
+		r_poly = out;
+	}
+}
+
 } // namespace
 
 void PhysXWaterSurface3D::_bind_methods() {
@@ -152,6 +235,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_wave_amplitude", "amplitude"), &PhysXWaterSurface3D::set_wave_amplitude);
 	ClassDB::bind_method(D_METHOD("get_wave_amplitude"), &PhysXWaterSurface3D::get_wave_amplitude);
 
+	ClassDB::bind_method(D_METHOD("set_surface_mesh", "mesh"), &PhysXWaterSurface3D::set_surface_mesh);
+	ClassDB::bind_method(D_METHOD("get_surface_mesh"), &PhysXWaterSurface3D::get_surface_mesh);
 	ClassDB::bind_method(D_METHOD("set_water_material", "material"), &PhysXWaterSurface3D::set_water_material);
 	ClassDB::bind_method(D_METHOD("get_water_material"), &PhysXWaterSurface3D::get_water_material);
 
@@ -168,10 +253,12 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_caustics_half_extent"), &PhysXWaterSurface3D::get_caustics_half_extent);
 
 	ClassDB::bind_method(D_METHOD("sample_height", "world_pos"), &PhysXWaterSurface3D::sample_height);
+	ClassDB::bind_method(D_METHOD("is_wet", "world_pos"), &PhysXWaterSurface3D::is_wet);
 	ClassDB::bind_method(D_METHOD("submit_sphere", "owner", "world_pos", "radius", "strength"), &PhysXWaterSurface3D::submit_sphere, DEFVAL(1.0f));
 	ClassDB::bind_method(D_METHOD("clear_sphere", "owner"), &PhysXWaterSurface3D::clear_sphere);
 	ClassDB::bind_method(D_METHOD("submit_impulse", "world_pos", "radius", "strength"), &PhysXWaterSurface3D::submit_impulse);
 
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "surface_mesh", PROPERTY_HINT_RESOURCE_TYPE, "Mesh"), "set_surface_mesh", "get_surface_mesh");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "domain_size"), "set_domain_size", "get_domain_size");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "grid_resolution"), "set_grid_resolution", "get_grid_resolution");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "depth"), "set_depth", "get_depth");
@@ -257,6 +344,11 @@ void PhysXWaterSurface3D::set_wave_amplitude(float p_amp) {
 	_rebuild();
 }
 
+void PhysXWaterSurface3D::set_surface_mesh(const Ref<Mesh> &p_mesh) {
+	surface_mesh = p_mesh;
+	_rebuild();
+}
+
 void PhysXWaterSurface3D::set_water_material(const Ref<ShaderMaterial> &p_material) {
 	water_material = p_material;
 	if (mesh_instance != nullptr && water_material.is_valid()) {
@@ -319,17 +411,48 @@ void PhysXWaterSurface3D::_rebuild() {
 	}
 	mesh_instance->set_material_override(water_material);
 
-	Ref<PlaneMesh> plane;
-	plane.instantiate();
-	plane->set_size(ocean_domain_size);
-	// Subdivisions, not vertex count -- PlaneMesh's own convention.
-	plane->set_subdivide_width(ocean_grid_resolution);
-	plane->set_subdivide_depth(ocean_grid_resolution);
-	water_mesh = plane;
+	// Shape: a surface_mesh footprint fits the ripple grid to its bounds and
+	// masks everything outside it dry; without one, the plain square domain.
+	Vector2 local_center;
+	active_domain_size = domain_size;
+	wet_mask.clear();
+	water_mesh.unref();
+	if (surface_mesh.is_valid()) {
+		const Vector<Vector2> tris = _collect_footprint();
+		if (tris.is_empty()) {
+			WARN_PRINT("PhysXWaterSurface3D: surface_mesh has no triangles with any X/Z extent; using the square domain instead.");
+		} else {
+			Rect2 bounds(tris[0], Vector2());
+			for (const Vector2 &v : tris) {
+				bounds.expand_to(v);
+			}
+			local_center = bounds.get_center();
+			// One dry cell of margin on each side, so the shoreline never sits
+			// on the grid edge.
+			const real_t side = MAX(bounds.size.x, bounds.size.y);
+			const real_t padded = side * (real_t)grid_resolution / (real_t)MAX(grid_resolution - 2, 1);
+			active_domain_size = Vector2(padded, padded);
+			wet_mask = _rasterize_wet_mask(tris, local_center, active_domain_size, grid_resolution);
+			water_mesh = _build_footprint_mesh(tris, bounds, MAX(grid_resolution, ocean_grid_resolution));
+		}
+	}
+	if (water_mesh.is_null()) {
+		Ref<PlaneMesh> plane;
+		plane.instantiate();
+		plane->set_size(ocean_domain_size);
+		// Subdivisions, not vertex count -- PlaneMesh's own convention.
+		plane->set_subdivide_width(ocean_grid_resolution);
+		plane->set_subdivide_depth(ocean_grid_resolution);
+		water_mesh = plane;
+	}
 	mesh_instance->set_mesh(water_mesh);
 
-	water_material->set_shader_parameter("ripple_domain_size", domain_size);
+	const Vector3 origin = get_global_position();
+	grid_center = Vector2(origin.x, origin.z) + local_center;
+
+	water_material->set_shader_parameter("ripple_domain_size", active_domain_size);
 	water_material->set_shader_parameter("ocean_domain_size", ocean_domain_size);
+	water_material->set_shader_parameter("grid_center", grid_center);
 
 	// NOTIFICATION_INTERNAL_PHYSICS_PROCESS fires in the editor too, not just
 	// Play -- same gotcha PhysXVehicle3D/PhysXDestructible3D already guard
@@ -348,7 +471,9 @@ void PhysXWaterSurface3D::_rebuild() {
 
 	WaterSolver::Settings s;
 	s.grid_resolution = grid_resolution;
-	s.domain_size = domain_size;
+	s.domain_size = active_domain_size;
+	s.grid_center = grid_center;
+	s.wet_mask = wet_mask;
 	s.depth = depth;
 	s.damping = damping;
 	s.ripple_amplitude = ripple_amplitude;
@@ -385,7 +510,7 @@ void PhysXWaterSurface3D::_update(double p_delta) {
 		_bind_textures();
 	}
 	if (solver.is_available() && caustics_enabled) {
-		solver.render_caustics(get_global_position(), caustics_sun_direction, caustics_reference_depth);
+		solver.render_caustics(Vector3(grid_center.x, get_global_position().y, grid_center.y), caustics_sun_direction, caustics_reference_depth);
 	}
 	frames_since_refresh++;
 	if (frames_since_refresh >= REFRESH_EVERY_FRAMES) {
@@ -451,9 +576,225 @@ float PhysXWaterSurface3D::_bilinear_sample(const Vector<float> &p_grid, int p_n
 }
 
 float PhysXWaterSurface3D::sample_height(Vector3 p_world_pos) const {
-	const float ripple = _bilinear_sample(cached_ripple_height, cached_ripple_n, cached_ripple_domain, p_world_pos.x, p_world_pos.z);
-	const float ocean = _bilinear_sample(cached_ocean_height, cached_ocean_n, cached_ocean_domain, p_world_pos.x, p_world_pos.z);
+	if (!is_wet(p_world_pos)) {
+		return -Math::INF;
+	}
+	const float x = p_world_pos.x - grid_center.x;
+	const float z = p_world_pos.z - grid_center.y;
+	const float ripple = _bilinear_sample(cached_ripple_height, cached_ripple_n, cached_ripple_domain, x, z);
+	const float ocean = _bilinear_sample(cached_ocean_height, cached_ocean_n, cached_ocean_domain, x, z);
 	return water_level + ripple + ocean;
+}
+
+bool PhysXWaterSurface3D::is_wet(Vector3 p_world_pos) const {
+	if (wet_mask.is_empty()) {
+		return true;
+	}
+	const int n = grid_resolution;
+	const int gx = (int)Math::floor(((p_world_pos.x - grid_center.x) / active_domain_size.x + 0.5f) * n);
+	const int gz = (int)Math::floor(((p_world_pos.z - grid_center.y) / active_domain_size.y + 0.5f) * n);
+	if (gx < 0 || gz < 0 || gx >= n || gz >= n || wet_mask.size() != n * n) {
+		return false;
+	}
+	return wet_mask[gz * n + gx] != 0;
+}
+
+Vector<Vector2> PhysXWaterSurface3D::_collect_footprint() const {
+	Vector<Vector2> tris;
+	if (surface_mesh.is_null()) {
+		return tris;
+	}
+	// Only up-facing triangles: a closed mesh (a baked CSG disc has a top and
+	// a bottom) would otherwise cover its footprint twice. A mesh with no
+	// up-facing triangles at all (flipped winding) falls back to every face.
+	const real_t up = plane_mesh_xz_winding();
+	const Vector<Face3> faces = surface_mesh->get_faces();
+	Vector<Vector2> any_facing;
+	for (const Face3 &f : faces) {
+		const Vector2 a(f.vertex[0].x, f.vertex[0].z);
+		const Vector2 b(f.vertex[1].x, f.vertex[1].z);
+		const Vector2 c(f.vertex[2].x, f.vertex[2].z);
+		const real_t area = (b - a).cross(c - a);
+		if (Math::abs(area) < (real_t)1e-8) {
+			continue; // no X/Z area (degenerate, or a vertical face)
+		}
+		Vector<Vector2> &dst = (area * up > 0) ? tris : any_facing;
+		dst.push_back(a);
+		dst.push_back(b);
+		dst.push_back(c);
+	}
+	if (tris.is_empty()) {
+		return any_facing;
+	}
+	return tris;
+}
+
+PackedByteArray PhysXWaterSurface3D::_rasterize_wet_mask(const Vector<Vector2> &p_tris, Vector2 p_center, Vector2 p_domain, int p_n) {
+	// A cell is wet when its centre lies inside any footprint triangle -- the
+	// same cell-centre convention as water_ripple.glsl's xz.
+	PackedByteArray mask;
+	mask.resize(p_n * p_n);
+	memset(mask.ptrw(), 0, mask.size());
+	uint8_t *mw = mask.ptrw();
+	const Vector2 cell = p_domain / (real_t)p_n;
+	const Vector2 grid_min = p_center - p_domain * 0.5f;
+	for (int t = 0; t + 2 < p_tris.size(); t += 3) {
+		const Vector2 a = p_tris[t], b = p_tris[t + 1], c = p_tris[t + 2];
+		const Vector2 lo = a.min(b).min(c);
+		const Vector2 hi = a.max(b).max(c);
+		const int x0 = CLAMP((int)Math::floor((lo.x - grid_min.x) / cell.x), 0, p_n - 1);
+		const int x1 = CLAMP((int)Math::floor((hi.x - grid_min.x) / cell.x), 0, p_n - 1);
+		const int z0 = CLAMP((int)Math::floor((lo.y - grid_min.y) / cell.y), 0, p_n - 1);
+		const int z1 = CLAMP((int)Math::floor((hi.y - grid_min.y) / cell.y), 0, p_n - 1);
+		for (int z = z0; z <= z1; z++) {
+			for (int x = x0; x <= x1; x++) {
+				const Vector2 p = grid_min + Vector2(x + 0.5f, z + 0.5f) * cell;
+				if (point_in_triangle(p, a, b, c)) {
+					mw[z * p_n + x] = 1;
+				}
+			}
+		}
+	}
+	return mask;
+}
+
+Ref<Mesh> PhysXWaterSurface3D::_build_footprint_mesh(const Vector<Vector2> &p_tris, const Rect2 &p_bounds, int p_cells) const {
+	// Resample the footprint into an even grid so the height fields have
+	// vertices to displace everywhere (a CSG disc is a fan of long slivers
+	// with no interior vertices). Cells no triangle edge passes through are
+	// whole quads, kept or dropped by their centre; cells an edge touches are
+	// clipped against each overlapping triangle. A quad cell's edges are
+	// never crossed by a triangle edge, so they carry no extra vertices and
+	// meet their clipped neighbours without T-junctions.
+	const real_t side = MAX(p_bounds.size.x, p_bounds.size.y);
+	const real_t cs = side / (real_t)MAX(p_cells, 1);
+	const int nx = MAX((int)Math::ceil(p_bounds.size.x / cs), 1);
+	const int nz = MAX((int)Math::ceil(p_bounds.size.y / cs), 1);
+	const Vector2 origin = p_bounds.position;
+
+	const int tri_count = p_tris.size() / 3;
+	LocalVector<LocalVector<int>> cell_tris;
+	cell_tris.resize(nx * nz);
+	LocalVector<uint8_t> edge_cell;
+	edge_cell.resize(nx * nz);
+	memset(edge_cell.ptr(), 0, edge_cell.size());
+	const real_t eps = cs * (real_t)1e-4;
+	auto cell_range = [&](const Vector2 &p_lo, const Vector2 &p_hi, int &r_x0, int &r_x1, int &r_z0, int &r_z1) {
+		r_x0 = CLAMP((int)Math::floor((p_lo.x - eps - origin.x) / cs), 0, nx - 1);
+		r_x1 = CLAMP((int)Math::floor((p_hi.x + eps - origin.x) / cs), 0, nx - 1);
+		r_z0 = CLAMP((int)Math::floor((p_lo.y - eps - origin.y) / cs), 0, nz - 1);
+		r_z1 = CLAMP((int)Math::floor((p_hi.y + eps - origin.y) / cs), 0, nz - 1);
+	};
+	for (int t = 0; t < tri_count; t++) {
+		const Vector2 v[3] = { p_tris[t * 3], p_tris[t * 3 + 1], p_tris[t * 3 + 2] };
+		int x0, x1, z0, z1;
+		cell_range(v[0].min(v[1]).min(v[2]), v[0].max(v[1]).max(v[2]), x0, x1, z0, z1);
+		for (int z = z0; z <= z1; z++) {
+			for (int x = x0; x <= x1; x++) {
+				cell_tris[z * nx + x].push_back(t);
+			}
+		}
+		for (int e = 0; e < 3; e++) {
+			const Vector2 p0 = v[e], p1 = v[(e + 1) % 3];
+			cell_range(p0.min(p1), p0.max(p1), x0, x1, z0, z1);
+			for (int z = z0; z <= z1; z++) {
+				for (int x = x0; x <= x1; x++) {
+					const Vector2 bmin = origin + Vector2(x, z) * cs - Vector2(eps, eps);
+					const Vector2 bmax = origin + Vector2(x + 1, z + 1) * cs + Vector2(eps, eps);
+					if (segment_touches_box(p0, p1, bmin, bmax)) {
+						edge_cell[z * nx + x] = 1;
+					}
+				}
+			}
+		}
+	}
+
+	const real_t plane_winding = plane_mesh_xz_winding();
+
+	PackedVector3Array verts;
+	PackedVector3Array normals;
+	PackedVector2Array uvs;
+	PackedInt32Array indices;
+	HashMap<Vector2i, int> vertex_ids;
+	auto vertex_id = [&](const Vector2 &p_v) {
+		const Vector2i key((int)Math::round(p_v.x * 10000.0f), (int)Math::round(p_v.y * 10000.0f));
+		if (const int *found = vertex_ids.getptr(key)) {
+			return *found;
+		}
+		const int id = verts.size();
+		verts.push_back(Vector3(p_v.x, 0.0f, p_v.y));
+		normals.push_back(Vector3(0, 1, 0));
+		uvs.push_back((p_v - origin) / side);
+		vertex_ids.insert(key, id);
+		return id;
+	};
+	auto add_triangle = [&](const Vector2 &p_a, Vector2 p_b, Vector2 p_c) {
+		const real_t area = (p_b - p_a).cross(p_c - p_a);
+		if (Math::abs(area) < cs * cs * (real_t)1e-6) {
+			return;
+		}
+		if ((area < 0) != (plane_winding < 0)) {
+			SWAP(p_b, p_c);
+		}
+		indices.push_back(vertex_id(p_a));
+		indices.push_back(vertex_id(p_b));
+		indices.push_back(vertex_id(p_c));
+	};
+
+	LocalVector<Vector2> poly;
+	for (int z = 0; z < nz; z++) {
+		for (int x = 0; x < nx; x++) {
+			const int ci = z * nx + x;
+			const Vector2 c00 = origin + Vector2(x, z) * cs;
+			const Vector2 c10 = origin + Vector2(x + 1, z) * cs;
+			const Vector2 c11 = origin + Vector2(x + 1, z + 1) * cs;
+			const Vector2 c01 = origin + Vector2(x, z + 1) * cs;
+			if (!edge_cell[ci]) {
+				const Vector2 center = (c00 + c11) * 0.5f;
+				bool inside = false;
+				for (int t : cell_tris[ci]) {
+					if (point_in_triangle(center, p_tris[t * 3], p_tris[t * 3 + 1], p_tris[t * 3 + 2])) {
+						inside = true;
+						break;
+					}
+				}
+				if (inside) {
+					add_triangle(c00, c10, c11);
+					add_triangle(c00, c11, c01);
+				}
+				continue;
+			}
+			for (int t : cell_tris[ci]) {
+				Vector2 tri[3] = { p_tris[t * 3], p_tris[t * 3 + 1], p_tris[t * 3 + 2] };
+				if ((tri[1] - tri[0]).cross(tri[2] - tri[0]) < 0) {
+					SWAP(tri[1], tri[2]);
+				}
+				poly.clear();
+				poly.push_back(c00);
+				poly.push_back(c10);
+				poly.push_back(c11);
+				poly.push_back(c01);
+				clip_to_triangle(poly, tri);
+				for (uint32_t i = 1; i + 1 < poly.size(); i++) {
+					add_triangle(poly[0], poly[i], poly[i + 1]);
+				}
+			}
+		}
+	}
+
+	Ref<ArrayMesh> mesh;
+	mesh.instantiate();
+	if (indices.is_empty()) {
+		return mesh;
+	}
+	Array arrays;
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = verts;
+	arrays[Mesh::ARRAY_NORMAL] = normals;
+	arrays[Mesh::ARRAY_TEX_UV] = uvs;
+	arrays[Mesh::ARRAY_INDEX] = indices;
+	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+	return mesh;
 }
 
 void PhysXWaterSurface3D::submit_sphere(int p_owner, Vector3 p_world_pos, float p_radius, float p_strength) {

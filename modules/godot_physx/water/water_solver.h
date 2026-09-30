@@ -108,8 +108,10 @@ public:
 	float foam_persistence = 2.5f;
 	bool foam_enabled = true;
 	float shore_foam_band = 0.5f;
+	float shore_undertow = 0.3f;
 	RID tex_shore_foam; // R32F shore foam 0..1 on the ripple grid, persists across steps
-	RID buf_shore_foam_params, uset_shore_foam;
+	RID tex_shore_foam_tmp; // scratch for the foam's advection (see water_shore_foam.glsl)
+	RID buf_shore_foam_params, buf_shore_foam_copy_params, uset_shore_foam, uset_shore_foam_copy;
 	// Still-water depth per ripple cell (R16F metres, <= 0 dry -- see
 	// water_inc.glsl), bound to the ripple pass and the caustics pass, and
 	// the ocean chop's shallow-water fade derived from it (R8, sampled by the
@@ -191,7 +193,7 @@ public:
 	// pipeline was never built (caustics_enabled false at configure() time).
 	void rt_render_caustics(Ref<WaterSolverGPU> p_self, Vector3 p_sun_direction, Vector3 p_light_right, Vector3 p_light_up, Vector3 p_origin, float p_half_extent, float p_reference_depth, float p_ior);
 	void rt_free(Ref<WaterSolverGPU> p_self);
-	void rt_set_foam(Ref<WaterSolverGPU> p_self, bool p_enabled, float p_choppiness, float p_threshold, float p_persistence, float p_shore_band);
+	void rt_set_foam(Ref<WaterSolverGPU> p_self, bool p_enabled, float p_choppiness, float p_threshold, float p_persistence, float p_shore_band, float p_shore_undertow);
 
 	// Async readback callbacks: RenderingDevice invokes them with the data as
 	// the runtime arg; Callable::bind APPENDS the bound args, so the data
@@ -340,8 +342,9 @@ public:
 	// choppiness the materials displace by) and fade time; applies live, no
 	// rebuild. Off clears the foam texture.
 	// p_shore_band: still-water depth (m) within which waves arriving over the
-	// shallows leave shore foam (0 = none).
-	void set_foam_settings(bool p_enabled, float p_choppiness, float p_threshold, float p_persistence, float p_shore_band);
+	// shallows leave shore foam (0 = none). p_shore_undertow: steady seaward
+	// drift (m/s) the backwash drags that foam back out with.
+	void set_foam_settings(bool p_enabled, float p_choppiness, float p_threshold, float p_persistence, float p_shore_band, float p_shore_undertow);
 	// R32F shore foam (0..1) on the ripple grid; valid once is_available().
 	RID get_shore_foam_texture_rd_rid() const;
 	// Dry cell that's a wall, not a shore (see Settings::cell_depth).

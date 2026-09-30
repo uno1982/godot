@@ -139,6 +139,11 @@ public:
 	// from the seabed) leave a foamy sheet at the waterline. 0 = none.
 	void set_shore_foam_band(float p_depth);
 	float get_shore_foam_band() const { return shore_foam_band; }
+	// Shore foam moves with the water: each crest pushes it up the beach and
+	// the backwash drags it back out, plus this steady seaward undertow (m/s)
+	// that slides it back into the water over time.
+	void set_shore_undertow(float p_speed);
+	float get_shore_undertow() const { return shore_undertow; }
 
 	// Optional shape: any flat mesh whose X/Z footprint (node-local) is the
 	// water's outline -- a disc, a kidney bean, a lake with an island. When
@@ -223,6 +228,7 @@ private:
 	float foam_threshold = 0.7f;
 	float foam_persistence = 2.5f;
 	float shore_foam_band = 0.5f;
+	float shore_undertow = 0.3f;
 	// Longest side of the surface_mesh footprint (0 = none), for auto fetch.
 	real_t footprint_extent = 0.0;
 

@@ -459,8 +459,10 @@ bed: each ripple cell's depth is measured once from the floor (static bodies in
 slowing over shallows, the shoreline falls wherever the ground rises above the
 water, and the ocean chop fades out over the last `shallow_fade_depth` metres.
 Without it, the constant `depth` applies everywhere. On a beach, each arriving
-crest also leaves a thin foam sheet at the waterline (`shore_foam_band`), the
-shallows turn milky, and the surface feathers out onto the sand.
+crest also leaves a thin foam sheet at the waterline (`shore_foam_band`) that
+surges in with the wave and slides back out with the backwash and undertow
+(`shore_undertow`), the shallows turn milky, and the surface feathers out onto
+the sand.
 
 `sample_height(position)` returns the same combined surface height on the CPU,
 for buoyancy scripts. Over dry cells (outside a `surface_mesh` footprint, or

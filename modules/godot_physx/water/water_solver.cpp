@@ -55,7 +55,7 @@ constexpr int OCEAN_EVOLVE_PARAMS_BYTES = 32; // 2 * vec4 -- see water_spectrum_
 constexpr int FFT_PARAMS_BYTES = 16; // 1 * ivec4 -- see water_fft.glsl's Params
 constexpr int BLIT_PARAMS_BYTES = 16; // 1 * ivec4 -- see water_blit_*.glsl's Params
 constexpr int FOAM_PARAMS_BYTES = 32; // vec4 + ivec4 -- see water_foam.glsl's Params
-constexpr int SHORE_FOAM_PARAMS_BYTES = 48; // 2 * vec4 + ivec4 -- see water_shore_foam.glsl's Params
+constexpr int SHORE_FOAM_PARAMS_BYTES = 64; // 3 * vec4 + ivec4 -- see water_shore_foam.glsl's Params
 constexpr int CAUSTICS_PARAMS_BYTES = 112; // 7 * vec4, std140 -- see water_caustics_map.glsl's Params
 constexpr uint32_t GROUP = 8; // matches every water_*.glsl's local_size_x/y
 
@@ -176,7 +176,7 @@ void WaterSolverGPU::_rt_free_buffers() {
 	RID *usets[] = { &uset_atob, &uset_btoa, &uset_spectrum_init, &uset_spectrum_evolve,
 		&uset_fft_spec_to_a, &uset_fft_atob, &uset_fft_btoa, &uset_fft_dz_to_c, &uset_fft_ctod, &uset_fft_dtoc,
 		&uset_fft_c_to_e, &uset_fft_etof, &uset_fft_ftoe, &uset_fft_d_to_g, &uset_fft_gtoh, &uset_fft_htog,
-		&uset_blit_ripple, &uset_blit_ocean, &uset_caustics, &uset_foam, &uset_shore_foam };
+		&uset_blit_ripple, &uset_blit_ocean, &uset_caustics, &uset_foam, &uset_shore_foam, &uset_shore_foam_copy };
 	for (RID *u : usets) {
 		if (u->is_valid()) {
 			rd->free_rid(*u);
@@ -207,14 +207,14 @@ void WaterSolverGPU::_rt_free_buffers() {
 	RID *bufs[] = { &buf_params, &buf_state_a, &buf_state_b, &buf_height, &buf_spheres, &buf_impulses,
 		&buf_ocean_init_params, &buf_ocean_evolve_params, &buf_fft_params, &buf_h0, &buf_ocean_spec, &buf_fft_a, &buf_fft_b,
 		&buf_ocean_spec_dz, &buf_fft_c, &buf_fft_d, &buf_ocean_spec_c, &buf_fft_e, &buf_fft_f, &buf_ocean_spec_d, &buf_fft_g, &buf_fft_h,
-		&buf_blit_ripple_params, &buf_blit_ocean_params, &buf_caustics_params, &buf_foam_params, &buf_shore_foam_params };
+		&buf_blit_ripple_params, &buf_blit_ocean_params, &buf_caustics_params, &buf_foam_params, &buf_shore_foam_params, &buf_shore_foam_copy_params };
 	for (RID *b : bufs) {
 		if (b->is_valid()) {
 			rd->free_rid(*b);
 			*b = RID();
 		}
 	}
-	RID *texs[] = { &tex_ripple_height, &tex_ocean_height, &tex_ocean_disp, &tex_ocean_deriv, &tex_ocean_foam, &tex_shore_foam, &tex_caustics, &tex_cell_depth, &tex_ocean_fade };
+	RID *texs[] = { &tex_ripple_height, &tex_ocean_height, &tex_ocean_disp, &tex_ocean_deriv, &tex_ocean_foam, &tex_shore_foam, &tex_shore_foam_tmp, &tex_caustics, &tex_cell_depth, &tex_ocean_fade };
 	for (RID *t : texs) {
 		if (t->is_valid()) {
 			rd->free_rid(*t);
@@ -468,14 +468,27 @@ void WaterSolverGPU::_rt_build_buffers() {
 		Vector<Vector<uint8_t>> shore_data;
 		shore_data.push_back(zeros);
 		tex_shore_foam = rd->texture_create(shore_tf, RD::TextureView(), shore_data);
+		tex_shore_foam_tmp = rd->texture_create(shore_tf, RD::TextureView(), shore_data);
 	}
 	buf_shore_foam_params = rd->uniform_buffer_create(SHORE_FOAM_PARAMS_BYTES);
+	buf_shore_foam_copy_params = rd->uniform_buffer_create(SHORE_FOAM_PARAMS_BYTES);
 	{
+		// Copy-mode params never change: just n and the copy flag.
+		int32_t copy_res[4] = { n, 1, 1, 0 };
+		Vector<uint8_t> cb;
+		cb.resize(SHORE_FOAM_PARAMS_BYTES);
+		memset(cb.ptrw(), 0, cb.size());
+		memcpy(cb.ptrw() + 48, copy_res, sizeof(copy_res));
+		rd->buffer_update(buf_shore_foam_copy_params, 0, SHORE_FOAM_PARAMS_BYTES, cb.ptr());
+	}
+	// Advect + inject reads tex_shore_foam, writes the scratch; the copy
+	// pass writes it back so materials always sample tex_shore_foam.
+	auto make_shore_uset = [&](RID p_params, RID p_src, RID p_dst) {
 		Vector<RD::Uniform> uniforms;
 		RD::Uniform u0;
 		u0.uniform_type = RD::UNIFORM_TYPE_UNIFORM_BUFFER;
 		u0.binding = 0;
-		u0.append_id(buf_shore_foam_params);
+		u0.append_id(p_params);
 		uniforms.push_back(u0);
 		const RID sampled[3] = { tex_cell_depth, tex_ripple_height, tex_ocean_height };
 		for (int i = 0; i < 3; i++) {
@@ -486,13 +499,18 @@ void WaterSolverGPU::_rt_build_buffers() {
 			u.append_id(sampled[i]);
 			uniforms.push_back(u);
 		}
-		RD::Uniform u4;
-		u4.uniform_type = RD::UNIFORM_TYPE_IMAGE;
-		u4.binding = 4;
-		u4.append_id(tex_shore_foam);
-		uniforms.push_back(u4);
-		uset_shore_foam = rd->uniform_set_create(uniforms, shader_shore_foam, 0);
-	}
+		const RID images[2] = { p_src, p_dst };
+		for (int i = 0; i < 2; i++) {
+			RD::Uniform u;
+			u.uniform_type = RD::UNIFORM_TYPE_IMAGE;
+			u.binding = 4 + i;
+			u.append_id(images[i]);
+			uniforms.push_back(u);
+		}
+		return rd->uniform_set_create(uniforms, shader_shore_foam, 0);
+	};
+	uset_shore_foam = make_shore_uset(buf_shore_foam_params, tex_shore_foam, tex_shore_foam_tmp);
+	uset_shore_foam_copy = make_shore_uset(buf_shore_foam_copy_params, tex_shore_foam_tmp, tex_shore_foam);
 
 	// h0 depends only on static settings (wind/domain/amplitude) -- generate
 	// it once here, not every step.
@@ -797,9 +815,10 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, double p_delta, float p
 	// Shore foam over the shallows, on the ripple grid. Lingers a bit longer
 	// than the whitecaps.
 	{
-		float sp[8] = {
+		float sp[12] = {
 			Math::exp(-(float)p_delta / MAX(foam_persistence * 1.5f, 0.01f)), shore_foam_band, 0.2f, p_water_level,
-			domain_size.x, domain_size.y, ocean_domain_size.x, ocean_domain_size.y
+			domain_size.x, domain_size.y, ocean_domain_size.x, ocean_domain_size.y,
+			(float)p_delta, domain_size.x / (float)n, shore_undertow, p_gravity
 		};
 		int32_t sr[4] = { n, (foam_enabled && shore_foam_band > 0.0f) ? 1 : 0, 0, 0 };
 		Vector<uint8_t> sb;
@@ -810,6 +829,9 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, double p_delta, float p
 		RD::ComputeListID cl = rd->compute_list_begin();
 		rd->compute_list_bind_compute_pipeline(cl, pipeline_shore_foam);
 		rd->compute_list_bind_uniform_set(cl, uset_shore_foam, 0);
+		rd->compute_list_dispatch(cl, groups_for(n), groups_for(n), 1);
+		rd->compute_list_add_barrier(cl);
+		rd->compute_list_bind_uniform_set(cl, uset_shore_foam_copy, 0);
 		rd->compute_list_dispatch(cl, groups_for(n), groups_for(n), 1);
 		rd->compute_list_end();
 	}
@@ -948,9 +970,10 @@ void WaterSolverGPU::rt_on_ocean_height(const PackedByteArray &p_data, Ref<Water
 	}
 }
 
-void WaterSolverGPU::rt_set_foam(Ref<WaterSolverGPU> p_self, bool p_enabled, float p_choppiness, float p_threshold, float p_persistence, float p_shore_band) {
+void WaterSolverGPU::rt_set_foam(Ref<WaterSolverGPU> p_self, bool p_enabled, float p_choppiness, float p_threshold, float p_persistence, float p_shore_band, float p_shore_undertow) {
 	foam_enabled = p_enabled;
 	shore_foam_band = p_shore_band;
+	shore_undertow = p_shore_undertow;
 	foam_choppiness = p_choppiness;
 	foam_threshold = p_threshold;
 	foam_persistence = p_persistence;
@@ -1168,8 +1191,8 @@ RID WaterSolver::get_ocean_foam_texture_rd_rid() const {
 	return gpu->tex_ocean_foam;
 }
 
-void WaterSolver::set_foam_settings(bool p_enabled, float p_choppiness, float p_threshold, float p_persistence, float p_shore_band) {
-	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_foam).bind(gpu, p_enabled, p_choppiness, p_threshold, p_persistence, p_shore_band));
+void WaterSolver::set_foam_settings(bool p_enabled, float p_choppiness, float p_threshold, float p_persistence, float p_shore_band, float p_shore_undertow) {
+	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_foam).bind(gpu, p_enabled, p_choppiness, p_threshold, p_persistence, p_shore_band, p_shore_undertow));
 }
 
 RID WaterSolver::get_shore_foam_texture_rd_rid() const {

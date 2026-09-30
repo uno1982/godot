@@ -188,6 +188,12 @@ vec3 surface_normal_pixel(vec2 world_xz) {
 	vec2 du = vec2(e) / ripple_domain_size;
 	float rx = (texture(ripple_height_tex, cuv_r + vec2(du.x, 0.0)).r - texture(ripple_height_tex, cuv_r - vec2(du.x, 0.0)).r) / (2.0 * e);
 	float rz = (texture(ripple_height_tex, cuv_r + vec2(0.0, du.y)).r - texture(ripple_height_tex, cuv_r - vec2(0.0, du.y)).r) / (2.0 * e);
+	// The ripple layer steps at the waterline (dry cells report their wet
+	// neighbours' mean), which the sun picked out as bright streaks along the
+	// shore; over the sand the swash film just follows the ground.
+	float wet_w = smoothstep(0.0, 0.15, texture(shore_depth_tex, cuv_r).r);
+	rx *= wet_w;
+	rz *= wet_w;
 	vec3 tx = vec3(1.0 + s * der.z, der.x * fade + rx, s * dxz);
 	vec3 tz = vec3(s * dxz, der.y * fade + rz, 1.0 + s * der.w);
 	return normalize(cross(tz, tx));

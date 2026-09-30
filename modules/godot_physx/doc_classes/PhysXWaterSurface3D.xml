@@ -89,6 +89,9 @@
 		<member name="caustics_sun_direction" type="Vector3" setter="set_caustics_sun_direction" getter="get_caustics_sun_direction" default="Vector3(-0.35, -1, -0.25)">
 			World-space direction that light travels from the source toward the water. It need not be normalized.
 		</member>
+		<member name="choppiness" type="float" setter="set_choppiness" getter="get_choppiness" default="1.0">
+			Tessendorf horizontal displacement of the ocean layer: pulls the surface toward the wave crests so they sharpen and the troughs flatten, the way real wind waves look. [code]0[/code] is a pure height field; around [code]1[/code] is realistic, and much higher can fold the surface through itself. Fades out over the shallows with the rest of the ocean chop. Where the displacement squeezes the surface the default material draws whitecap foam (its [code]foam_threshold[/code] and [code]foam_color[/code] shader parameters tune it). [method sample_height] accounts for the displacement.
+		</member>
 		<member name="damping" type="float" setter="set_damping" getter="get_damping" default="0.08">
 			Damping (ALPHA) on the local ripple layer's wave equation -- higher settles disturbances faster.
 		</member>
@@ -136,7 +139,7 @@
 			Linear height multiplier for the FFT ocean waves. At [code]1.0[/code] they have physical heights for the JONSWAP spectrum at [member wind_speed] and [member fetch] (in metres); below 1 reduces them proportionally, 0 removes the FFT ocean waves. This does not scale local ripple disturbances.
 		</member>
 		<member name="wind_direction" type="Vector2" setter="set_wind_direction" getter="get_wind_direction" default="Vector2(1, 0)">
-			Wind direction (X, Z) driving the FFT ocean layer's wave alignment. Need not be normalized.
+			Direction (X, Z) the wind blows toward; the FFT ocean waves are aligned with it and travel downwind. Need not be normalized.
 		</member>
 		<member name="wind_speed" type="float" setter="set_wind_speed" getter="get_wind_speed" default="8.0">
 			Wind speed in m/s driving the FFT ocean layer's spectrum -- higher produces longer, larger waves, up to what [member fetch] allows.

@@ -80,35 +80,53 @@ uniform sampler2D ocean_height_tex : hint_default_black, filter_linear, repeat_d
 // Ocean chop multiplier over the ripple domain: 1 in deep water, fading to 0
 // at the waterline (set by PhysXWaterSurface3D when it has a seabed).
 uniform sampler2D ocean_fade_tex : hint_default_white, filter_linear, repeat_disable;
+// Choppy horizontal displacement (x, z) of the ocean layer; scaled by
+// choppiness (both set by PhysXWaterSurface3D).
+uniform sampler2D ocean_disp_tex : hint_default_black, filter_linear, repeat_disable;
+uniform float choppiness = 1.0;
 uniform vec2 ripple_domain_size = vec2(20.0, 20.0);
 uniform vec2 ocean_domain_size = vec2(40.0, 40.0);
 // World XZ both height fields are centred on (set by PhysXWaterSurface3D).
 uniform vec2 grid_center = vec2(0.0);
 uniform vec4 water_color : source_color = vec4(0.09, 0.32, 0.42, 0.65);
+// Whitecaps where the choppy displacement squeezes the surface: foam fades
+// in as the area Jacobian drops below foam_threshold (1 = unsqueezed, 0 =
+// folding over).
+uniform float foam_threshold : hint_range(0.0, 1.0) = 0.7;
+uniform vec4 foam_color : source_color = vec4(0.92, 0.95, 0.97, 0.95);
 
 varying vec3 v_world_normal;
+varying float v_foam;
 
-float sample_h(vec2 world_xz) {
+// Offset of the surface point that rests at world_xz: (dx, height, dz).
+vec3 surface_offset(vec2 world_xz) {
 	vec2 rel = world_xz - grid_center;
-	vec2 uv_r = rel / ripple_domain_size + 0.5;
-	vec2 uv_o = rel / ocean_domain_size + 0.5;
-	vec2 cuv_r = clamp(uv_r, vec2(0.0), vec2(1.0));
-	return texture(ripple_height_tex, cuv_r).r + texture(ocean_height_tex, clamp(uv_o, vec2(0.0), vec2(1.0))).r * texture(ocean_fade_tex, cuv_r).r;
+	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
+	vec2 cuv_o = clamp(rel / ocean_domain_size + 0.5, vec2(0.0), vec2(1.0));
+	float fade = texture(ocean_fade_tex, cuv_r).r;
+	// Negative: the displacement points away from crests in this FFT's sign
+	// convention, so moving against it gathers points into the crests.
+	vec2 d = -choppiness * fade * texture(ocean_disp_tex, cuv_o).rg;
+	float h = texture(ripple_height_tex, cuv_r).r + texture(ocean_height_tex, cuv_o).r * fade;
+	return vec3(d.x, h, d.y);
 }
 
 void vertex() {
 	vec3 world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
-	VERTEX.y += sample_h(world_pos.xz);
+	VERTEX += surface_offset(world_pos.xz);
 
-	// Central-difference normal -- e is in world meters, small relative to
-	// the ripple/ocean grids' own cell size so it stays a meaningful local
-	// gradient estimate, not aliased noise between texels.
+	// Normal and Jacobian from central differences of the displaced surface
+	// -- e is in world metres, small against the grids' cell size.
 	const float e = 0.2;
-	float hx1 = sample_h(world_pos.xz + vec2(e, 0.0));
-	float hx0 = sample_h(world_pos.xz - vec2(e, 0.0));
-	float hz1 = sample_h(world_pos.xz + vec2(0.0, e));
-	float hz0 = sample_h(world_pos.xz - vec2(0.0, e));
-	v_world_normal = normalize(vec3(hx0 - hx1, 2.0 * e, hz0 - hz1));
+	vec3 px1 = vec3(e, 0.0, 0.0) + surface_offset(world_pos.xz + vec2(e, 0.0));
+	vec3 px0 = vec3(-e, 0.0, 0.0) + surface_offset(world_pos.xz - vec2(e, 0.0));
+	vec3 pz1 = vec3(0.0, 0.0, e) + surface_offset(world_pos.xz + vec2(0.0, e));
+	vec3 pz0 = vec3(0.0, 0.0, -e) + surface_offset(world_pos.xz - vec2(0.0, e));
+	vec3 tx = px1 - px0;
+	vec3 tz = pz1 - pz0;
+	v_world_normal = normalize(cross(tz, tx));
+	float jacobian = (tx.x * tz.z - tx.z * tz.x) / (4.0 * e * e);
+	v_foam = 1.0 - smoothstep(foam_threshold - 0.3, foam_threshold, jacobian);
 }
 
 void fragment() {
@@ -133,8 +151,8 @@ void fragment() {
 	// session in the first place), capped to a small multiplier so it can
 	// never itself become a source of overexposure.
 	float ndotl = clamp(dot(n, vec3(0.3, 0.85, 0.4)), 0.0, 1.0);
-	ALBEDO = water_color.rgb * mix(0.75, 1.15, ndotl);
-	ALPHA = water_color.a;
+	ALBEDO = mix(water_color.rgb * mix(0.75, 1.15, ndotl), foam_color.rgb, v_foam);
+	ALPHA = mix(water_color.a, foam_color.a, v_foam);
 }
 )";
 
@@ -243,6 +261,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_fetch", "fetch"), &PhysXWaterSurface3D::set_fetch);
 	ClassDB::bind_method(D_METHOD("get_fetch"), &PhysXWaterSurface3D::get_fetch);
 	ClassDB::bind_method(D_METHOD("get_effective_fetch"), &PhysXWaterSurface3D::get_effective_fetch);
+	ClassDB::bind_method(D_METHOD("set_choppiness", "choppiness"), &PhysXWaterSurface3D::set_choppiness);
+	ClassDB::bind_method(D_METHOD("get_choppiness"), &PhysXWaterSurface3D::get_choppiness);
 
 	ClassDB::bind_method(D_METHOD("set_surface_mesh", "mesh"), &PhysXWaterSurface3D::set_surface_mesh);
 	ClassDB::bind_method(D_METHOD("get_surface_mesh"), &PhysXWaterSurface3D::get_surface_mesh);
@@ -293,6 +313,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "wind_direction"), "set_wind_direction", "get_wind_direction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wave_amplitude"), "set_wave_amplitude", "get_wave_amplitude");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fetch", PROPERTY_HINT_RANGE, "0,100000,1,or_greater,suffix:m"), "set_fetch", "get_fetch");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "choppiness", PROPERTY_HINT_RANGE, "0,3,0.01,or_greater"), "set_choppiness", "get_choppiness");
 
 	ADD_GROUP("Rendering", "");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "water_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_water_material", "get_water_material");
@@ -363,6 +384,13 @@ void PhysXWaterSurface3D::set_wind_direction(Vector2 p_dir) {
 void PhysXWaterSurface3D::set_wave_amplitude(float p_amp) {
 	wave_amplitude = MAX(p_amp, 0.0f);
 	_rebuild();
+}
+
+void PhysXWaterSurface3D::set_choppiness(float p_choppiness) {
+	choppiness = MAX(p_choppiness, 0.0f);
+	if (water_material.is_valid()) {
+		water_material->set_shader_parameter("choppiness", choppiness);
+	}
 }
 
 void PhysXWaterSurface3D::set_fetch(float p_fetch) {
@@ -506,6 +534,7 @@ void PhysXWaterSurface3D::_rebuild() {
 	water_material->set_shader_parameter("ripple_domain_size", active_domain_size);
 	water_material->set_shader_parameter("ocean_domain_size", ocean_domain_size);
 	water_material->set_shader_parameter("grid_center", grid_center);
+	water_material->set_shader_parameter("choppiness", choppiness);
 
 	// NOTIFICATION_INTERNAL_PHYSICS_PROCESS fires in the editor too, not just
 	// Play -- same gotcha PhysXVehicle3D/PhysXDestructible3D already guard
@@ -663,6 +692,10 @@ void PhysXWaterSurface3D::_bind_textures() {
 	if (ocean_fade_tex.is_null()) {
 		ocean_fade_tex.instantiate();
 	}
+	if (ocean_disp_tex.is_null()) {
+		ocean_disp_tex.instantiate();
+	}
+	ocean_disp_tex->set_texture_rd_rid(solver.get_ocean_displacement_texture_rd_rid());
 	ripple_height_tex->set_texture_rd_rid(solver.get_ripple_height_texture_rd_rid());
 	ocean_height_tex->set_texture_rd_rid(solver.get_ocean_height_texture_rd_rid());
 	ocean_fade_tex->set_texture_rd_rid(solver.get_ocean_fade_texture_rd_rid());
@@ -676,6 +709,7 @@ void PhysXWaterSurface3D::_bind_textures() {
 		water_material->set_shader_parameter("ripple_height_tex", ripple_height_tex);
 		water_material->set_shader_parameter("ocean_height_tex", ocean_height_tex);
 		water_material->set_shader_parameter("ocean_fade_tex", ocean_fade_tex);
+		water_material->set_shader_parameter("ocean_disp_tex", ocean_disp_tex);
 	}
 	textures_bound = true;
 }
@@ -687,8 +721,8 @@ void PhysXWaterSurface3D::_refresh_cpu_cache() {
 	// buoyancy, see water_solver.h's own note on why this stays a separate
 	// path from the zero-copy texture above.
 	solver.get_height_grid(cached_ripple_height, cached_ripple_n, cached_ripple_domain);
-	Vector<float> imag_scratch; // the FFT's imaginary-part residual -- not needed here, see water_solver.h
-	solver.get_ocean_height_grid(cached_ocean_height, imag_scratch, cached_ocean_n, cached_ocean_domain);
+	solver.get_ocean_height_grid(cached_ocean_height, cached_ocean_dx, cached_ocean_n, cached_ocean_domain);
+	solver.get_ocean_dz_grid(cached_ocean_dz);
 }
 
 float PhysXWaterSurface3D::_bilinear_sample(const Vector<float> &p_grid, int p_n, Vector2 p_domain, float p_world_x, float p_world_z) const {
@@ -720,10 +754,21 @@ float PhysXWaterSurface3D::sample_height(Vector3 p_world_pos) const {
 	// height the renderer draws), so only fall back to it before the first
 	// readback lands. Both are relative to the node, like the rendered mesh.
 	const float ripple = cached_ripple_height.is_empty() ? water_level : _bilinear_sample(cached_ripple_height, cached_ripple_n, cached_ripple_domain, x, z);
-	float ocean = _bilinear_sample(cached_ocean_height, cached_ocean_n, cached_ocean_domain, x, z);
-	if (!cell_depth.is_empty()) {
-		ocean *= WaterSolver::shallow_fade(_bilinear_sample(cell_depth, grid_resolution, active_domain_size, x, z), shallow_fade_depth);
+	const float fade = cell_depth.is_empty() ? 1.0f : WaterSolver::shallow_fade(_bilinear_sample(cell_depth, grid_resolution, active_domain_size, x, z), shallow_fade_depth);
+	// With choppy displacement the surface point above (x, z) rested
+	// somewhere else: find p0 with p0 + s * D(p0) = (x, z) by fixed-point
+	// iteration (s matches the shader's -choppiness * fade), then read the
+	// ocean height there.
+	Vector2 p0(x, z);
+	const float s = -choppiness * fade;
+	if (s != 0.0f && cached_ocean_dx.size() == cached_ocean_height.size() && cached_ocean_dz.size() == cached_ocean_height.size()) {
+		for (int i = 0; i < 4; i++) {
+			const Vector2 d(_bilinear_sample(cached_ocean_dx, cached_ocean_n, cached_ocean_domain, p0.x, p0.y),
+					_bilinear_sample(cached_ocean_dz, cached_ocean_n, cached_ocean_domain, p0.x, p0.y));
+			p0 = Vector2(x, z) - d * s;
+		}
 	}
+	const float ocean = _bilinear_sample(cached_ocean_height, cached_ocean_n, cached_ocean_domain, p0.x, p0.y) * fade;
 	return get_global_position().y + ripple + ocean;
 }
 

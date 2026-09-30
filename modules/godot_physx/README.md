@@ -445,6 +445,11 @@ enclosed pool only gets small, short wind ripples while an open square is a
 developed sea. The simulation is centred on the node's position; keep the node
 unrotated and unscaled.
 
+`choppiness` adds the ocean waves' horizontal displacement, so crests come
+to a point and troughs flatten; where it squeezes the surface hard enough the
+default material draws whitecap foam, so a strong wind gets whitecaps and a
+light one doesn't.
+
 Set `seabed_from_floor` for water over uneven ground, like a beach or a lake
 bed: each ripple cell's depth is measured once from the floor (static bodies in
 `seabed_collision_mask`). Waves then travel at the local shallow-water speed,

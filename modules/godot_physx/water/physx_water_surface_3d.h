@@ -105,6 +105,12 @@ public:
 	float get_fetch() const { return fetch; }
 	// The fetch actually in use (resolves the 0 = auto case).
 	float get_effective_fetch() const;
+	// Tessendorf horizontal displacement: pulls the surface toward the
+	// ocean waves' crests so they sharpen and the troughs flatten. 0 = pure
+	// height field. Where it folds the surface (its Jacobian drops toward
+	// zero) the default material draws whitecap foam.
+	void set_choppiness(float p_choppiness);
+	float get_choppiness() const { return choppiness; }
 
 	// Optional shape: any flat mesh whose X/Z footprint (node-local) is the
 	// water's outline -- a disc, a kidney bean, a lake with an island. When
@@ -183,6 +189,7 @@ private:
 	Vector2 wind_direction = Vector2(1, 0);
 	float wave_amplitude = 1.0f;
 	float fetch = 0.0f;
+	float choppiness = 1.0f;
 	// Longest side of the surface_mesh footprint (0 = none), for auto fetch.
 	real_t footprint_extent = 0.0;
 
@@ -211,6 +218,7 @@ private:
 	Ref<Texture2DRD> ripple_height_tex;
 	Ref<Texture2DRD> ocean_height_tex;
 	Ref<Texture2DRD> ocean_fade_tex;
+	Ref<Texture2DRD> ocean_disp_tex;
 	Ref<Texture2DRD> caustics_texture;
 	bool textures_bound = false; // set once, after the solver's RD textures actually exist (see _update())
 
@@ -222,6 +230,8 @@ private:
 	int cached_ripple_n = 0;
 	Vector2 cached_ripple_domain;
 	Vector<float> cached_ocean_height;
+	Vector<float> cached_ocean_dx;
+	Vector<float> cached_ocean_dz;
 	int cached_ocean_n = 0;
 	Vector2 cached_ocean_domain;
 

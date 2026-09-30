@@ -214,7 +214,7 @@ void WaterSolverGPU::_rt_free_buffers() {
 			*b = RID();
 		}
 	}
-	RID *texs[] = { &tex_ripple_height, &tex_ocean_height, &tex_ocean_disp, &tex_ocean_deriv, &tex_ocean_foam, &tex_shore_foam, &tex_shore_foam_tmp, &tex_caustics, &tex_cell_depth, &tex_ocean_fade };
+	RID *texs[] = { &tex_ripple_height, &tex_ocean_height, &tex_ocean_disp, &tex_ocean_deriv, &tex_ocean_foam, &tex_shore_foam, &tex_shore_foam_tmp, &tex_caustics, &tex_cell_depth, &tex_ocean_fade, &tex_shore_depth };
 	for (RID *t : texs) {
 		if (t->is_valid()) {
 			rd->free_rid(*t);
@@ -259,10 +259,14 @@ void WaterSolverGPU::_rt_build_buffers() {
 		Vector<uint8_t> fade_bytes;
 		fade_bytes.resize(cells);
 		uint8_t *fw = fade_bytes.ptrw();
+		Vector<uint8_t> shore_bytes;
+		shore_bytes.resize(cells * sizeof(uint16_t));
+		uint16_t *sw = (uint16_t *)shore_bytes.ptrw();
 		for (int i = 0; i < cells; i++) {
 			const float d = has_cell_depth ? _init_cell_depth[i] : _init_depth;
 			dw[i] = Math::make_half_float(d);
 			fw[i] = (uint8_t)Math::round(WaterSolver::shallow_fade(d, shallow_fade_depth) * 255.0f);
+			sw[i] = Math::make_half_float(d <= WaterSolver::WALL_DEPTH * 0.5f ? 100.0f : d);
 		}
 		RD::TextureFormat depth_tf;
 		depth_tf.format = RD::DATA_FORMAT_R16_SFLOAT;
@@ -278,6 +282,10 @@ void WaterSolverGPU::_rt_build_buffers() {
 		Vector<Vector<uint8_t>> fade_data;
 		fade_data.push_back(fade_bytes);
 		tex_ocean_fade = rd->texture_create(fade_tf, RD::TextureView(), fade_data);
+
+		Vector<Vector<uint8_t>> shore_data;
+		shore_data.push_back(shore_bytes);
+		tex_shore_depth = rd->texture_create(depth_tf, RD::TextureView(), shore_data);
 	}
 
 	auto make_uset = [&](RID p_state_in, RID p_state_out) {
@@ -1232,6 +1240,13 @@ void WaterSolver::get_ocean_dz_grid(Vector<float> &r_dz) const {
 	}
 	MutexLock lock(gpu->cache_mtx);
 	r_dz = gpu->ocean_dz_cache;
+}
+
+RID WaterSolver::get_shore_depth_texture_rd_rid() const {
+	if (gpu.is_null()) {
+		return RID();
+	}
+	return gpu->tex_shore_depth;
 }
 
 RID WaterSolver::get_ocean_fade_texture_rd_rid() const {

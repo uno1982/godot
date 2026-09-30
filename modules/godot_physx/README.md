@@ -463,7 +463,9 @@ crest also leaves a thin foam sheet at the waterline (`shore_foam_band`) that
 surges in with the wave and slides back out with the backwash and undertow
 (`shore_undertow`), the shallows turn milky, and the surface feathers out onto
 the sand along a waterline that scallops with the arriving waves rather than
-following the depth contour.
+following the depth contour. That edge is measured in metres of water
+(`swash_reach`, `shore_edge_softness` in the material), so it behaves the same
+whatever `shallow_fade_depth` is.
 
 For open water, `render_extent` renders the surface out to the horizon: the FFT
 ocean tiles seamlessly past the simulated square and ripples settle to still

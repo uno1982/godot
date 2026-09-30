@@ -118,6 +118,10 @@ public:
 	// surface material). Both uploaded once per build.
 	RID tex_cell_depth;
 	RID tex_ocean_fade;
+	// R16F still-water depth for materials' waterline: like tex_cell_depth,
+	// but a wall cell reads as deep water so nothing shore-like happens at a
+	// pool's wall.
+	RID tex_shore_depth;
 	bool has_cell_depth = false;
 	float shallow_fade_depth = 1.0f;
 	RID buf_blit_ripple_params, buf_blit_ocean_params; // just {n}, uploaded once at build (grid resolution is fixed per configure())
@@ -330,6 +334,9 @@ public:
 	// R8 shallow-water fade for the ocean layer over the ripple domain (1 =
 	// full chop, 0 = none); valid once is_available().
 	RID get_ocean_fade_texture_rd_rid() const;
+	// R16F still-water depth (m) over the ripple domain for materials (dry
+	// shore negative, walls deep); valid once is_available().
+	RID get_shore_depth_texture_rd_rid() const;
 	// Ocean layer derivatives for materials, same grid as its height; valid
 	// once is_available(). RGBA32F (Dx, Dz, dDx/dz, 0) and
 	// (dh/dx, dh/dz, dDx/dx, dDz/dz).

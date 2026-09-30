@@ -270,6 +270,7 @@ private:
 	Ref<Texture2DRD> ripple_height_tex;
 	Ref<Texture2DRD> ocean_height_tex;
 	Ref<Texture2DRD> ocean_fade_tex;
+	Ref<Texture2DRD> shore_depth_tex;
 	Ref<Texture2DRD> ocean_disp_tex;
 	Ref<Texture2DRD> ocean_deriv_tex;
 	Ref<Texture2DRD> ocean_foam_tex;

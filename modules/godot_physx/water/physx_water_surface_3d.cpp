@@ -120,14 +120,19 @@ uniform float shore_foam_breakup : hint_range(0.0, 1.0) = 0.85;
 // replaces water_color's there.
 uniform vec4 shallow_color : source_color = vec4(0.42, 0.66, 0.64, 0.55);
 uniform float shallow_tint : hint_range(0.0, 1.0) = 0.6;
-// Soft contact with the shore: the surface fades out over this much of the
-// fade ramp at the waterline instead of meeting the sand at a hard line.
-uniform float shore_edge_softness : hint_range(0.0, 1.0) = 0.12;
-// Moving waterline: how far (in ocean-fade units) the visible edge can sit
-// back from the still-water line. Arriving crests push it toward the sand,
-// troughs pull it back, and slow ground-fixed noise keeps it irregular --
-// so the edge scallops with the waves instead of following a depth contour.
-uniform float swash_reach : hint_range(0.0, 0.9) = 0.35;
+// Still-water depth in metres over the ripple domain (dry shore negative,
+// pool walls deep), set by PhysXWaterSurface3D: the waterline is measured in
+// real depth, independent of shallow_fade_depth.
+uniform sampler2D shore_depth_tex : hint_default_white, filter_linear, repeat_disable;
+// Soft contact with the shore: the surface fades out over this much water
+// depth (m) at the waterline instead of meeting the sand at a hard line.
+uniform float shore_edge_softness : hint_range(0.0, 0.5, 0.005) = 0.08;
+// Moving waterline: how much water depth (m) the visible edge can pull back
+// over. Arriving crests push it toward the sand, troughs pull it back, and
+// slow ground-fixed noise keeps it irregular -- so the edge scallops with the
+// waves instead of following a depth contour, but only ever goes clear where
+// the water really is that thin.
+uniform float swash_reach : hint_range(0.0, 1.0, 0.01) = 0.25;
 // Wave height (m) that pushes the waterline all the way in.
 uniform float swash_wave_height = 0.3;
 // Thin bright foam rim just behind the moving edge.
@@ -213,16 +218,15 @@ float shore_foam_at(vec2 world_xz) {
 	return g * g * (3.0 - 2.0 * g) * shore_foam_strength;
 }
 
-// Distance-to-shore signal (1 in deep water, 0 at the waterline) with the
-// waterline moved by the waves: the still-water fade is remapped so the edge
-// sits where fade == offset, offset in [0, swash_reach] -- small under an
-// arriving crest (the edge reaches in), large under a trough, jittered by
-// slow noise. Deep water and walls (fade 1) stay at 1.
+// Water depth (m) above the moving waterline: the still-water depth minus an
+// offset in [0, swash_reach] -- small under an arriving crest (the edge
+// reaches in), large under a trough, jittered by slow noise. <= 0 is past
+// the visible edge.
 float shore_signal(vec2 world_xz, float time) {
 	vec2 rel = world_xz - grid_center;
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	vec2 cuv_o = rel / ocean_domain_size + 0.5; // wraps: the FFT ocean is periodic
-	float fade = texture(ocean_fade_tex, cuv_r).r;
+	float depth = texture(shore_depth_tex, cuv_r).r;
 	float eta = texture(ocean_height_tex, cuv_o).r; // unfaded: the waves arriving here
 	// Lobes a few metres across (like real swash), drifting, with the waves
 	// pushing the whole edge in and out over time.
@@ -230,7 +234,7 @@ float shore_signal(vec2 world_xz, float time) {
 	float n = 0.65 * foam_value_noise(p + vec2(time * 0.12, time * 0.05)) + 0.35 * foam_value_noise(p * 2.4 - vec2(time * 0.07, 0.0));
 	float wave = clamp(eta / max(swash_wave_height, 1e-3), -1.0, 1.0);
 	float offset = swash_reach * clamp(0.5 + (n - 0.5) * 1.6 - 0.35 * wave, 0.0, 1.0);
-	return clamp((fade - offset) / max(1.0 - offset, 1e-3), 0.0, 1.0);
+	return depth - offset;
 }
 
 void vertex() {
@@ -285,16 +289,17 @@ void fragment() {
 	// never itself become a source of overexposure.
 	float ndotl = clamp(dot(n, vec3(0.3, 0.85, 0.4)), 0.0, 1.0);
 	float shore = shore_signal(v_rest_xz, TIME);
-	// Shore foam belongs to the moving edge: full at it, thinning seaward, so
-	// the white sheet scallops with the edge instead of filling the band.
-	// (Whitecaps are left alone.)
-	foam = max(foam, shore_foam_at(v_rest_xz) * (1.0 - smoothstep(0.1, 0.75, shore)));
+	// Shore foam belongs to the moving edge: full at it, thinning over the
+	// next ~0.6 m of depth, so the white sheet scallops with the edge instead
+	// of filling the band. (Whitecaps are left alone.)
+	foam = max(foam, shore_foam_at(v_rest_xz) * (1.0 - smoothstep(0.02, 0.6, shore)));
 	// Bright rim right behind the moving edge, broken into lace.
 	float soft = max(shore_edge_softness, 1e-3);
 	float rim = smoothstep(0.0, soft * 0.5, shore) * (1.0 - smoothstep(soft * 0.6, soft * 2.2, shore));
 	rim *= shore_rim_strength * (0.55 + 0.45 * foam_value_noise(v_rest_xz * 6.0));
 	foam = max(foam, rim);
-	float shallow = (1.0 - shore) * shallow_tint;
+	vec2 cuv_fade = clamp((v_rest_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
+	float shallow = (1.0 - texture(ocean_fade_tex, cuv_fade).r) * shallow_tint;
 	vec3 base_rgb = mix(water_color.rgb, shallow_color.rgb, shallow) * mix(0.75, 1.15, ndotl);
 	float base_a = mix(water_color.a, shallow_color.a, shallow);
 	ALBEDO = mix(base_rgb, foam_color.rgb, foam);
@@ -934,6 +939,10 @@ void PhysXWaterSurface3D::_bind_textures() {
 	ripple_height_tex->set_texture_rd_rid(solver.get_ripple_height_texture_rd_rid());
 	ocean_height_tex->set_texture_rd_rid(solver.get_ocean_height_texture_rd_rid());
 	ocean_fade_tex->set_texture_rd_rid(solver.get_ocean_fade_texture_rd_rid());
+	if (shore_depth_tex.is_null()) {
+		shore_depth_tex.instantiate();
+	}
+	shore_depth_tex->set_texture_rd_rid(solver.get_shore_depth_texture_rd_rid());
 	if (caustics_enabled) {
 		if (caustics_texture.is_null()) {
 			caustics_texture.instantiate();
@@ -944,6 +953,7 @@ void PhysXWaterSurface3D::_bind_textures() {
 		water_material->set_shader_parameter("ripple_height_tex", ripple_height_tex);
 		water_material->set_shader_parameter("ocean_height_tex", ocean_height_tex);
 		water_material->set_shader_parameter("ocean_fade_tex", ocean_fade_tex);
+		water_material->set_shader_parameter("shore_depth_tex", shore_depth_tex);
 		water_material->set_shader_parameter("ocean_disp_tex", ocean_disp_tex);
 		water_material->set_shader_parameter("ocean_deriv_tex", ocean_deriv_tex);
 		water_material->set_shader_parameter("ocean_foam_tex", ocean_foam_tex);

@@ -473,6 +473,7 @@ void WaterSolverGPU::_rt_build_buffers() {
 	}
 	{
 		RD::TextureFormat shore_tf = ripple_tf;
+		shore_tf.usage_bits |= RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
 		Vector<uint8_t> zeros;
 		zeros.resize(cells * sizeof(float));
 		memset(zeros.ptrw(), 0, zeros.size());

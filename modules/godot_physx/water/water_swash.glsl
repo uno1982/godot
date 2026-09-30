@@ -98,7 +98,16 @@ void main() {
 		ms = mix(ms, rise * rise, misc.w);
 		float rms = sqrt(max(ms, 1e-6));
 		float nz = value_noise(rel * 0.3 + vec2(misc.y * 0.06, misc.y * 0.025));
-		target = min(min(swash.y, 2.0 * rms) * smoothstep(0.6, 1.8, rise / rms) * (0.4 + 1.2 * nz), swash.y);
+		// How far this stretch of beach can run up: a slow pattern 5-15 m
+		// across (like beach cusps), so the highest reach -- and the wet line
+		// it leaves -- scallops along the shore instead of tracing one
+		// height contour.
+		float cusp = 0.65 * value_noise(rel * 0.07 + vec2(11.0, misc.y * 0.004)) + 0.35 * value_noise(rel * 0.19 - vec2(4.0, 0.0));
+		float cap = swash.y * (0.45 + 0.55 * cusp);
+		// Each wave reaches in proportion to how big it is, so successive
+		// waves stop at different places.
+		float strength = clamp((rise / rms - 0.5) / 1.5, 0.0, 1.0);
+		target = min(min(cap, 2.0 * rms) * strength * (0.6 + 0.8 * nz), cap);
 	} else {
 		// Dry sand: the run-up climbs from the seaward neighbour (up the
 		// depth gradient), so a tongue keeps its shape as it runs up.
@@ -111,8 +120,10 @@ void main() {
 	// Partial coverage across the edge (r and the depth vary smoothly), so the
 	// wet line falls between cells instead of stepping cell by cell.
 	// A fixed pattern on the sand jitters the line by a few cm of height, so
-	// it's ragged rather than following the run-up contour exactly.
-	float wn = 0.6 * value_noise(rel_c * 2.1) + 0.4 * value_noise(rel_c * 6.3 + 5.0);
-	float wet = max(smoothstep(-0.01, 0.02, depth + r + (wn - 0.5) * 0.06), s.g * swash.w);
+	// it's ragged rather than following the run-up contour exactly. Only
+	// scales well above the cell size (finer noise aliased into per-cell
+	// blocks); the materials add the fine detail per pixel.
+	float wn = 0.6 * value_noise(rel_c * 0.9) + 0.4 * value_noise(rel_c * 1.9 + 5.0);
+	float wet = max(smoothstep(-0.01, 0.02, depth + r + (wn - 0.5) * 0.12), s.g * swash.w);
 	imageStore(dst_tex, c, vec4(r, wet, ms, 0.0));
 }

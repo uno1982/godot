@@ -258,11 +258,19 @@ float shore_signal(vec2 world_xz, float time) {
 	float n = 0.65 * foam_value_noise(p + vec2(time * 0.12, time * 0.05)) + 0.35 * foam_value_noise(p * 2.4 - vec2(time * 0.07, 0.0));
 	float wave = clamp(eta / max(swash_wave_height, 1e-3), -1.0, 1.0);
 	float offset = swash_reach * clamp(0.5 + (n - 0.5) * 1.6 - 0.35 * wave, 0.0, 1.0);
-	// The pull-back only applies in the water; over dry sand the swash
-	// film reaches exactly as far as the run-up (and the wet sand) does.
 	vec2 q = world_xz;
 	float eb = 0.5 * foam_value_noise(q * 2.3 + vec2(time * 0.25, 0.0)) + 0.3 * foam_value_noise(q * 6.1 + vec2(3.0, time * 0.4)) + 0.2 * foam_value_noise(q * 15.0 - 7.0);
-	return depth - offset * smoothstep(0.0, 0.1, depth) + texture(swash_tex, cuv_r).r + (eb - 0.5) * 2.0 * swash_edge_breakup;
+	float run_up = texture(swash_tex, cuv_r).r;
+	float jitter = (eb - 0.5) * 2.0 * swash_edge_breakup;
+	// On dry sand the jitter may only pull the edge back, never add water
+	// past what the swash covers -- or it left a permanent fringe of rim
+	// foam just above the still-water line.
+	jitter = depth > 0.0 ? jitter : min(jitter, run_up);
+	// The pull-back gives way where a swash is running up, so over the sand
+	// the film reaches exactly as far as the run-up (and the wet sand); with
+	// no swash it applies right up to the still-water line, or a sliver of
+	// water was left showing along it.
+	return depth - offset * (1.0 - smoothstep(0.0, 0.08, run_up)) + run_up + jitter;
 }
 
 void vertex() {

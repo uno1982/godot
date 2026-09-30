@@ -309,6 +309,17 @@ void vertex() {
 }
 
 void fragment() {
+	// Draw only the side of the surface facing the camera's side of the
+	// water: the top from above, the underside from below. The surface is
+	// transparent and double-sided, and its triangles blend in mesh order,
+	// not by distance -- so where it overlaps itself (the back of a crest
+	// behind its front, far waves seen through near ones) the far side
+	// painted over the near one as jagged translucent teeth, and the
+	// pattern changed wherever the mesh order did, drawing a seam.
+	bool camera_above = CAMERA_POSITION_WORLD.y > MODEL_MATRIX[3].y + water_level;
+	if (FRONT_FACING != camera_above) {
+		discard;
+	}
 	vec3 world_normal = v_world_normal;
 	float foam = v_foam;
 	if (per_pixel_normals) {

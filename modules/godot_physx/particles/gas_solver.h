@@ -45,7 +45,7 @@ class RenderingDevice;
 // diffused in place across steps -- rather than rebuilt from particles every
 // substep. v1 scope (see gas_block_inc.glsl header): the box's lateral (X/Z)
 // footprint is fixed at configure() -- only its height grows automatically
-// (see _grow_if_needed), up to 3x the configured height -- no pressure
+// (see _grow_if_needed), up to 3x the configured height -- Jacobi pressure
 // projection, up to MAX_COLLIDERS sphere colliders.
 //
 // Owns a private local RenderingDevice and runs fully synchronously (submit +

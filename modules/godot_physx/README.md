@@ -243,6 +243,48 @@ setup. `surface_anisotropy` optionally feeds PhysX per-particle anisotropy to th
 extractor for sharper crests — off by default; leave it off while emitting, where
 fast particles along the stream can mesh as spikes.
 
+## Granular — `PhysXGranular3D`
+
+A `PhysXParticleFluid3D` subclass whose particles behave as grains — sand, gravel,
+snow — rather than a liquid: they pile up, hold a slope up to `friction` (the
+angle of repose, in degrees), and get plowed and cratered by bodies moving
+through them. `density`, `hardness` and `grain_cohesion` tune the material;
+emission, colliders, the domain and the sphere `MultiMesh` render are all
+inherited. There is no isosurface.
+
+Only the MPM compute solver holds a real angle of repose (PhysX PBD particle
+friction cannot pile), so `solver = Auto` always resolves to MPM here — which
+also means it runs on any GPU, no CUDA needed. Pick `PBD (CUDA)` explicitly only
+for a pour or cascade that never has to hold a shape. Granular uses the dense
+box grid, so unlike the fluid it *is* confined to `mpm_domain_size`.
+
+## Smoke and gas — `PhysXGas3D`
+
+A volumetric smoke/gas solver: a persistent velocity + density field on a
+block-sparse grid, advected semi-Lagrangian, driven by `buoyancy` and vorticity
+confinement, and made divergence-free with a Jacobi pressure projection. It runs
+on plain compute shaders (no CUDA), independent of the PhysX GPU path. It is not
+a particle system.
+
+Injection points are `PhysXGasEmitter3D` nodes placed anywhere in the scene and
+listed in `emitters`; each has its own shape (sphere or axis-aligned box),
+`velocity` (rotated by the emitter's orientation), `density`, `divergence` and
+`swirl`. `turbulence_strength` / `turbulence_scale` add divergence-free curl-noise
+detail. Up to 4 `colliders` are voxelized as solids.
+
+It renders through a stock `FogVolume` + `FogMaterial` (the density grid is baked
+into an `ImageTexture3D` each step), so **`Environment.volumetric_fog_enabled`
+must be on** or nothing draws — the node shows a configuration warning when it
+isn't. `fire_look` swaps in an emissive hot-core-to-smoke colour ramp
+(`fire_color_ramp`, `fire_emission_strength`) over the same density field.
+`debug_point_cloud` is a fog-free fallback view.
+
+Scope: the domain's X/Z footprint and floor are fixed where the node was when it
+configured. Moving the node re-configures (and clears) the grid once it has been
+still for 0.2 s, so it can be repositioned while authoring, but it is not meant
+to follow a continuously moving object. The top of the box grows as a plume
+rises, up to 3× `domain_size.y`.
+
 ## Cloth — `PhysXCloth3D`
 
 A cloth patch: a generated grid or a supplied triangle mesh, simulated and drawn
@@ -353,6 +395,61 @@ static/dynamic baking per piece (defaults to Static, matching a plain
 fracture can spawn many pieces at once and a VoxelGI's dynamic-object
 tracking cost scales with how many it has to follow).
 
+## Vehicles — `PhysXVehicle3D`, `PhysXMotorcycle3D`, `PhysXTank3D`
+
+Vehicle nodes backed by PhysX's `PxVehicle2`. The stock `VehicleBody3D` /
+`VehicleWheel3D` already work on this backend and remain the right choice for a
+project that may switch engines; these nodes exist for what that model can't
+offer: an engine torque response, Ackermann steering, a slip-based tire friction
+curve (grip peaks at small slip and falls off when sliding), and per-wheel drive.
+
+The node layout mirrors `VehicleBody3D`: a `CollisionShape3D` child with a
+`BoxShape3D` for the chassis, plus `PhysXVehicleWheel3D` children. A wheel's own
+`position` is where it rests under static load, so a mesh parented under it
+follows the live suspension, steering and roll with no syncing code, and already
+sits at the right height in the editor. Wheels carry the suspension
+(`suspension_stiffness` / `_damping` / `_travel`) and tire
+(`tire_rest_grip`, `tire_slide_grip`, stiffnesses) parameters.
+
+- **`PhysXVehicle3D`** — 4 wheels, exactly 2 with `use_as_steering` (the front
+  axle). Drive with `throttle` / `brake` (0..1), `steer` (−1..1) and `reverse`.
+  Front/rear anti-roll bars, `ackermann_strength`, custom `center_of_mass`.
+- **`PhysXMotorcycle3D`** — 2 wheels, front steering, rear traction. `PxVehicle2`
+  has no balance mechanism, so staying upright is the script's job: read
+  `get_roll_angle()` / `get_angular_velocity()` each tick and correct with
+  `apply_torque_impulse()`, like a rider would.
+- **`PhysXTank3D`** — 2–16 wheels, skid-steer. Each wheel is assigned to the left
+  or right track from the sign of its local X. Drive with signed `left_ratio` /
+  `right_ratio` (−1..1): the sign is the direction, so opposite signs pivot in
+  place without a gear change.
+
+All three sleep when parked (`can_sleep`) and only simulate in a running game,
+never in the editor.
+
+## Water — `PhysXWaterSurface3D`
+
+An animated water surface with two GPU compute layers summed into one displaced
+mesh (created automatically as a child): a Tessendorf FFT ocean spectrum for
+wind-driven chop (`wind_speed`, `wind_direction`, `wave_amplitude`, over
+`ocean_domain_size`) and a local ripple layer — a damped shallow-water wave
+equation over `domain_size` whose wave speed follows `depth` — that bodies
+disturb.
+
+`sample_height(position)` returns the same combined surface height on the CPU,
+for buoyancy scripts. Call `submit_sphere()` once per physics tick per floating
+body so it actually pushes the water (`ripple_amplitude` scales the wake), or
+`submit_impulse()` for one-off splashes.
+
+`caustics_enabled` renders a light-space caustic map with a direct
+`RenderingDevice` draw pass along `caustics_sun_direction`. Any material — the
+floor, walls, submerged props — can sample it by projecting its world position
+with `get_caustics_texture()`, `get_caustics_origin()`,
+`get_caustics_light_right()` / `_up()` and `get_caustics_half_extent()`, so the
+light pattern lands on anything under the water rather than only a flat floor.
+
+Runs on any GPU with compute support, no CUDA needed. Without compute (e.g.
+headless) the surface stays flat and `sample_height()` returns `water_level`.
+
 ## Determinism and multiplayer
 
 - **GPU dynamics is never deterministic** — GPU solver scheduling varies run to
@@ -371,8 +468,8 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   `Generic6DOFJoint3D` linear/angular spring on each link to pull it back toward
   its rest pose (PhysX 5 removed joint projection, so a spring is the closest
   substitute).
-- **Not yet implemented:** separation-ray shapes; center-of-mass and inertia
-  tensor overrides; 6DOF angular motors; joint softness / bias / restitution
+- **Not yet implemented:** separation-ray shapes; inertia tensor overrides
+  (`RigidBody3D.center_of_mass` is honoured); 6DOF angular motors; joint softness / bias / restitution
   parameters. 6DOF linear and angular springs are supported (mapped onto PhysX
   joint drives). Unsupported shapes are treated as having no collision and log
   a warning once.
@@ -414,7 +511,8 @@ For deterministic lockstep multiplayer, use the Jolt backend.
 - **Concave (trimesh) shapes** are supported on static and kinematic bodies
   only, as in most engines.
 - **Cloth self-collision** is disabled; a cloth can pass through itself. Cloth
-  tearing is not implemented.
+  tearing is not implemented. `PhysXCloth3D` pins follow a single shared
+  `anchor_path`, so there is no per-vertex bone attachment yet.
 - Windows and Linux x86-64 are the only platforms built and tested, and on
   Linux only the CPU build — see [Building](#building) for what's unverified
   about a Linux GPU build.
@@ -426,12 +524,15 @@ For deterministic lockstep multiplayer, use the Jolt backend.
 | `godot_physx_server_3d.*` | `PhysicsServer3D` implementation; owns the PhysX foundation, physics, CPU dispatcher and CUDA context |
 | `godot_physx_project_settings.*` | registers and reads the `physics/physx_3d/*` settings |
 | `godot_physx_conversions.h` | `Vector3` / `Quaternion` / `Transform3D` ↔ PhysX conversions |
-| `objects/` | rigid bodies, areas, the GPU fluid and the GPU cloth surface |
+| `objects/` | rigid bodies, areas, the GPU fluid, the GPU cloth surface and GPU soft bodies |
 | `shapes/` | collision shape wrappers and mesh cooking |
 | `spaces/` | the `PxScene` wrapper, direct space/body state, area-override application |
 | `joints/` | all `Joint3D` types |
 | `cloth/` | the CPU (XPBD) cloth solver — no PhysX dependency |
-| `nodes/` | `PhysXParticleFluid3D`, `PhysXCloth3D`, `PhysXChunkEmitter3D` |
+| `nodes/` | `PhysXParticleFluid3D`, `PhysXGranular3D`, `PhysXGas3D`, `PhysXGasEmitter3D`, `PhysXCloth3D`, `PhysXChunkEmitter3D` |
+| `particles/` | the MPM fluid/granular and gas compute solvers and their GLSL shaders |
+| `vehicle/` | `PhysXVehicle3D`, `PhysXMotorcycle3D`, `PhysXTank3D`, `PhysXVehicleWheel3D` and the `PxVehicle2` glue |
+| `water/` | `PhysXWaterSurface3D` and its ripple / FFT ocean / caustics compute and draw passes |
 | `blast/` | `PhysXDestructible3D`, `PhysXBlastAsset`, and the NvBlast fracture-authoring bridge — optional, gated on `blast_sdk=` (see Building above) |
 | `editor/` | viewport gizmos for the fluid and cloth nodes; the Blast fracture dialog and its FileSystem/Inspector plugins |
 

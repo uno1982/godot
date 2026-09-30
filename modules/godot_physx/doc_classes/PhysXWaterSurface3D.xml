@@ -8,6 +8,7 @@
 		A child [MeshInstance3D] (a subdivided [PlaneMesh], sized to [member ocean_domain_size], or the resampled [member surface_mesh] footprint) is created automatically and displaced by both layers, summed. Call [method sample_height] to query the same combined surface on the CPU -- e.g. from a buoyancy script (see [code]demo/common/buoyant_body.gd[/code] in the paired demo project) -- and [method submit_sphere] once per physics tick per floating body so it actually disturbs the ripple layer, not just receives a height back.
 		No [RenderingDevice] compute support (e.g. running headless) leaves the surface flat and [method sample_height] returning [member water_level] plus zero -- a graceful no-op, not an error, matching every other GPU solver in this module.
 		Set [member surface_mesh] to give the water any outline -- a round pool, a kidney-bean pond, a lake with an island. Waves reflect off its shoreline, and [method sample_height]/[method is_wet] report no water outside it.
+		Set [member seabed_from_floor] for water over uneven ground -- a beach, a lake bed. The still-water depth of every ripple cell is then measured from the floor: waves travel at the local shallow-water speed, so they slow and bunch up over shallows, the shoreline falls wherever the ground rises above the water, and the ocean chop fades out over the last [member shallow_fade_depth] metres. Without it, the whole surface uses the constant [member depth].
 		Both simulation grids are centred on the node's global position (plus the [member surface_mesh] footprint's centre), fixed when the node enters the tree or a property changes. The node's rotation and scale are not applied to the simulation, so keep it unrotated and unscaled.
 		Only runs in an actual running game, never in the editor -- placing or moving the node in the Inspector does not simulate.
 	</description>
@@ -92,7 +93,7 @@
 			Damping (ALPHA) on the local ripple layer's wave equation -- higher settles disturbances faster.
 		</member>
 		<member name="depth" type="float" setter="set_depth" getter="get_depth" default="3.0">
-			Water depth used by the ripple wave equation and FFT ocean dispersion relation. Shallower water reduces ripple propagation speed and changes ocean-wave timing; it does not directly reduce wave height.
+			Still-water depth in metres used everywhere unless [member seabed_from_floor] measures it per cell (then it only applies where no floor is found below the water). Sets the ripple layer's wave speed, [code]sqrt(g * depth)[/code], and the ocean layer's dispersion.
 		</member>
 		<member name="domain_size" type="Vector2" setter="set_domain_size" getter="get_domain_size" default="Vector2(20, 20)">
 			World-space extent (X, Z) of the local ripple layer -- independent of [member ocean_domain_size], see [member ocean_grid_resolution]'s own note on why. Ignored when [member surface_mesh] is set: the ripple grid is then fitted to the footprint's bounds.
@@ -108,6 +109,15 @@
 		</member>
 		<member name="ripple_amplitude" type="float" setter="set_ripple_amplitude" getter="get_ripple_amplitude" default="1.0">
 			Multiplier on the ripple displacement driven by submitted floating-body proxies and impulses. Set lower for small splashes and wakes in a pool; this does not scale the FFT ocean waves.
+		</member>
+		<member name="seabed_collision_mask" type="int" setter="set_seabed_collision_mask" getter="get_seabed_collision_mask" default="1">
+			Physics layers [member seabed_from_floor]'s rays hit. Only static bodies count; a rigid or character body in the way is skipped.
+		</member>
+		<member name="seabed_from_floor" type="bool" setter="set_seabed_from_floor" getter="get_seabed_from_floor" default="false">
+			When on, the still-water depth of each ripple cell is measured on the first physics tick by a ray straight down onto the static bodies in [member seabed_collision_mask], starting 100 m above the water. Waves then travel at the local shallow-water speed, cells where the floor is above the water are dry shore ([method sample_height] returns [code]-INF[/code] and [method is_wet] [code]false[/code] there), and the ocean chop fades out over the shallows (see [member shallow_fade_depth]). Where no floor is found the constant [member depth] applies. Combines with [member surface_mesh]: cells outside its footprint stay dry. The floor is measured once; moving it afterwards needs a property change to re-measure.
+		</member>
+		<member name="shallow_fade_depth" type="float" setter="set_shallow_fade_depth" getter="get_shallow_fade_depth" default="1.0">
+			Water shallower than this many metres fades the ocean chop out, down to none at the waterline, so the surface meets a beach calmly instead of the chop cutting through the sand. Only has an effect where the depth varies ([member seabed_from_floor] or [member surface_mesh]).
 		</member>
 		<member name="surface_mesh" type="Mesh" setter="set_surface_mesh" getter="get_surface_mesh">
 			Optional water outline: any flat [Mesh] (node-local) whose up-facing triangles' X/Z footprint is the water -- e.g. a disc baked from a [CSGCylinder3D], or a shape modelled elsewhere. Its own vertices are not displaced directly; the footprint is resampled into an even grid clipped to the outline, so a coarse or fan-triangulated mesh still gets vertices to animate everywhere.

@@ -35,10 +35,11 @@ layout(set = 0, binding = 3, std430) restrict buffer HeightOut { float height_ou
 layout(set = 0, binding = 4, std430) restrict buffer Spheres { vec4 spheres[]; };
 layout(set = 0, binding = 5, std430) restrict buffer Impulses { vec4 impulses[]; };
 
-// Wet/dry mask, one texel per ripple cell (R8: 1 = water, 0 = shore/land),
-// rasterized once from PhysXWaterSurface3D::surface_mesh's footprint. All
-// wet when no surface mesh is set. Read with texelFetch only.
-layout(set = 0, binding = 6) uniform sampler2D wet_mask_tex;
+// Still-water depth per ripple cell (R16F, metres); <= 0 is dry land. From
+// the seabed (PhysXWaterSurface3D::seabed_from_floor) and/or the
+// surface_mesh footprint, or the constant depth everywhere. Uploaded once
+// per configure(). Read with texelFetch only.
+layout(set = 0, binding = 6) uniform sampler2D cell_depth_tex;
 
 #define DOMAIN (domain_dt.xy)
 #define DEPTH (domain_dt.z)
@@ -56,6 +57,17 @@ int grid_index(ivec2 c) {
 	return c.y * GRID_N + c.x;
 }
 
+float cell_depth(ivec2 c) {
+	return texelFetch(cell_depth_tex, c, 0).r;
+}
+
 bool is_wet(ivec2 c) {
-	return texelFetch(wet_mask_tex, c, 0).r > 0.5;
+	return cell_depth(c) > 0.0;
+}
+
+// Wave-equation coefficient c^2 dt^2 / dx^2 for a cell, from its own depth
+// (shallow-water speed sqrt(g * depth)), capped at the explicit scheme's
+// stability limit.
+float wave_coefficient(ivec2 c) {
+	return min(GRAV * max(cell_depth(c), 0.1) * DT * DT / (CELL * CELL), 0.5);
 }

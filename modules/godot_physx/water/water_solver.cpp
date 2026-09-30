@@ -38,6 +38,7 @@
 #include "water_spectrum_evolve.glsl.gen.h"
 #include "water_spectrum_init.glsl.gen.h"
 
+#include "core/math/math_funcs.h"
 #include "core/object/callable_mp.h"
 #include "core/os/memory.h"
 #include "servers/display/display_server.h"
@@ -204,7 +205,7 @@ void WaterSolverGPU::_rt_free_buffers() {
 			*b = RID();
 		}
 	}
-	RID *texs[] = { &tex_ripple_height, &tex_ocean_height, &tex_caustics, &tex_wet_mask };
+	RID *texs[] = { &tex_ripple_height, &tex_ocean_height, &tex_caustics, &tex_cell_depth, &tex_ocean_fade };
 	for (RID *t : texs) {
 		if (t->is_valid()) {
 			rd->free_rid(*t);
@@ -238,27 +239,36 @@ void WaterSolverGPU::_rt_build_buffers() {
 	buf_spheres = rd->storage_buffer_create(MAX_SPHERES * 4 * sizeof(float));
 	buf_impulses = rd->storage_buffer_create(MAX_IMPULSES * 4 * sizeof(float));
 
-	// Wet/dry mask, uploaded once. No mask = every cell wet.
+	// Per-cell still-water depth (R16F) and the ocean chop fade derived from
+	// it (R8), uploaded once. No per-cell depth = the constant depth, and full
+	// chop, everywhere.
 	{
-		PackedByteArray mask = _init_wet_mask;
-		has_wet_mask = mask.size() == cells;
-		if (!has_wet_mask) {
-			mask.resize(cells);
-			memset(mask.ptrw(), 255, cells);
-		} else {
-			uint8_t *mw = mask.ptrw();
-			for (int i = 0; i < cells; i++) {
-				mw[i] = mw[i] ? 255 : 0;
-			}
+		has_cell_depth = _init_cell_depth.size() == cells;
+		Vector<uint8_t> depth_bytes;
+		depth_bytes.resize(cells * sizeof(uint16_t));
+		uint16_t *dw = (uint16_t *)depth_bytes.ptrw();
+		Vector<uint8_t> fade_bytes;
+		fade_bytes.resize(cells);
+		uint8_t *fw = fade_bytes.ptrw();
+		for (int i = 0; i < cells; i++) {
+			const float d = has_cell_depth ? _init_cell_depth[i] : _init_depth;
+			dw[i] = Math::make_half_float(d);
+			fw[i] = (uint8_t)Math::round(WaterSolver::shallow_fade(d, shallow_fade_depth) * 255.0f);
 		}
-		RD::TextureFormat mask_tf;
-		mask_tf.format = RD::DATA_FORMAT_R8_UNORM;
-		mask_tf.width = n;
-		mask_tf.height = n;
-		mask_tf.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_UPDATE_BIT;
-		Vector<Vector<uint8_t>> mask_data;
-		mask_data.push_back(mask);
-		tex_wet_mask = rd->texture_create(mask_tf, RD::TextureView(), mask_data);
+		RD::TextureFormat depth_tf;
+		depth_tf.format = RD::DATA_FORMAT_R16_SFLOAT;
+		depth_tf.width = n;
+		depth_tf.height = n;
+		depth_tf.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_UPDATE_BIT;
+		Vector<Vector<uint8_t>> depth_data;
+		depth_data.push_back(depth_bytes);
+		tex_cell_depth = rd->texture_create(depth_tf, RD::TextureView(), depth_data);
+
+		RD::TextureFormat fade_tf = depth_tf;
+		fade_tf.format = RD::DATA_FORMAT_R8_UNORM;
+		Vector<Vector<uint8_t>> fade_data;
+		fade_data.push_back(fade_bytes);
+		tex_ocean_fade = rd->texture_create(fade_tf, RD::TextureView(), fade_data);
 	}
 
 	auto make_uset = [&](RID p_state_in, RID p_state_out) {
@@ -271,12 +281,12 @@ void WaterSolverGPU::_rt_build_buffers() {
 			u.append_id(by_binding[bnd]);
 			uniforms.push_back(u);
 		}
-		RD::Uniform mask_uniform;
-		mask_uniform.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
-		mask_uniform.binding = 6;
-		mask_uniform.append_id(sampler_linear);
-		mask_uniform.append_id(tex_wet_mask);
-		uniforms.push_back(mask_uniform);
+		RD::Uniform depth_uniform;
+		depth_uniform.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
+		depth_uniform.binding = 6;
+		depth_uniform.append_id(sampler_linear);
+		depth_uniform.append_id(tex_cell_depth);
+		uniforms.push_back(depth_uniform);
 		return rd->uniform_set_create(uniforms, shader_ripple, 0);
 	};
 	uset_atob = make_uset(buf_state_a, buf_state_b);
@@ -485,16 +495,16 @@ void WaterSolverGPU::_rt_build_caustics_grid() {
 		height_uniform.append_id(i == 0 ? tex_ripple_height : tex_ocean_height);
 		uniforms.push_back(height_uniform);
 	}
-	RD::Uniform mask_uniform;
-	mask_uniform.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
-	mask_uniform.binding = 3;
-	mask_uniform.append_id(sampler_linear);
-	mask_uniform.append_id(tex_wet_mask);
-	uniforms.push_back(mask_uniform);
+	RD::Uniform depth_uniform;
+	depth_uniform.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
+	depth_uniform.binding = 3;
+	depth_uniform.append_id(sampler_linear);
+	depth_uniform.append_id(tex_cell_depth);
+	uniforms.push_back(depth_uniform);
 	uset_caustics = rd->uniform_set_create(uniforms, shader_caustics, 0);
 }
 
-void WaterSolverGPU::rt_build(Ref<WaterSolverGPU> p_self, int p_grid_resolution, Vector2 p_domain_size, int p_ocean_grid_resolution, Vector2 p_ocean_domain_size, float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_gravity, bool p_caustics_enabled, PackedByteArray p_wet_mask) {
+void WaterSolverGPU::rt_build(Ref<WaterSolverGPU> p_self, int p_grid_resolution, Vector2 p_domain_size, int p_ocean_grid_resolution, Vector2 p_ocean_domain_size, float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_gravity, bool p_caustics_enabled, PackedFloat32Array p_cell_depth, float p_depth, float p_shallow_fade_depth) {
 	if (rd == nullptr || !shaders_ok) {
 		return;
 	}
@@ -509,7 +519,9 @@ void WaterSolverGPU::rt_build(Ref<WaterSolverGPU> p_self, int p_grid_resolution,
 	_init_wave_amplitude = p_wave_amplitude;
 	_init_gravity = p_gravity;
 	_init_caustics_enabled = p_caustics_enabled;
-	_init_wet_mask = p_wet_mask;
+	_init_cell_depth = p_cell_depth;
+	_init_depth = p_depth;
+	shallow_fade_depth = p_shallow_fade_depth;
 	_rt_build_buffers();
 	built.set_to(true);
 }
@@ -695,7 +707,8 @@ void WaterSolverGPU::rt_render_caustics(Ref<WaterSolverGPU> p_self, Vector3 p_su
 	put_v3(32, p_light_up, p_reference_depth);
 	put_f(48, domain_size.x);
 	put_f(52, domain_size.y);
-	put_f(56, has_wet_mask ? 1.0f : 0.0f);
+	put_f(56, has_cell_depth ? 1.0f : 0.0f);
+	put_f(60, shallow_fade_depth);
 	put_f(64, ocean_domain_size.x);
 	put_f(68, ocean_domain_size.y);
 	put_f(72, ocean_grid_resolution);
@@ -836,7 +849,7 @@ void WaterSolver::configure(const Settings &p_settings) {
 		s = SphereSlot();
 	}
 	pending_impulses.clear();
-	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_build).bind(gpu, settings.grid_resolution, settings.domain_size, settings.ocean_grid_resolution, settings.ocean_domain_size, settings.wind_speed, settings.wind_direction, settings.wave_amplitude, settings.gravity, settings.caustics_enabled, settings.wet_mask));
+	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_build).bind(gpu, settings.grid_resolution, settings.domain_size, settings.ocean_grid_resolution, settings.ocean_domain_size, settings.wind_speed, settings.wind_direction, settings.wave_amplitude, settings.gravity, settings.caustics_enabled, settings.cell_depth, settings.depth, settings.shallow_fade_depth));
 }
 
 PackedFloat32Array WaterSolver::_pack_spheres() const {
@@ -947,6 +960,19 @@ RID WaterSolver::get_ocean_height_texture_rd_rid() const {
 		return RID();
 	}
 	return gpu->tex_ocean_height;
+}
+
+RID WaterSolver::get_ocean_fade_texture_rd_rid() const {
+	if (gpu.is_null()) {
+		return RID();
+	}
+	return gpu->tex_ocean_fade;
+}
+
+float WaterSolver::shallow_fade(float p_depth, float p_fade_depth) {
+	// smoothstep(0, fade_depth, depth) -- matches the caustics pass.
+	const float t = CLAMP(p_depth / MAX(p_fade_depth, 1e-3f), 0.0f, 1.0f);
+	return t * t * (3.0f - 2.0f * t);
 }
 
 RID WaterSolver::get_caustics_texture_rd_rid() const {

@@ -443,9 +443,17 @@ into an even grid, so a coarse or fan-triangulated mesh still animates
 everywhere. The simulation is centred on the node's position; keep the node
 unrotated and unscaled.
 
+Set `seabed_from_floor` for water over uneven ground, like a beach or a lake
+bed: each ripple cell's depth is measured once from the floor (static bodies in
+`seabed_collision_mask`). Waves then travel at the local shallow-water speed,
+slowing over shallows, the shoreline falls wherever the ground rises above the
+water, and the ocean chop fades out over the last `shallow_fade_depth` metres.
+Without it, the constant `depth` applies everywhere.
+
 `sample_height(position)` returns the same combined surface height on the CPU,
-for buoyancy scripts. Outside a `surface_mesh` footprint it returns `-INF`
-(`is_wet()` is false there), so floaters on dry land don't float. Call `submit_sphere()` once per physics tick per floating
+for buoyancy scripts. Over dry cells (outside a `surface_mesh` footprint, or
+where the seabed is above the water) it returns `-INF` and `is_wet()` is false,
+so floaters on dry land don't float. Call `submit_sphere()` once per physics tick per floating
 body so it actually pushes the water (`ripple_amplitude` scales the wake), or
 `submit_impulse()` for one-off splashes.
 

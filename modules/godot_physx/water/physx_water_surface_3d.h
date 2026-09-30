@@ -107,6 +107,20 @@ public:
 	void set_surface_mesh(const Ref<Mesh> &p_mesh);
 	Ref<Mesh> get_surface_mesh() const { return surface_mesh; }
 
+	// Seabed: when on, each ripple cell's still-water depth is measured once
+	// on the first physics tick by a ray straight down onto static bodies in
+	// seabed_collision_mask. Waves then travel at the local shallow-water
+	// speed, cells where the seabed is above the water are dry shore, and
+	// the ocean chop fades out over the shallows. Off = the constant depth.
+	void set_seabed_from_floor(bool p_enabled);
+	bool get_seabed_from_floor() const { return seabed_from_floor; }
+	void set_seabed_collision_mask(uint32_t p_mask);
+	uint32_t get_seabed_collision_mask() const { return seabed_collision_mask; }
+	// Water shallower than this fades the ocean chop out, to none at the
+	// waterline.
+	void set_shallow_fade_depth(float p_depth);
+	float get_shallow_fade_depth() const { return shallow_fade_depth; }
+
 	void set_water_material(const Ref<ShaderMaterial> &p_material);
 	Ref<ShaderMaterial> get_water_material() const { return water_material; }
 
@@ -170,11 +184,22 @@ private:
 	// actually in use -- both fixed at _rebuild().
 	Vector2 grid_center;
 	Vector2 active_domain_size;
-	// CPU copy of the wet/dry mask for is_wet()/sample_height(); empty = all wet.
-	PackedByteArray wet_mask;
+	// Wet/dry cells from the surface_mesh footprint (empty = none set), and
+	// the still-water depth per ripple cell actually in use (<= 0 = dry;
+	// empty = the constant depth everywhere). CPU copies for is_wet() and
+	// sample_height().
+	PackedByteArray footprint_mask;
+	PackedFloat32Array cell_depth;
+	bool seabed_from_floor = false;
+	uint32_t seabed_collision_mask = 1;
+	float shallow_fade_depth = 1.0f;
+	// Seabed rays need the floor in the physics space, so with
+	// seabed_from_floor the solver is configured on the first physics tick.
+	bool seabed_pending = false;
 	Ref<ShaderMaterial> water_material;
 	Ref<Texture2DRD> ripple_height_tex;
 	Ref<Texture2DRD> ocean_height_tex;
+	Ref<Texture2DRD> ocean_fade_tex;
 	Ref<Texture2DRD> caustics_texture;
 	bool textures_bound = false; // set once, after the solver's RD textures actually exist (see _update())
 
@@ -195,6 +220,9 @@ private:
 	void _rebuild();
 	// Footprint triangles of surface_mesh in node-local XZ (degenerates dropped).
 	Vector<Vector2> _collect_footprint() const;
+	void _configure_solver();
+	// Casts the seabed rays; fills cell_depth.
+	void _sample_seabed();
 	static PackedByteArray _rasterize_wet_mask(const Vector<Vector2> &p_tris, Vector2 p_center, Vector2 p_domain, int p_n);
 	Ref<Mesh> _build_footprint_mesh(const Vector<Vector2> &p_tris, const Rect2 &p_bounds, int p_cells) const;
 	void _bind_textures();

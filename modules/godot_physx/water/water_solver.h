@@ -85,10 +85,14 @@ public:
 	RID uset_spectrum_init, uset_spectrum_evolve, uset_fft_spec_to_a, uset_fft_atob, uset_fft_btoa;
 
 	RID tex_ripple_height, tex_ocean_height; // real RD textures, wrapped by Texture2DRD on the caller side
-	// Wet/dry mask (R8, one texel per ripple cell, see water_inc.glsl), bound
-	// to both the ripple pass and the caustics pass. Uploaded once per build.
-	RID tex_wet_mask;
-	bool has_wet_mask = false;
+	// Still-water depth per ripple cell (R16F metres, <= 0 dry -- see
+	// water_inc.glsl), bound to the ripple pass and the caustics pass, and
+	// the ocean chop's shallow-water fade derived from it (R8, sampled by the
+	// surface material). Both uploaded once per build.
+	RID tex_cell_depth;
+	RID tex_ocean_fade;
+	bool has_cell_depth = false;
+	float shallow_fade_depth = 1.0f;
 	RID buf_blit_ripple_params, buf_blit_ocean_params; // just {n}, uploaded once at build (grid resolution is fixed per configure())
 	RID uset_blit_ripple, uset_blit_ocean;
 
@@ -133,9 +137,10 @@ public:
 	void rt_compile(Ref<WaterSolverGPU> p_self);
 	// Wind/amplitude only matter here -- they feed the ONE-TIME h0 spectrum
 	// generation (see rt_build()'s body), not the per-step evolution.
-	// p_wet_mask: grid_resolution^2 bytes (0 = dry, nonzero = wet), row-major
-	// by Z then X like the ripple grid; empty = everything wet.
-	void rt_build(Ref<WaterSolverGPU> p_self, int p_grid_resolution, Vector2 p_domain_size, int p_ocean_grid_resolution, Vector2 p_ocean_domain_size, float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_gravity, bool p_caustics_enabled, PackedByteArray p_wet_mask);
+	// p_cell_depth: grid_resolution^2 still-water depths in metres (<= 0 =
+	// dry), row-major by Z then X like the ripple grid; empty = p_depth
+	// everywhere.
+	void rt_build(Ref<WaterSolverGPU> p_self, int p_grid_resolution, Vector2 p_domain_size, int p_ocean_grid_resolution, Vector2 p_ocean_domain_size, float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_gravity, bool p_caustics_enabled, PackedFloat32Array p_cell_depth, float p_depth, float p_shallow_fade_depth);
 	// p_spheres/p_impulses: flat, 4 floats/entry (world_x, world_z, radius,
 	// strength), packed on the calling thread into an immutable value-copy
 	// snapshot before dispatch -- same thread-safety pattern
@@ -185,7 +190,8 @@ private:
 	float _init_wave_amplitude = 1.0f;
 	float _init_gravity = 9.81f;
 	bool _init_caustics_enabled = false;
-	PackedByteArray _init_wet_mask;
+	PackedFloat32Array _init_cell_depth;
+	float _init_depth = 3.0f;
 
 	void _rt_free_buffers();
 	void _rt_build_buffers();
@@ -240,9 +246,13 @@ public:
 		// passed to submit_sphere()/submit_impulse() are world space and made
 		// relative to this before upload.
 		Vector2 grid_center;
-		// Optional wet/dry mask, grid_resolution^2 bytes (0 = dry), row-major
-		// by Z then X. Empty = the whole domain is water.
-		PackedByteArray wet_mask;
+		// Optional still-water depth per ripple cell, grid_resolution^2 metres
+		// (<= 0 = dry land), row-major by Z then X. It sets each cell's wave
+		// speed and the shoreline. Empty = `depth` everywhere.
+		PackedFloat32Array cell_depth;
+		// Water shallower than this fades the FFT ocean chop out, down to
+		// none at the waterline.
+		float shallow_fade_depth = 1.0f;
 	};
 
 	static constexpr int MAX_SPHERES = WaterSolverGPU::MAX_SPHERES;
@@ -279,6 +289,11 @@ public:
 	// these with no CPU round trip at all.
 	RID get_ripple_height_texture_rd_rid() const;
 	RID get_ocean_height_texture_rd_rid() const;
+	// R8 shallow-water fade for the ocean layer over the ripple domain (1 =
+	// full chop, 0 = none); valid once is_available().
+	RID get_ocean_fade_texture_rd_rid() const;
+	// The ocean layer's fade factor for a still-water depth.
+	static float shallow_fade(float p_depth, float p_fade_depth);
 	Vector2 get_domain_size() const { return settings.domain_size; }
 	Vector2 get_grid_center() const { return settings.grid_center; }
 	Vector2 get_ocean_domain_size() const { return settings.ocean_domain_size; }

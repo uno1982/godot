@@ -28,7 +28,8 @@ void main() {
 	}
 	int idx = grid_index(c);
 	if (!is_wet(c)) {
-		// Dry (outside the surface mesh's footprint): never simulated. Its
+		// Dry (seabed above the water, or outside the surface mesh's
+		// footprint): never simulated. Its
 		// rendered height continues the adjacent water (mean of its wet 3x3
 		// neighbours, last step's values) instead of pinning to WATER_LEVEL:
 		// the surface mesh's rim lies between the last wet and first dry cell
@@ -55,28 +56,26 @@ void main() {
 
 	int xl = max(c.x - 1, 0), xr = min(c.x + 1, GRID_N - 1);
 	int yl = max(c.y - 1, 0), yr = min(c.y + 1, GRID_N - 1);
-	// A dry neighbor is a wall: use this cell's own height in its place (zero
-	// gradient across the shoreline), the same reflecting condition the
-	// clamped grid edge above gives, so waves bounce off the real shore.
-	float h_xl = is_wet(ivec2(xl, c.y)) ? state_in[grid_index(ivec2(xl, c.y))].x : h;
-	float h_xr = is_wet(ivec2(xr, c.y)) ? state_in[grid_index(ivec2(xr, c.y))].x : h;
-	float h_yl = is_wet(ivec2(c.x, yl)) ? state_in[grid_index(ivec2(c.x, yl))].x : h;
-	float h_yr = is_wet(ivec2(c.x, yr)) ? state_in[grid_index(ivec2(c.x, yr))].x : h;
-	// At a local bump (h above its neighbors) this is negative -- the
-	// restoring term below must carry a POSITIVE coefficient so it pulls the
-	// bump back down, not up. Getting this sign backwards was a real bug
-	// caught by the probe test: it turned the restoring force into a runaway
-	// positive-feedback amplifier (a small impulse blew up to 1e8+ within
-	// ~150 steps instead of decaying).
-	float lap = h_xl + h_xr + h_yl + h_yr - 4.0 * h;
-
+	// Variable-depth wave equation in flux form: each face between two wet
+	// cells carries the mean of their coefficients, so it stays symmetric
+	// (energy-conserving) as the depth changes -- waves slow and bunch up
+	// over shallows. A dry neighbour (or the clamped grid edge, which
+	// contributes h - h = 0) has no face: a reflecting wall.
+	float k_c = wave_coefficient(c);
+	ivec2 nbr[4] = ivec2[4](ivec2(xl, c.y), ivec2(xr, c.y), ivec2(c.x, yl), ivec2(c.x, yr));
+	float flux = 0.0;
+	for (int i = 0; i < 4; i++) {
+		if (is_wet(nbr[i])) {
+			flux += 0.5 * (k_c + wave_coefficient(nbr[i])) * (state_in[grid_index(nbr[i])].x - h);
+		}
+	}
 	// Explicit damped wave equation, backward-difference damping (h_t ~=
-	// (h-hp)/dt): hn = h*(2-a) - hp*(1-a) + c^2*dt^2*lap(h), a = ALPHA*DT.
+	// (h-hp)/dt): hn = h*(2-a) - hp*(1-a) + flux, a = ALPHA*DT. At a local
+	// bump the flux is negative and pulls it back down -- its sign is what
+	// keeps this stable (getting it backwards once turned a small impulse
+	// into 1e8+ within ~150 steps).
 	float a = ALPHA * DT;
-	// Shallow-water wave speed is sqrt(g * depth). Cap the 2D explicit
-	// scheme's coefficient at its CFL stability limit.
-	float wave_coefficient = min(GRAV * max(DEPTH, 0.1) * DT * DT / (CELL * CELL), 0.5);
-	float hn = h * (2.0 - a) - hp * (1.0 - a) + wave_coefficient * lap;
+	float hn = h * (2.0 - a) - hp * (1.0 - a) + flux;
 
 	// Body-disturbance coupling: pull the surface toward a soft target set by
 	// nearby spheres/impulses, rather than snapping to it instantly -- a

@@ -37,10 +37,12 @@
 #include "core/templates/local_vector.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/resources/3d/primitive_meshes.h"
+#include "scene/resources/3d/world_3d.h"
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
 #include "scene/resources/shader.h"
 #include "scene/resources/texture_rd.h"
+#include "servers/physics_3d/physics_server_3d.h"
 
 namespace {
 // A plain spatial Shader (Godot's own shading language, NOT the RD compute
@@ -75,6 +77,9 @@ render_mode blend_mix, cull_disabled, unshaded;
 
 uniform sampler2D ripple_height_tex : hint_default_black, filter_linear, repeat_disable;
 uniform sampler2D ocean_height_tex : hint_default_black, filter_linear, repeat_disable;
+// Ocean chop multiplier over the ripple domain: 1 in deep water, fading to 0
+// at the waterline (set by PhysXWaterSurface3D when it has a seabed).
+uniform sampler2D ocean_fade_tex : hint_default_white, filter_linear, repeat_disable;
 uniform vec2 ripple_domain_size = vec2(20.0, 20.0);
 uniform vec2 ocean_domain_size = vec2(40.0, 40.0);
 // World XZ both height fields are centred on (set by PhysXWaterSurface3D).
@@ -87,7 +92,8 @@ float sample_h(vec2 world_xz) {
 	vec2 rel = world_xz - grid_center;
 	vec2 uv_r = rel / ripple_domain_size + 0.5;
 	vec2 uv_o = rel / ocean_domain_size + 0.5;
-	return texture(ripple_height_tex, clamp(uv_r, vec2(0.0), vec2(1.0))).r + texture(ocean_height_tex, clamp(uv_o, vec2(0.0), vec2(1.0))).r;
+	vec2 cuv_r = clamp(uv_r, vec2(0.0), vec2(1.0));
+	return texture(ripple_height_tex, cuv_r).r + texture(ocean_height_tex, clamp(uv_o, vec2(0.0), vec2(1.0))).r * texture(ocean_fade_tex, cuv_r).r;
 }
 
 void vertex() {
@@ -237,6 +243,12 @@ void PhysXWaterSurface3D::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("set_surface_mesh", "mesh"), &PhysXWaterSurface3D::set_surface_mesh);
 	ClassDB::bind_method(D_METHOD("get_surface_mesh"), &PhysXWaterSurface3D::get_surface_mesh);
+	ClassDB::bind_method(D_METHOD("set_seabed_from_floor", "enabled"), &PhysXWaterSurface3D::set_seabed_from_floor);
+	ClassDB::bind_method(D_METHOD("get_seabed_from_floor"), &PhysXWaterSurface3D::get_seabed_from_floor);
+	ClassDB::bind_method(D_METHOD("set_seabed_collision_mask", "mask"), &PhysXWaterSurface3D::set_seabed_collision_mask);
+	ClassDB::bind_method(D_METHOD("get_seabed_collision_mask"), &PhysXWaterSurface3D::get_seabed_collision_mask);
+	ClassDB::bind_method(D_METHOD("set_shallow_fade_depth", "depth"), &PhysXWaterSurface3D::set_shallow_fade_depth);
+	ClassDB::bind_method(D_METHOD("get_shallow_fade_depth"), &PhysXWaterSurface3D::get_shallow_fade_depth);
 	ClassDB::bind_method(D_METHOD("set_water_material", "material"), &PhysXWaterSurface3D::set_water_material);
 	ClassDB::bind_method(D_METHOD("get_water_material"), &PhysXWaterSurface3D::get_water_material);
 
@@ -265,6 +277,11 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "water_level"), "set_water_level", "get_water_level");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "damping"), "set_damping", "get_damping");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ripple_amplitude", PROPERTY_HINT_RANGE, "0,2,0.01,or_greater"), "set_ripple_amplitude", "get_ripple_amplitude");
+
+	ADD_GROUP("Seabed", "");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "seabed_from_floor"), "set_seabed_from_floor", "get_seabed_from_floor");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "seabed_collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_seabed_collision_mask", "get_seabed_collision_mask");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shallow_fade_depth", PROPERTY_HINT_RANGE, "0.01,10,0.01,or_greater,suffix:m"), "set_shallow_fade_depth", "get_shallow_fade_depth");
 
 	ADD_GROUP("Ocean", "ocean_");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "ocean_grid_resolution"), "set_ocean_grid_resolution", "get_ocean_grid_resolution");
@@ -344,6 +361,21 @@ void PhysXWaterSurface3D::set_wave_amplitude(float p_amp) {
 	_rebuild();
 }
 
+void PhysXWaterSurface3D::set_seabed_from_floor(bool p_enabled) {
+	seabed_from_floor = p_enabled;
+	_rebuild();
+}
+
+void PhysXWaterSurface3D::set_seabed_collision_mask(uint32_t p_mask) {
+	seabed_collision_mask = p_mask;
+	_rebuild();
+}
+
+void PhysXWaterSurface3D::set_shallow_fade_depth(float p_depth) {
+	shallow_fade_depth = MAX(p_depth, 0.01f);
+	_rebuild();
+}
+
 void PhysXWaterSurface3D::set_surface_mesh(const Ref<Mesh> &p_mesh) {
 	surface_mesh = p_mesh;
 	_rebuild();
@@ -415,7 +447,8 @@ void PhysXWaterSurface3D::_rebuild() {
 	// masks everything outside it dry; without one, the plain square domain.
 	Vector2 local_center;
 	active_domain_size = domain_size;
-	wet_mask.clear();
+	footprint_mask.clear();
+	cell_depth.clear();
 	water_mesh.unref();
 	if (surface_mesh.is_valid()) {
 		const Vector<Vector2> tris = _collect_footprint();
@@ -432,7 +465,7 @@ void PhysXWaterSurface3D::_rebuild() {
 			const real_t side = MAX(bounds.size.x, bounds.size.y);
 			const real_t padded = side * (real_t)grid_resolution / (real_t)MAX(grid_resolution - 2, 1);
 			active_domain_size = Vector2(padded, padded);
-			wet_mask = _rasterize_wet_mask(tris, local_center, active_domain_size, grid_resolution);
+			footprint_mask = _rasterize_wet_mask(tris, local_center, active_domain_size, grid_resolution);
 			water_mesh = _build_footprint_mesh(tris, bounds, MAX(grid_resolution, ocean_grid_resolution));
 		}
 	}
@@ -469,11 +502,81 @@ void PhysXWaterSurface3D::_rebuild() {
 		return;
 	}
 
+	if (seabed_from_floor) {
+		// Rays need the floor already in the physics space -- defer to the
+		// first physics tick (see _update()).
+		seabed_pending = true;
+		return;
+	}
+	if (!footprint_mask.is_empty()) {
+		const int cells = grid_resolution * grid_resolution;
+		cell_depth.resize(cells);
+		float *dw = cell_depth.ptrw();
+		for (int i = 0; i < cells; i++) {
+			dw[i] = footprint_mask[i] ? depth : -1.0f;
+		}
+	}
+	_configure_solver();
+}
+
+void PhysXWaterSurface3D::_sample_seabed() {
+	// One ray per ripple cell centre, straight down from well above the water
+	// onto static bodies only: anything else it hits (a floater, a player) is
+	// excluded and the ray cast again. The seabed can rise above the water --
+	// that's dry beach, depth <= 0.
+	constexpr real_t PROBE_ABOVE = 100.0;
+	constexpr real_t PROBE_BELOW = 1000.0;
+	constexpr int MAX_SKIPS = 8;
+	const int n = grid_resolution;
+	cell_depth.resize(n * n);
+	float *dw = cell_depth.ptrw();
+	const real_t surface_y = get_global_position().y + water_level;
+	const Vector2 cell = active_domain_size / (real_t)n;
+	const Vector2 grid_min = grid_center - active_domain_size * 0.5f;
+	PhysicsDirectSpaceState3D *space = get_world_3d()->get_direct_space_state();
+	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
+	int hits = 0;
+	for (int z = 0; z < n; z++) {
+		for (int x = 0; x < n; x++) {
+			const int i = z * n + x;
+			if (!footprint_mask.is_empty() && !footprint_mask[i]) {
+				dw[i] = -1.0f;
+				continue;
+			}
+			const Vector2 p = grid_min + Vector2(x + 0.5f, z + 0.5f) * cell;
+			PhysicsDirectSpaceState3D::RayParameters ray;
+			ray.from = Vector3(p.x, surface_y + PROBE_ABOVE, p.y);
+			ray.to = Vector3(p.x, surface_y - PROBE_BELOW, p.y);
+			ray.collision_mask = seabed_collision_mask;
+			ray.collide_with_areas = false;
+			float d = depth; // nothing below: open water of the constant depth
+			for (int skip = 0; skip < MAX_SKIPS; skip++) {
+				PhysicsDirectSpaceState3D::RayResult result;
+				if (space == nullptr || !space->intersect_ray(ray, result)) {
+					break;
+				}
+				if (ps->body_get_mode(result.rid) == PhysicsServer3D::BODY_MODE_STATIC) {
+					d = surface_y - result.position.y;
+					hits++;
+					break;
+				}
+				ray.exclude.insert(result.rid);
+			}
+			dw[i] = d;
+		}
+	}
+	if (hits == 0) {
+		WARN_PRINT("PhysXWaterSurface3D: seabed_from_floor found no static body under the water (check seabed_collision_mask); using the constant depth.");
+	}
+}
+
+void PhysXWaterSurface3D::_configure_solver() {
 	WaterSolver::Settings s;
 	s.grid_resolution = grid_resolution;
 	s.domain_size = active_domain_size;
 	s.grid_center = grid_center;
-	s.wet_mask = wet_mask;
+	s.cell_depth = cell_depth;
+	s.shallow_fade_depth = shallow_fade_depth;
 	s.depth = depth;
 	s.damping = damping;
 	s.ripple_amplitude = ripple_amplitude;
@@ -500,6 +603,12 @@ void PhysXWaterSurface3D::_rebuild() {
 
 void PhysXWaterSurface3D::_update(double p_delta) {
 	if (Engine::get_singleton()->is_editor_hint()) {
+		return;
+	}
+	if (seabed_pending) {
+		seabed_pending = false;
+		_sample_seabed();
+		_configure_solver();
 		return;
 	}
 	if (!solver.has_device()) {
@@ -530,8 +639,12 @@ void PhysXWaterSurface3D::_bind_textures() {
 	if (ocean_height_tex.is_null()) {
 		ocean_height_tex.instantiate();
 	}
+	if (ocean_fade_tex.is_null()) {
+		ocean_fade_tex.instantiate();
+	}
 	ripple_height_tex->set_texture_rd_rid(solver.get_ripple_height_texture_rd_rid());
 	ocean_height_tex->set_texture_rd_rid(solver.get_ocean_height_texture_rd_rid());
+	ocean_fade_tex->set_texture_rd_rid(solver.get_ocean_fade_texture_rd_rid());
 	if (caustics_enabled) {
 		if (caustics_texture.is_null()) {
 			caustics_texture.instantiate();
@@ -541,6 +654,7 @@ void PhysXWaterSurface3D::_bind_textures() {
 	if (water_material.is_valid()) {
 		water_material->set_shader_parameter("ripple_height_tex", ripple_height_tex);
 		water_material->set_shader_parameter("ocean_height_tex", ocean_height_tex);
+		water_material->set_shader_parameter("ocean_fade_tex", ocean_fade_tex);
 	}
 	textures_bound = true;
 }
@@ -581,22 +695,28 @@ float PhysXWaterSurface3D::sample_height(Vector3 p_world_pos) const {
 	}
 	const float x = p_world_pos.x - grid_center.x;
 	const float z = p_world_pos.z - grid_center.y;
-	const float ripple = _bilinear_sample(cached_ripple_height, cached_ripple_n, cached_ripple_domain, x, z);
-	const float ocean = _bilinear_sample(cached_ocean_height, cached_ocean_n, cached_ocean_domain, x, z);
-	return water_level + ripple + ocean;
+	// The ripple readback already includes water_level (it's the composed
+	// height the renderer draws), so only fall back to it before the first
+	// readback lands. Both are relative to the node, like the rendered mesh.
+	const float ripple = cached_ripple_height.is_empty() ? water_level : _bilinear_sample(cached_ripple_height, cached_ripple_n, cached_ripple_domain, x, z);
+	float ocean = _bilinear_sample(cached_ocean_height, cached_ocean_n, cached_ocean_domain, x, z);
+	if (!cell_depth.is_empty()) {
+		ocean *= WaterSolver::shallow_fade(_bilinear_sample(cell_depth, grid_resolution, active_domain_size, x, z), shallow_fade_depth);
+	}
+	return get_global_position().y + ripple + ocean;
 }
 
 bool PhysXWaterSurface3D::is_wet(Vector3 p_world_pos) const {
-	if (wet_mask.is_empty()) {
+	if (cell_depth.is_empty()) {
 		return true;
 	}
 	const int n = grid_resolution;
 	const int gx = (int)Math::floor(((p_world_pos.x - grid_center.x) / active_domain_size.x + 0.5f) * n);
 	const int gz = (int)Math::floor(((p_world_pos.z - grid_center.y) / active_domain_size.y + 0.5f) * n);
-	if (gx < 0 || gz < 0 || gx >= n || gz >= n || wet_mask.size() != n * n) {
+	if (gx < 0 || gz < 0 || gx >= n || gz >= n || cell_depth.size() != n * n) {
 		return false;
 	}
-	return wet_mask[gz * n + gx] != 0;
+	return cell_depth[gz * n + gx] > 0.0f;
 }
 
 Vector<Vector2> PhysXWaterSurface3D::_collect_footprint() const {

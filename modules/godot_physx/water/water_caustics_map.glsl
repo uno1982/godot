@@ -28,7 +28,7 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 sun_dir_ior;       // xyz sun_direction (unit, pointing FROM sun TOWARD scene), w ior
 	vec4 light_right_ext;   // xyz light-space "right" basis vector (unit), w half_extent (world units)
 	vec4 light_up_refdepth; // xyz light-space "up" basis vector (unit), w reference_depth (world units along the refracted ray)
-	vec4 ripple_domain;     // xy ripple layer's domain size, z 1 if a wet/dry mask is set, w unused
+	vec4 ripple_domain;     // xy ripple layer's domain size, z 1 if per-cell depth is set, w shallow_fade_depth
 	vec4 ocean_domain;      // xy ocean layer's domain size, zw unused
 	vec4 viewport_wh;       // xy render target size in pixels, zw unused
 	vec4 light_origin;      // xyz center of the projected map, w unused
@@ -37,6 +37,25 @@ layout(set = 0, binding = 0, std140) uniform Params {
 layout(set = 0, binding = 1) uniform sampler2D ripple_height_tex;
 layout(set = 0, binding = 2) uniform sampler2D ocean_height_tex;
 
+// Still-water depth over the ripple domain (see water_inc.glsl): light only
+// passes through water, and the ocean chop fades out over the shallows the
+// same way the rendered surface does.
+layout(set = 0, binding = 3) uniform sampler2D cell_depth_tex;
+
+float depth_at(vec2 xz) {
+	vec2 uv = xz / ripple_domain.xy + 0.5;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		// Beyond the ripple grid: open water when no per-cell depth is set,
+		// dry when one is (a surface_mesh or seabed defines the water).
+		return ripple_domain.z > 0.5 ? 0.0 : 1e6;
+	}
+	return texture(cell_depth_tex, uv).r;
+}
+
+float ocean_fade(vec2 xz) {
+	return smoothstep(0.0, max(ripple_domain.w, 1e-3), depth_at(xz));
+}
+
 layout(location = 0) in vec2 in_xz;
 
 layout(location = 0) out vec2 v_flat_xz;
@@ -44,7 +63,7 @@ layout(location = 0) out vec2 v_flat_xz;
 float sample_h(vec2 world_xz) {
 	vec2 uv_r = world_xz / ripple_domain.xy + 0.5;
 	vec2 uv_o = world_xz / ocean_domain.xy + 0.5;
-	return texture(ripple_height_tex, clamp(uv_r, vec2(0.0), vec2(1.0))).r + texture(ocean_height_tex, clamp(uv_o, vec2(0.0), vec2(1.0))).r;
+	return texture(ripple_height_tex, clamp(uv_r, vec2(0.0), vec2(1.0))).r + texture(ocean_height_tex, clamp(uv_o, vec2(0.0), vec2(1.0))).r * ocean_fade(world_xz);
 }
 
 void main() {
@@ -97,9 +116,24 @@ layout(set = 0, binding = 0, std140) uniform Params {
 
 layout(set = 0, binding = 1) uniform sampler2D ripple_height_tex;
 layout(set = 0, binding = 2) uniform sampler2D ocean_height_tex;
-// Wet/dry mask over the ripple domain (see water_inc.glsl). Light only passes
-// through wet texels; outside the ripple domain it is dry when a mask is set.
-layout(set = 0, binding = 3) uniform sampler2D wet_mask_tex;
+// Still-water depth over the ripple domain (see water_inc.glsl): light only
+// passes through water, and the ocean chop fades out over the shallows the
+// same way the rendered surface does.
+layout(set = 0, binding = 3) uniform sampler2D cell_depth_tex;
+
+float depth_at(vec2 xz) {
+	vec2 uv = xz / ripple_domain.xy + 0.5;
+	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
+		// Beyond the ripple grid: open water when no per-cell depth is set,
+		// dry when one is (a surface_mesh or seabed defines the water).
+		return ripple_domain.z > 0.5 ? 0.0 : 1e6;
+	}
+	return texture(cell_depth_tex, uv).r;
+}
+
+float ocean_fade(vec2 xz) {
+	return smoothstep(0.0, max(ripple_domain.w, 1e-3), depth_at(xz));
+}
 
 layout(location = 0) in vec2 v_flat_xz;
 
@@ -109,7 +143,7 @@ float sample_h(vec2 world_xz) {
 	vec2 uv_r = world_xz / ripple_domain.xy + 0.5;
 	vec2 uv_o = world_xz / ocean_domain.xy + 0.5;
 	return texture(ripple_height_tex, clamp(uv_r, vec2(0.0), vec2(1.0))).r +
-			texture(ocean_height_tex, clamp(uv_o, vec2(0.0), vec2(1.0))).r;
+			texture(ocean_height_tex, clamp(uv_o, vec2(0.0), vec2(1.0))).r * ocean_fade(world_xz);
 }
 
 vec2 project_refracted_point(vec2 xz, out float incidence) {
@@ -132,11 +166,7 @@ vec2 project_refracted_point(vec2 xz, out float incidence) {
 }
 
 float wet_at(vec2 xz) {
-	vec2 uv = xz / ripple_domain.xy + 0.5;
-	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
-		return 1.0 - ripple_domain.z;
-	}
-	return texture(wet_mask_tex, uv).r;
+	return clamp(depth_at(xz) * 20.0, 0.0, 1.0);
 }
 
 void main() {

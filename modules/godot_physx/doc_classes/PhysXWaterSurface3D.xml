@@ -90,7 +90,7 @@
 			World-space direction that light travels from the source toward the water. It need not be normalized.
 		</member>
 		<member name="choppiness" type="float" setter="set_choppiness" getter="get_choppiness" default="1.0">
-			Tessendorf horizontal displacement of the ocean layer: pulls the surface toward the wave crests so they sharpen and the troughs flatten, the way real wind waves look. [code]0[/code] is a pure height field; around [code]1[/code] is realistic, and much higher can fold the surface through itself. Fades out over the shallows with the rest of the ocean chop. Where the displacement squeezes the surface the default material draws whitecap foam (its [code]foam_threshold[/code] and [code]foam_color[/code] shader parameters tune it). [method sample_height] accounts for the displacement.
+			Tessendorf horizontal displacement of the ocean layer: pulls the surface toward the wave crests so they sharpen and the troughs flatten, the way real wind waves look. [code]0[/code] is a pure height field; around [code]1[/code] is realistic, and much higher can fold the surface through itself. Fades out over the shallows with the rest of the ocean chop. Where the displacement folds the surface it also injects whitecap foam (see [member foam_threshold]). [method sample_height] accounts for the displacement.
 		</member>
 		<member name="damping" type="float" setter="set_damping" getter="get_damping" default="0.08">
 			Damping (ALPHA) on the local ripple layer's wave equation -- higher settles disturbances faster.
@@ -103,6 +103,12 @@
 		</member>
 		<member name="fetch" type="float" setter="set_fetch" getter="get_fetch" default="0.0">
 			How far the wind has blown over open water, in metres. The ocean layer is a fetch-limited JONSWAP spectrum, so fetch sets how tall and how long the wind waves get at a given [member wind_speed]: a few metres give tiny, short ripples, kilometres give a developed sea. [code]0[/code] (auto) uses the [member surface_mesh] footprint's longest side for enclosed water, or a fully developed open sea (100 km) without one. Only wavelengths up to [member ocean_domain_size] are represented, and waves shorter than two ocean grid cells aren't, so a small fetch at a coarse [member ocean_grid_resolution] can leave the ocean layer flat.
+		</member>
+		<member name="foam_persistence" type="float" setter="set_foam_persistence" getter="get_foam_persistence" default="2.5">
+			Time constant in seconds over which whitecap foam fades once its wave has passed. The foam is kept in a texture that moves with the water rather than the wave shape, so a longer persistence leaves longer streaks behind the crests. The default material also breaks fading foam into lace ([code]foam_breakup[/code], [code]foam_detail_scale[/code] and [code]foam_color[/code] shader parameters).
+		</member>
+		<member name="foam_threshold" type="float" setter="set_foam_threshold" getter="get_foam_threshold" default="0.7">
+			How squeezed the surface must be before whitecap foam forms: foam is injected where the choppy displacement's area Jacobian drops below this ([code]1[/code] = unsqueezed, [code]0[/code] = folding over). Lower gives fewer whitecaps, needing steeper waves; higher gives more. Depends on [member choppiness] -- without it nothing folds and no foam forms.
 		</member>
 		<member name="grid_resolution" type="int" setter="set_grid_resolution" getter="get_grid_resolution" default="96">
 			Cell count per side of the local ripple layer's grid. Not required to be a power of two, unlike [member ocean_grid_resolution].

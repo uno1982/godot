@@ -124,6 +124,14 @@ public:
 	// per_pixel_normals uniform.
 	void set_normal_mode(NormalMode p_mode);
 	NormalMode get_normal_mode() const { return normal_mode; }
+	// Whitecap foam: injected where the choppy displacement folds the surface
+	// (area Jacobian below foam_threshold -- 1 = unsqueezed, 0 = folding over)
+	// and fading with a time constant of foam_persistence seconds, so crests
+	// leave streaks behind. Lower threshold = fewer whitecaps.
+	void set_foam_threshold(float p_threshold);
+	float get_foam_threshold() const { return foam_threshold; }
+	void set_foam_persistence(float p_seconds);
+	float get_foam_persistence() const { return foam_persistence; }
 
 	// Optional shape: any flat mesh whose X/Z footprint (node-local) is the
 	// water's outline -- a disc, a kidney bean, a lake with an island. When
@@ -204,6 +212,8 @@ private:
 	float fetch = 0.0f;
 	float choppiness = 1.0f;
 	NormalMode normal_mode = NORMAL_MODE_PER_PIXEL;
+	float foam_threshold = 0.7f;
+	float foam_persistence = 2.5f;
 	// Longest side of the surface_mesh footprint (0 = none), for auto fetch.
 	real_t footprint_extent = 0.0;
 
@@ -234,6 +244,7 @@ private:
 	Ref<Texture2DRD> ocean_fade_tex;
 	Ref<Texture2DRD> ocean_disp_tex;
 	Ref<Texture2DRD> ocean_deriv_tex;
+	Ref<Texture2DRD> ocean_foam_tex;
 	Ref<Texture2DRD> caustics_texture;
 	bool textures_bound = false; // set once, after the solver's RD textures actually exist (see _update())
 

@@ -34,6 +34,7 @@
 #include "water_blit_ripple.glsl.gen.h"
 #include "water_caustics_map.glsl.gen.h"
 #include "water_fft.glsl.gen.h"
+#include "water_foam.glsl.gen.h"
 #include "water_ripple.glsl.gen.h"
 #include "water_spectrum_evolve.glsl.gen.h"
 #include "water_spectrum_init.glsl.gen.h"
@@ -52,6 +53,7 @@ constexpr int OCEAN_INIT_PARAMS_BYTES = 64; // 4 * vec4 -- see water_spectrum_in
 constexpr int OCEAN_EVOLVE_PARAMS_BYTES = 32; // 2 * vec4 -- see water_spectrum_evolve.glsl's Params
 constexpr int FFT_PARAMS_BYTES = 16; // 1 * ivec4 -- see water_fft.glsl's Params
 constexpr int BLIT_PARAMS_BYTES = 16; // 1 * ivec4 -- see water_blit_*.glsl's Params
+constexpr int FOAM_PARAMS_BYTES = 32; // vec4 + ivec4 -- see water_foam.glsl's Params
 constexpr int CAUSTICS_PARAMS_BYTES = 112; // 7 * vec4, std140 -- see water_caustics_map.glsl's Params
 constexpr uint32_t GROUP = 8; // matches every water_*.glsl's local_size_x/y
 
@@ -98,6 +100,7 @@ void WaterSolverGPU::rt_compile(Ref<WaterSolverGPU> p_self) {
 		{ water_fft_shader_glsl, &shader_fft, &pipeline_fft },
 		{ water_blit_ripple_shader_glsl, &shader_blit_ripple, &pipeline_blit_ripple },
 		{ water_blit_ocean_shader_glsl, &shader_blit_ocean, &pipeline_blit_ocean },
+		{ water_foam_shader_glsl, &shader_foam, &pipeline_foam },
 	};
 	for (Entry &e : entries) {
 		Ref<RDShaderFile> sf;
@@ -170,7 +173,7 @@ void WaterSolverGPU::_rt_free_buffers() {
 	RID *usets[] = { &uset_atob, &uset_btoa, &uset_spectrum_init, &uset_spectrum_evolve,
 		&uset_fft_spec_to_a, &uset_fft_atob, &uset_fft_btoa, &uset_fft_dz_to_c, &uset_fft_ctod, &uset_fft_dtoc,
 		&uset_fft_c_to_e, &uset_fft_etof, &uset_fft_ftoe, &uset_fft_d_to_g, &uset_fft_gtoh, &uset_fft_htog,
-		&uset_blit_ripple, &uset_blit_ocean, &uset_caustics };
+		&uset_blit_ripple, &uset_blit_ocean, &uset_caustics, &uset_foam };
 	for (RID *u : usets) {
 		if (u->is_valid()) {
 			rd->free_rid(*u);
@@ -201,14 +204,14 @@ void WaterSolverGPU::_rt_free_buffers() {
 	RID *bufs[] = { &buf_params, &buf_state_a, &buf_state_b, &buf_height, &buf_spheres, &buf_impulses,
 		&buf_ocean_init_params, &buf_ocean_evolve_params, &buf_fft_params, &buf_h0, &buf_ocean_spec, &buf_fft_a, &buf_fft_b,
 		&buf_ocean_spec_dz, &buf_fft_c, &buf_fft_d, &buf_ocean_spec_c, &buf_fft_e, &buf_fft_f, &buf_ocean_spec_d, &buf_fft_g, &buf_fft_h,
-		&buf_blit_ripple_params, &buf_blit_ocean_params, &buf_caustics_params };
+		&buf_blit_ripple_params, &buf_blit_ocean_params, &buf_caustics_params, &buf_foam_params };
 	for (RID *b : bufs) {
 		if (b->is_valid()) {
 			rd->free_rid(*b);
 			*b = RID();
 		}
 	}
-	RID *texs[] = { &tex_ripple_height, &tex_ocean_height, &tex_ocean_disp, &tex_ocean_deriv, &tex_caustics, &tex_cell_depth, &tex_ocean_fade };
+	RID *texs[] = { &tex_ripple_height, &tex_ocean_height, &tex_ocean_disp, &tex_ocean_deriv, &tex_ocean_foam, &tex_caustics, &tex_cell_depth, &tex_ocean_fade };
 	for (RID *t : texs) {
 		if (t->is_valid()) {
 			rd->free_rid(*t);
@@ -379,6 +382,16 @@ void WaterSolverGPU::_rt_build_buffers() {
 	disp_tf.format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT;
 	tex_ocean_disp = rd->texture_create(disp_tf, RD::TextureView());
 	tex_ocean_deriv = rd->texture_create(disp_tf, RD::TextureView());
+	{
+		RD::TextureFormat foam_tf = ocean_tf;
+		foam_tf.format = RD::DATA_FORMAT_R32_SFLOAT;
+		Vector<uint8_t> zeros;
+		zeros.resize(ocells * sizeof(float));
+		memset(zeros.ptrw(), 0, zeros.size());
+		Vector<Vector<uint8_t>> foam_data;
+		foam_data.push_back(zeros);
+		tex_ocean_foam = rd->texture_create(foam_tf, RD::TextureView(), foam_data);
+	}
 
 	buf_blit_ripple_params = rd->uniform_buffer_create(BLIT_PARAMS_BYTES);
 	buf_blit_ocean_params = rd->uniform_buffer_create(BLIT_PARAMS_BYTES);
@@ -430,6 +443,19 @@ void WaterSolverGPU::_rt_build_buffers() {
 			uniforms.push_back(u);
 		}
 		uset_blit_ocean = rd->uniform_set_create(uniforms, shader_blit_ocean, 0);
+	}
+	buf_foam_params = rd->uniform_buffer_create(FOAM_PARAMS_BYTES);
+	{
+		Vector<RD::Uniform> uniforms;
+		const RID ids[4] = { buf_foam_params, tex_ocean_deriv, tex_ocean_disp, tex_ocean_foam };
+		for (int bnd = 0; bnd < 4; bnd++) {
+			RD::Uniform u;
+			u.uniform_type = bnd == 0 ? RD::UNIFORM_TYPE_UNIFORM_BUFFER : RD::UNIFORM_TYPE_IMAGE;
+			u.binding = bnd;
+			u.append_id(ids[bnd]);
+			uniforms.push_back(u);
+		}
+		uset_foam = rd->uniform_set_create(uniforms, shader_foam, 0);
 	}
 
 	// h0 depends only on static settings (wind/domain/amplitude) -- generate
@@ -717,6 +743,21 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, double p_delta, float p
 		rd->compute_list_dispatch(cl, groups_for(on), groups_for(on), 1);
 		rd->compute_list_end();
 	}
+	// Persistent foam: inject where the surface folds, fade the rest.
+	{
+		float fp[4] = { Math::exp(-(float)p_delta / MAX(foam_persistence, 0.01f)), foam_choppiness, foam_threshold, 0.25f };
+		int32_t fr[4] = { on, 0, 0, 0 };
+		Vector<uint8_t> fb;
+		fb.resize(FOAM_PARAMS_BYTES);
+		memcpy(fb.ptrw(), fp, sizeof(fp));
+		memcpy(fb.ptrw() + sizeof(fp), fr, sizeof(fr));
+		rd->buffer_update(buf_foam_params, 0, FOAM_PARAMS_BYTES, fb.ptr());
+		RD::ComputeListID cl = rd->compute_list_begin();
+		rd->compute_list_bind_compute_pipeline(cl, pipeline_foam);
+		rd->compute_list_bind_uniform_set(cl, uset_foam, 0);
+		rd->compute_list_dispatch(cl, groups_for(on), groups_for(on), 1);
+		rd->compute_list_end();
+	}
 
 	if (local) {
 		rd->submit();
@@ -852,6 +893,12 @@ void WaterSolverGPU::rt_on_ocean_height(const PackedByteArray &p_data, Ref<Water
 	}
 }
 
+void WaterSolverGPU::rt_set_foam(Ref<WaterSolverGPU> p_self, float p_choppiness, float p_threshold, float p_persistence) {
+	foam_choppiness = p_choppiness;
+	foam_threshold = p_threshold;
+	foam_persistence = p_persistence;
+}
+
 void WaterSolverGPU::rt_free(Ref<WaterSolverGPU> p_self) {
 	if (rd == nullptr) {
 		return;
@@ -860,14 +907,14 @@ void WaterSolverGPU::rt_free(Ref<WaterSolverGPU> p_self) {
 		rd->sync();
 	}
 	_rt_free_buffers();
-	RID *pipelines[] = { &pipeline_ripple, &pipeline_spectrum_init, &pipeline_spectrum_evolve, &pipeline_fft, &pipeline_blit_ripple, &pipeline_blit_ocean, &pipeline_caustics };
+	RID *pipelines[] = { &pipeline_ripple, &pipeline_spectrum_init, &pipeline_spectrum_evolve, &pipeline_fft, &pipeline_blit_ripple, &pipeline_blit_ocean, &pipeline_foam, &pipeline_caustics };
 	for (RID *pipeline : pipelines) {
 		if (pipeline->is_valid()) {
 			rd->free_rid(*pipeline);
 			*pipeline = RID();
 		}
 	}
-	RID *shaders[] = { &shader_ripple, &shader_spectrum_init, &shader_spectrum_evolve, &shader_fft, &shader_blit_ripple, &shader_blit_ocean, &shader_caustics };
+	RID *shaders[] = { &shader_ripple, &shader_spectrum_init, &shader_spectrum_evolve, &shader_fft, &shader_blit_ripple, &shader_blit_ocean, &shader_foam, &shader_caustics };
 	for (RID *s : shaders) {
 		if (s->is_valid()) {
 			rd->free_rid(*s);
@@ -1055,6 +1102,17 @@ RID WaterSolver::get_ocean_height_texture_rd_rid() const {
 		return RID();
 	}
 	return gpu->tex_ocean_height;
+}
+
+RID WaterSolver::get_ocean_foam_texture_rd_rid() const {
+	if (gpu.is_null()) {
+		return RID();
+	}
+	return gpu->tex_ocean_foam;
+}
+
+void WaterSolver::set_foam_settings(float p_choppiness, float p_threshold, float p_persistence) {
+	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_foam).bind(gpu, p_choppiness, p_threshold, p_persistence));
 }
 
 RID WaterSolver::get_ocean_derivative_texture_rd_rid() const {

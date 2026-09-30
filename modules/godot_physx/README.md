@@ -446,9 +446,10 @@ developed sea. The simulation is centred on the node's position; keep the node
 unrotated and unscaled.
 
 `choppiness` adds the ocean waves' horizontal displacement, so crests come
-to a point and troughs flatten; where it squeezes the surface hard enough the
-default material draws whitecap foam, so a strong wind gets whitecaps and a
-light one doesn't. `normal_mode` picks how normals and foam are shaded: Per Pixel
+to a point and troughs flatten. Where it squeezes the surface past
+`foam_threshold` whitecap foam forms; it's kept with the water, not the wave,
+and fades over `foam_persistence` seconds, so crests leave streaks that break
+into lace. A strong wind gets whitecaps and a light one doesn't. `normal_mode` picks how normals and foam are shaded: Per Pixel
 (default) uses exact slopes from the FFT, so crests stay smooth at any mesh
 density; Per Vertex follows the mesh, for a softer or faceted, stylized look.
 

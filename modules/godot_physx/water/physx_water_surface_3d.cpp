@@ -139,6 +139,10 @@ uniform sampler2D swash_tex : hint_default_black, filter_linear, repeat_disable;
 // Thickness (m) of the swash film over the sand -- just enough to stay above
 // the ground mesh.
 uniform float swash_film_thickness : hint_range(0.0, 0.2, 0.005) = 0.03;
+// Fine ragged fingering of the swash edge: how much water depth (m) drifting
+// small-scale noise adds or takes away there (on a 1:14 beach, 0.035 m is
+// about half a metre of ragged edge).
+uniform float swash_edge_breakup : hint_range(0.0, 0.2, 0.005) = 0.035;
 // Wet sand: rgb blended over the ground where the water has been, alpha the
 // strength -- darkens it, fading as it dries.
 uniform vec4 wet_sand_color : source_color = vec4(0.16, 0.12, 0.07, 0.45);
@@ -256,7 +260,9 @@ float shore_signal(vec2 world_xz, float time) {
 	float offset = swash_reach * clamp(0.5 + (n - 0.5) * 1.6 - 0.35 * wave, 0.0, 1.0);
 	// The pull-back only applies in the water; over dry sand the swash
 	// film reaches exactly as far as the run-up (and the wet sand) does.
-	return depth - offset * smoothstep(0.0, 0.1, depth) + texture(swash_tex, cuv_r).r;
+	vec2 q = world_xz;
+	float eb = 0.5 * foam_value_noise(q * 2.3 + vec2(time * 0.25, 0.0)) + 0.3 * foam_value_noise(q * 6.1 + vec2(3.0, time * 0.4)) + 0.2 * foam_value_noise(q * 15.0 - 7.0);
+	return depth - offset * smoothstep(0.0, 0.1, depth) + texture(swash_tex, cuv_r).r + (eb - 0.5) * 2.0 * swash_edge_breakup;
 }
 
 void vertex() {

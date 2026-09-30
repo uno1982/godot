@@ -83,6 +83,7 @@ void main() {
 		return;
 	}
 	vec4 s = imageLoad(src_tex, c);
+	vec2 rel_c = ((vec2(c) + 0.5) / float(n) - 0.5) * domains.xy;
 	float target;
 	float ms = s.b;
 	if (depth > 0.0) {
@@ -109,6 +110,9 @@ void main() {
 
 	// Partial coverage across the edge (r and the depth vary smoothly), so the
 	// wet line falls between cells instead of stepping cell by cell.
-	float wet = max(smoothstep(-0.01, 0.02, depth + r), s.g * swash.w);
+	// A fixed pattern on the sand jitters the line by a few cm of height, so
+	// it's ragged rather than following the run-up contour exactly.
+	float wn = 0.6 * value_noise(rel_c * 2.1) + 0.4 * value_noise(rel_c * 6.3 + 5.0);
+	float wet = max(smoothstep(-0.01, 0.02, depth + r + (wn - 0.5) * 0.06), s.g * swash.w);
 	imageStore(dst_tex, c, vec4(r, wet, ms, 0.0));
 }

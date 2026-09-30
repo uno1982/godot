@@ -365,6 +365,11 @@ void fragment() {
 	// along a clean line.
 	float wn = 0.6 * foam_value_noise(v_rest_xz * 1.7) + 0.4 * foam_value_noise(v_rest_xz * 5.3 + 7.0);
 	float wet = clamp((texture(swash_tex, shore_pattern_uv(v_rest_xz)).g - 0.35 * wn) / 0.65, 0.0, 1.0);
+	// Only where sand is near the surface: under deeper water the "wet" flag
+	// is meaningless, and blending it there tinted and roughened all deep
+	// water -- which showed as a seam past the simulated square, where the
+	// mirrored patterns bring dry beach (not wet) out over the open sea.
+	wet *= 1.0 - smoothstep(0.05, 0.35, texture(shore_depth_tex, cuv_fade).r);
 	float wet_a = wet * wet * (3.0 - 2.0 * wet) * wet_sand_color.a * (1.0 - water_a);
 	ALPHA = water_a + wet_a;
 	ALBEDO = (ALBEDO * water_a + wet_sand_color.rgb * wet_a) / max(ALPHA, 1e-4);

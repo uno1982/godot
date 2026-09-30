@@ -46,6 +46,7 @@ void WaterRippleProbe::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("refresh_ocean_height_grid"), &WaterRippleProbe::refresh_ocean_height_grid);
 	ClassDB::bind_method(D_METHOD("get_ocean_height_array"), &WaterRippleProbe::get_ocean_height_array);
 	ClassDB::bind_method(D_METHOD("get_ocean_imag_array"), &WaterRippleProbe::get_ocean_imag_array);
+	ClassDB::bind_method(D_METHOD("get_ocean_slope_x_array"), &WaterRippleProbe::get_ocean_slope_x_array);
 }
 
 bool WaterRippleProbe::has_device() const {
@@ -126,6 +127,7 @@ void WaterRippleProbe::refresh_ocean_height_grid() {
 	int n;
 	Vector2 domain;
 	solver.get_ocean_height_grid(cached_ocean_height, cached_ocean_imag, n, domain);
+	solver.get_ocean_slope_x_grid(cached_ocean_slope_x);
 }
 
 PackedFloat32Array WaterRippleProbe::get_ocean_height_array() const {
@@ -142,6 +144,15 @@ PackedFloat32Array WaterRippleProbe::get_ocean_imag_array() const {
 	arr.resize(cached_ocean_imag.size());
 	for (int i = 0; i < cached_ocean_imag.size(); i++) {
 		arr.set(i, cached_ocean_imag[i]);
+	}
+	return arr;
+}
+
+PackedFloat32Array WaterRippleProbe::get_ocean_slope_x_array() const {
+	PackedFloat32Array arr;
+	arr.resize(cached_ocean_slope_x.size());
+	for (int i = 0; i < cached_ocean_slope_x.size(); i++) {
+		arr.set(i, cached_ocean_slope_x[i]);
 	}
 	return arr;
 }

@@ -107,6 +107,9 @@
 		<member name="grid_resolution" type="int" setter="set_grid_resolution" getter="get_grid_resolution" default="96">
 			Cell count per side of the local ripple layer's grid. Not required to be a power of two, unlike [member ocean_grid_resolution].
 		</member>
+		<member name="normal_mode" type="int" setter="set_normal_mode" getter="get_normal_mode" enum="PhysXWaterSurface3D.NormalMode" default="0">
+			How the surface's normals and whitecap foam are computed, set on the material through its [code]per_pixel_normals[/code] uniform. [constant NORMAL_MODE_PER_PIXEL] uses the exact slopes and displacement derivatives the ocean FFT also produces ([code]ocean_deriv_tex[/code]), so crests shade smoothly and foam follows the folds at any mesh density -- the realistic choice. [constant NORMAL_MODE_PER_VERTEX] takes finite differences of the displaced mesh, so the shading follows the mesh -- softer, faceted at a coarse [member ocean_grid_resolution], for a stylized look.
+		</member>
 		<member name="ocean_domain_size" type="Vector2" setter="set_ocean_domain_size" getter="get_ocean_domain_size" default="Vector2(40, 40)">
 			World-space extent (X, Z) of the FFT ocean layer -- also the size of the rendered [PlaneMesh].
 		</member>
@@ -145,4 +148,12 @@
 			Wind speed in m/s driving the FFT ocean layer's spectrum -- higher produces longer, larger waves, up to what [member fetch] allows.
 		</member>
 	</members>
+	<constants>
+		<constant name="NORMAL_MODE_PER_PIXEL" value="0" enum="NormalMode">
+			Normals and foam per pixel from the ocean FFT's exact derivatives.
+		</constant>
+		<constant name="NORMAL_MODE_PER_VERTEX" value="1" enum="NormalMode">
+			Normals and foam per vertex from finite differences of the displaced mesh.
+		</constant>
+	</constants>
 </class>

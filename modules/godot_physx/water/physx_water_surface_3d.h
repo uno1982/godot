@@ -74,6 +74,15 @@ protected:
 	void _notification(int p_what);
 
 public:
+	enum NormalMode {
+		// Exact normals and foam from the FFT's slopes, per pixel: smooth
+		// crests at any mesh density (realistic).
+		NORMAL_MODE_PER_PIXEL,
+		// Finite differences of the displaced mesh, per vertex: shading
+		// follows the mesh (faceted / stylized, and cheaper).
+		NORMAL_MODE_PER_VERTEX,
+	};
+
 	void set_domain_size(Vector2 p_size);
 	Vector2 get_domain_size() const { return domain_size; }
 	void set_grid_resolution(int p_n);
@@ -111,6 +120,10 @@ public:
 	// zero) the default material draws whitecap foam.
 	void set_choppiness(float p_choppiness);
 	float get_choppiness() const { return choppiness; }
+	// Which the built-in (and a compatible custom) material uses; sets its
+	// per_pixel_normals uniform.
+	void set_normal_mode(NormalMode p_mode);
+	NormalMode get_normal_mode() const { return normal_mode; }
 
 	// Optional shape: any flat mesh whose X/Z footprint (node-local) is the
 	// water's outline -- a disc, a kidney bean, a lake with an island. When
@@ -190,6 +203,7 @@ private:
 	float wave_amplitude = 1.0f;
 	float fetch = 0.0f;
 	float choppiness = 1.0f;
+	NormalMode normal_mode = NORMAL_MODE_PER_PIXEL;
 	// Longest side of the surface_mesh footprint (0 = none), for auto fetch.
 	real_t footprint_extent = 0.0;
 
@@ -219,6 +233,7 @@ private:
 	Ref<Texture2DRD> ocean_height_tex;
 	Ref<Texture2DRD> ocean_fade_tex;
 	Ref<Texture2DRD> ocean_disp_tex;
+	Ref<Texture2DRD> ocean_deriv_tex;
 	Ref<Texture2DRD> caustics_texture;
 	bool textures_bound = false; // set once, after the solver's RD textures actually exist (see _update())
 
@@ -251,3 +266,5 @@ private:
 	void _update(double p_delta);
 	float _bilinear_sample(const Vector<float> &p_grid, int p_n, Vector2 p_domain, float p_world_x, float p_world_z) const;
 };
+
+VARIANT_ENUM_CAST(PhysXWaterSurface3D::NormalMode);

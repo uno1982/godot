@@ -10,10 +10,14 @@
 // every other pass in this file (see water_fft.glsl's header).
 //
 // Also produces Tessendorf's horizontal "choppy" displacement
-// D(k) = -i (k/|k|) h(k). Its x component rides along in the height
-// transform: h(x) and Dx(x) are both real, so transforming
-// h(k) + i Dx(k) = h(k) (1 + kx/|k|) yields h in the real part and Dx in the
-// imaginary part. Dz goes through a second transform (spec_dz_out).
+// D(k) = -i (k/|k|) h(k), the surface slopes i k h(k), and the displacement
+// derivatives i k D(k) the Jacobian needs -- eight real fields packed two per
+// complex transform: every one of them is real in space, so transforming
+// F(k) + i G(k) yields F in the real part and G in the imaginary part.
+//   spec_out    : h   + i Dx     = h (1 + kx/k)
+//   spec_dz_out : Dz  + i dh/dx  = h (-kx - i kz/k)
+//   spec_c_out  : dh/dz + i dDx/dx = h (i (kz + kx^2/k))
+//   spec_d_out  : dDz/dz + i dDx/dz = h (kz^2/k + i kx kz/k)
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -25,6 +29,8 @@ layout(set = 0, binding = 0, std140) uniform Params {
 layout(set = 0, binding = 1, std430) restrict buffer H0 { vec4 h0[]; };
 layout(set = 0, binding = 2, std430) restrict buffer SpecOut { vec2 spec_out[]; };
 layout(set = 0, binding = 3, std430) restrict buffer SpecDzOut { vec2 spec_dz_out[]; };
+layout(set = 0, binding = 4, std430) restrict buffer SpecCOut { vec2 spec_c_out[]; };
+layout(set = 0, binding = 5, std430) restrict buffer SpecDOut { vec2 spec_d_out[]; };
 
 void main() {
 	ivec2 c = ivec2(gl_GlobalInvocationID.xy);
@@ -50,7 +56,12 @@ void main() {
 	// (measured: the peak moved against the wind at its phase speed).
 	vec2 h = vec2(a.x * cw + a.y * sw, a.y * cw - a.x * sw) + vec2(b.x * cw - b.y * sw, b.x * sw + b.y * cw);
 	vec2 k_hat = k / kl;
-	spec_out[c.y * n + c.x] = h * (1.0 + k_hat.x);
-	// -i * kz/|k| * h
-	spec_dz_out[c.y * n + c.x] = vec2(h.y, -h.x) * k_hat.y;
+	int i = c.y * n + c.x;
+	spec_out[i] = h * (1.0 + k_hat.x);
+	spec_dz_out[i] = vec2(-k.x * h.x + k_hat.y * h.y, -k.x * h.y - k_hat.y * h.x);
+	float ci = k.y + k.x * k_hat.x;
+	spec_c_out[i] = vec2(-ci * h.y, ci * h.x);
+	float dr = k.y * k_hat.y;
+	float di = k.x * k_hat.y;
+	spec_d_out[i] = vec2(dr * h.x - di * h.y, dr * h.y + di * h.x);
 }

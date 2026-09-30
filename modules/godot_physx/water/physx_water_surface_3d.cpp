@@ -84,6 +84,13 @@ uniform sampler2D ocean_fade_tex : hint_default_white, filter_linear, repeat_dis
 // choppiness (both set by PhysXWaterSurface3D).
 uniform sampler2D ocean_disp_tex : hint_default_black, filter_linear, repeat_disable;
 uniform float choppiness = 1.0;
+// Ocean slopes and displacement derivatives (dh/dx, dh/dz, dDx/dx, dDz/dz),
+// straight from the FFT, for exact per-pixel normals and foam.
+uniform sampler2D ocean_deriv_tex : hint_default_black, filter_linear, repeat_disable;
+// true: normals and foam per pixel from ocean_deriv_tex (smooth crests at any
+// mesh density). false: per vertex, from finite differences of the displaced
+// mesh (set by PhysXWaterSurface3D::normal_mode).
+uniform bool per_pixel_normals = true;
 uniform vec2 ripple_domain_size = vec2(20.0, 20.0);
 uniform vec2 ocean_domain_size = vec2(40.0, 40.0);
 // World XZ both height fields are centred on (set by PhysXWaterSurface3D).
@@ -97,6 +104,7 @@ uniform vec4 foam_color : source_color = vec4(0.92, 0.95, 0.97, 0.95);
 
 varying vec3 v_world_normal;
 varying float v_foam;
+varying vec2 v_rest_xz;
 
 // Offset of the surface point that rests at world_xz: (dx, height, dz).
 vec3 surface_offset(vec2 world_xz) {
@@ -111,25 +119,60 @@ vec3 surface_offset(vec2 world_xz) {
 	return vec3(d.x, h, d.y);
 }
 
+// Exact normal of the displaced surface at the point resting at world_xz,
+// and its area Jacobian (for foam): tangents of P(x0) = x0 + s D(x0) + h(x0)
+// from the FFT's own derivatives. The ripple layer has no FFT, so its slope
+// is a small central difference.
+vec3 surface_normal_pixel(vec2 world_xz, out float jacobian) {
+	vec2 rel = world_xz - grid_center;
+	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
+	vec2 cuv_o = clamp(rel / ocean_domain_size + 0.5, vec2(0.0), vec2(1.0));
+	float fade = texture(ocean_fade_tex, cuv_r).r;
+	float s = -choppiness * fade;
+	vec4 der = texture(ocean_deriv_tex, cuv_o);
+	float dxz = texture(ocean_disp_tex, cuv_o).b;
+	const float e = 0.2;
+	vec2 du = vec2(e) / ripple_domain_size;
+	float rx = (texture(ripple_height_tex, cuv_r + vec2(du.x, 0.0)).r - texture(ripple_height_tex, cuv_r - vec2(du.x, 0.0)).r) / (2.0 * e);
+	float rz = (texture(ripple_height_tex, cuv_r + vec2(0.0, du.y)).r - texture(ripple_height_tex, cuv_r - vec2(0.0, du.y)).r) / (2.0 * e);
+	vec3 tx = vec3(1.0 + s * der.z, der.x * fade + rx, s * dxz);
+	vec3 tz = vec3(s * dxz, der.y * fade + rz, 1.0 + s * der.w);
+	jacobian = tx.x * tz.z - tx.z * tz.x;
+	return normalize(cross(tz, tx));
+}
+
 void vertex() {
 	vec3 world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	v_rest_xz = world_pos.xz;
 	VERTEX += surface_offset(world_pos.xz);
-
-	// Normal and Jacobian from central differences of the displaced surface
-	// -- e is in world metres, small against the grids' cell size.
-	const float e = 0.2;
-	vec3 px1 = vec3(e, 0.0, 0.0) + surface_offset(world_pos.xz + vec2(e, 0.0));
-	vec3 px0 = vec3(-e, 0.0, 0.0) + surface_offset(world_pos.xz - vec2(e, 0.0));
-	vec3 pz1 = vec3(0.0, 0.0, e) + surface_offset(world_pos.xz + vec2(0.0, e));
-	vec3 pz0 = vec3(0.0, 0.0, -e) + surface_offset(world_pos.xz - vec2(0.0, e));
-	vec3 tx = px1 - px0;
-	vec3 tz = pz1 - pz0;
-	v_world_normal = normalize(cross(tz, tx));
-	float jacobian = (tx.x * tz.z - tx.z * tz.x) / (4.0 * e * e);
-	v_foam = 1.0 - smoothstep(foam_threshold - 0.3, foam_threshold, jacobian);
+	v_world_normal = vec3(0.0, 1.0, 0.0);
+	v_foam = 0.0;
+	// Per pixel, fragment() computes the normal and foam instead.
+	if (!per_pixel_normals) {
+		// Per-vertex: normal and Jacobian from central differences of the
+		// displaced surface -- e is in world metres, small against the grids'
+		// cell size.
+		const float e = 0.2;
+		vec3 px1 = vec3(e, 0.0, 0.0) + surface_offset(world_pos.xz + vec2(e, 0.0));
+		vec3 px0 = vec3(-e, 0.0, 0.0) + surface_offset(world_pos.xz - vec2(e, 0.0));
+		vec3 pz1 = vec3(0.0, 0.0, e) + surface_offset(world_pos.xz + vec2(0.0, e));
+		vec3 pz0 = vec3(0.0, 0.0, -e) + surface_offset(world_pos.xz - vec2(0.0, e));
+		vec3 tx = px1 - px0;
+		vec3 tz = pz1 - pz0;
+		v_world_normal = normalize(cross(tz, tx));
+		float jacobian = (tx.x * tz.z - tx.z * tz.x) / (4.0 * e * e);
+		v_foam = 1.0 - smoothstep(foam_threshold - 0.3, foam_threshold, jacobian);
+	}
 }
 
 void fragment() {
+	vec3 world_normal = v_world_normal;
+	float foam = v_foam;
+	if (per_pixel_normals) {
+		float jacobian;
+		world_normal = surface_normal_pixel(v_rest_xz, jacobian);
+		foam = 1.0 - smoothstep(foam_threshold - 0.3, foam_threshold, jacobian);
+	}
 	// unshaded + a small self-contained, bounded normal-based shading term --
 	// NOT Godot's real diffuse/specular PBR response. Real root cause of the
 	// "whitewash": this material used render_mode diffuse_burley,
@@ -144,15 +187,15 @@ void fragment() {
 	// blows out). Going unshaded removes the water from that PBR light
 	// budget entirely -- only the floor is now really lit by the scene, and
 	// the water contributes a fixed, self-bounded tint on top of it.
-	vec3 n = normalize((VIEW_MATRIX * vec4(v_world_normal, 0.0)).xyz);
+	vec3 n = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
 	// Fixed, hardcoded pseudo-light direction -- not a real scene light, just
 	// a bounded shaping term so wave normals still visibly modulate the
 	// water's own tint (the whole reason per-vertex normals were added this
 	// session in the first place), capped to a small multiplier so it can
 	// never itself become a source of overexposure.
 	float ndotl = clamp(dot(n, vec3(0.3, 0.85, 0.4)), 0.0, 1.0);
-	ALBEDO = mix(water_color.rgb * mix(0.75, 1.15, ndotl), foam_color.rgb, v_foam);
-	ALPHA = mix(water_color.a, foam_color.a, v_foam);
+	ALBEDO = mix(water_color.rgb * mix(0.75, 1.15, ndotl), foam_color.rgb, foam);
+	ALPHA = mix(water_color.a, foam_color.a, foam);
 }
 )";
 
@@ -263,6 +306,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_effective_fetch"), &PhysXWaterSurface3D::get_effective_fetch);
 	ClassDB::bind_method(D_METHOD("set_choppiness", "choppiness"), &PhysXWaterSurface3D::set_choppiness);
 	ClassDB::bind_method(D_METHOD("get_choppiness"), &PhysXWaterSurface3D::get_choppiness);
+	ClassDB::bind_method(D_METHOD("set_normal_mode", "mode"), &PhysXWaterSurface3D::set_normal_mode);
+	ClassDB::bind_method(D_METHOD("get_normal_mode"), &PhysXWaterSurface3D::get_normal_mode);
 
 	ClassDB::bind_method(D_METHOD("set_surface_mesh", "mesh"), &PhysXWaterSurface3D::set_surface_mesh);
 	ClassDB::bind_method(D_METHOD("get_surface_mesh"), &PhysXWaterSurface3D::get_surface_mesh);
@@ -293,6 +338,9 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("clear_sphere", "owner"), &PhysXWaterSurface3D::clear_sphere);
 	ClassDB::bind_method(D_METHOD("submit_impulse", "world_pos", "radius", "strength"), &PhysXWaterSurface3D::submit_impulse);
 
+	BIND_ENUM_CONSTANT(NORMAL_MODE_PER_PIXEL);
+	BIND_ENUM_CONSTANT(NORMAL_MODE_PER_VERTEX);
+
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "surface_mesh", PROPERTY_HINT_RESOURCE_TYPE, "Mesh"), "set_surface_mesh", "get_surface_mesh");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "domain_size"), "set_domain_size", "get_domain_size");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "grid_resolution"), "set_grid_resolution", "get_grid_resolution");
@@ -316,6 +364,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "choppiness", PROPERTY_HINT_RANGE, "0,3,0.01,or_greater"), "set_choppiness", "get_choppiness");
 
 	ADD_GROUP("Rendering", "");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "normal_mode", PROPERTY_HINT_ENUM, "Per Pixel,Per Vertex"), "set_normal_mode", "get_normal_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "water_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_water_material", "get_water_material");
 
 	ADD_GROUP("Caustics", "caustic");
@@ -390,6 +439,13 @@ void PhysXWaterSurface3D::set_choppiness(float p_choppiness) {
 	choppiness = MAX(p_choppiness, 0.0f);
 	if (water_material.is_valid()) {
 		water_material->set_shader_parameter("choppiness", choppiness);
+	}
+}
+
+void PhysXWaterSurface3D::set_normal_mode(NormalMode p_mode) {
+	normal_mode = p_mode;
+	if (water_material.is_valid()) {
+		water_material->set_shader_parameter("per_pixel_normals", normal_mode == NORMAL_MODE_PER_PIXEL);
 	}
 }
 
@@ -535,6 +591,7 @@ void PhysXWaterSurface3D::_rebuild() {
 	water_material->set_shader_parameter("ocean_domain_size", ocean_domain_size);
 	water_material->set_shader_parameter("grid_center", grid_center);
 	water_material->set_shader_parameter("choppiness", choppiness);
+	water_material->set_shader_parameter("per_pixel_normals", normal_mode == NORMAL_MODE_PER_PIXEL);
 
 	// NOTIFICATION_INTERNAL_PHYSICS_PROCESS fires in the editor too, not just
 	// Play -- same gotcha PhysXVehicle3D/PhysXDestructible3D already guard
@@ -696,6 +753,10 @@ void PhysXWaterSurface3D::_bind_textures() {
 		ocean_disp_tex.instantiate();
 	}
 	ocean_disp_tex->set_texture_rd_rid(solver.get_ocean_displacement_texture_rd_rid());
+	if (ocean_deriv_tex.is_null()) {
+		ocean_deriv_tex.instantiate();
+	}
+	ocean_deriv_tex->set_texture_rd_rid(solver.get_ocean_derivative_texture_rd_rid());
 	ripple_height_tex->set_texture_rd_rid(solver.get_ripple_height_texture_rd_rid());
 	ocean_height_tex->set_texture_rd_rid(solver.get_ocean_height_texture_rd_rid());
 	ocean_fade_tex->set_texture_rd_rid(solver.get_ocean_fade_texture_rd_rid());
@@ -710,6 +771,7 @@ void PhysXWaterSurface3D::_bind_textures() {
 		water_material->set_shader_parameter("ocean_height_tex", ocean_height_tex);
 		water_material->set_shader_parameter("ocean_fade_tex", ocean_fade_tex);
 		water_material->set_shader_parameter("ocean_disp_tex", ocean_disp_tex);
+		water_material->set_shader_parameter("ocean_deriv_tex", ocean_deriv_tex);
 	}
 	textures_bound = true;
 }

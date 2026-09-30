@@ -448,7 +448,9 @@ unrotated and unscaled.
 `choppiness` adds the ocean waves' horizontal displacement, so crests come
 to a point and troughs flatten; where it squeezes the surface hard enough the
 default material draws whitecap foam, so a strong wind gets whitecaps and a
-light one doesn't.
+light one doesn't. `normal_mode` picks how normals and foam are shaded: Per Pixel
+(default) uses exact slopes from the FFT, so crests stay smooth at any mesh
+density; Per Vertex follows the mesh, for a softer or faceted, stylized look.
 
 Set `seabed_from_floor` for water over uneven ground, like a beach or a lake
 bed: each ripple cell's depth is measured once from the floor (static bodies in

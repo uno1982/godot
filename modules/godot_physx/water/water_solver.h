@@ -83,14 +83,20 @@ public:
 	RID buf_ocean_init_params, buf_ocean_evolve_params, buf_fft_params;
 	RID buf_h0, buf_ocean_spec, buf_fft_a, buf_fft_b;
 	RID uset_spectrum_init, uset_spectrum_evolve, uset_fft_spec_to_a, uset_fft_atob, uset_fft_btoa;
-	// Second FFT chain for the choppy z displacement (the x displacement rides
-	// in the height transform's imaginary part -- see
-	// water_spectrum_evolve.glsl). Same passes, same params, lands in fft_d.
+	// Three more FFT chains for the choppy displacement, the surface slopes
+	// and the displacement derivatives (see water_spectrum_evolve.glsl for
+	// how they're packed). Same passes, same params; they land in fft_d,
+	// fft_f and fft_h.
 	RID buf_ocean_spec_dz, buf_fft_c, buf_fft_d;
 	RID uset_fft_dz_to_c, uset_fft_ctod, uset_fft_dtoc;
+	RID buf_ocean_spec_c, buf_fft_e, buf_fft_f;
+	RID uset_fft_c_to_e, uset_fft_etof, uset_fft_ftoe;
+	RID buf_ocean_spec_d, buf_fft_g, buf_fft_h;
+	RID uset_fft_d_to_g, uset_fft_gtoh, uset_fft_htog;
 
 	RID tex_ripple_height, tex_ocean_height; // real RD textures, wrapped by Texture2DRD on the caller side
-	RID tex_ocean_disp; // RG32F choppy horizontal displacement (x, z), same resolution as tex_ocean_height
+	RID tex_ocean_disp; // RGBA32F (Dx, Dz, dDx/dz, 0), same resolution as tex_ocean_height
+	RID tex_ocean_deriv; // RGBA32F (dh/dx, dh/dz, dDx/dx, dDz/dz)
 	// Still-water depth per ripple cell (R16F metres, <= 0 dry -- see
 	// water_inc.glsl), bound to the ripple pass and the caustics pass, and
 	// the ocean chop's shallow-water fade derived from it (R8, sampled by the
@@ -135,6 +141,7 @@ public:
 	Vector<float> ocean_height_cache;
 	Vector<float> ocean_imag_cache; // x displacement (see water_spectrum_evolve.glsl)
 	Vector<float> ocean_dz_cache; // z displacement
+	Vector<float> ocean_slope_x_cache; // dh/dx (for tests)
 	SafeFlag height_ready;
 
 	// All posted to the render thread via RenderingServer::call_on_render_thread
@@ -305,9 +312,11 @@ public:
 	// R8 shallow-water fade for the ocean layer over the ripple domain (1 =
 	// full chop, 0 = none); valid once is_available().
 	RID get_ocean_fade_texture_rd_rid() const;
-	// RG32F choppy horizontal displacement (x, z) of the ocean layer, same
-	// grid as its height; valid once is_available().
+	// Ocean layer derivatives for materials, same grid as its height; valid
+	// once is_available(). RGBA32F (Dx, Dz, dDx/dz, 0) and
+	// (dh/dx, dh/dz, dDx/dx, dDz/dz).
 	RID get_ocean_displacement_texture_rd_rid() const;
+	RID get_ocean_derivative_texture_rd_rid() const;
 	// The ocean layer's fade factor for a still-water depth.
 	static float shallow_fade(float p_depth, float p_fade_depth);
 	Vector2 get_domain_size() const { return settings.domain_size; }
@@ -343,6 +352,8 @@ public:
 	// water_spectrum_evolve.glsl); get_ocean_dz_grid() the z displacement.
 	void get_ocean_height_grid(Vector<float> &r_height, Vector<float> &r_imag, int &r_n, Vector2 &r_domain_size) const;
 	void get_ocean_dz_grid(Vector<float> &r_dz) const;
+	// dh/dx of the ocean layer from the FFT (readback, for tests).
+	void get_ocean_slope_x_grid(Vector<float> &r_slope_x) const;
 
 	// Forces the render thread to catch up right now (matches
 	// MPMFluidSolver::get_positions()'s own "blocking, test/query helper"

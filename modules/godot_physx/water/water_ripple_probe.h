@@ -30,8 +30,9 @@
 
 #pragma once
 
-#include "core/object/ref_counted.h"
 #include "water_solver.h"
+
+#include "core/object/ref_counted.h"
 
 // Thin RefCounted bridge exposing WaterSolver to GDScript, same precedent as
 // GodotPhysXVehicleProbe/GodotPhysXBlastProbe -- exists purely so a real
@@ -71,12 +72,13 @@ public:
 	void refresh_height_grid();
 	float sample_height(float p_world_x, float p_world_z) const;
 
-	// Raw ocean (FFT) layer readback -- a probe-only accessor. Real height
-	// height_out. r_imag is the FFT's imaginary-part residual (should stay
-	// near zero -- a correctness signal, see water_solver.h).
+	// Raw ocean (FFT) layer readback -- a probe-only accessor. The imag array
+	// is the choppy x displacement, the slope array dh/dx straight from the
+	// FFT (see water_spectrum_evolve.glsl).
 	void refresh_ocean_height_grid();
 	PackedFloat32Array get_ocean_height_array() const;
 	PackedFloat32Array get_ocean_imag_array() const;
+	PackedFloat32Array get_ocean_slope_x_array() const;
 
 private:
 	WaterSolver::Settings pending_settings;
@@ -85,4 +87,5 @@ private:
 	Vector2 cached_domain_size;
 	Vector<float> cached_ocean_height;
 	Vector<float> cached_ocean_imag;
+	Vector<float> cached_ocean_slope_x;
 };

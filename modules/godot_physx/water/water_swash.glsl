@@ -103,7 +103,7 @@ void main() {
 		// it leaves -- scallops along the shore instead of tracing one
 		// height contour.
 		float cusp = 0.65 * value_noise(rel * 0.07 + vec2(11.0, misc.y * 0.004)) + 0.35 * value_noise(rel * 0.19 - vec2(4.0, 0.0));
-		float cap = swash.y * (0.45 + 0.55 * cusp);
+		float cap = swash.y * (0.25 + 0.75 * cusp);
 		// Each wave reaches in proportion to how big it is, so successive
 		// waves stop at different places.
 		float strength = clamp((rise / rms - 0.5) / 1.5, 0.0, 1.0);

@@ -233,11 +233,23 @@ float foam_at(vec2 world_xz) {
 }
 
 // Visible shore foam at world_xz: finer, heavier lace at partial strength.
+)"
+								 R"(
+// Ripple-grid UV for the shore's moving patterns (swash, wet sand, shore
+// foam), mirror-repeated past the simulated square: they carry on down the
+// beach without a seam instead of stretching the edge row into straight
+// lines. (The still-water depth itself stays clamped, so land and sea are
+// never mirrored into each other.)
+vec2 shore_pattern_uv(vec2 world_xz) {
+	vec2 u = (world_xz - grid_center) / ripple_domain_size + 0.5;
+	return 1.0 - abs(mod(u, 2.0) - 1.0);
+}
+
 float shore_foam_at(vec2 world_xz) {
 	vec2 cuv_r = clamp((world_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	vec2 q = world_xz * foam_detail_scale * 2.2 + 31.0;
 	float ns = 0.5 * foam_value_noise(q) + 0.5 * foam_value_noise(q * 2.3 - 11.0);
-	float shore = texture(shore_foam_tex, cuv_r).r;
+	float shore = texture(shore_foam_tex, shore_pattern_uv(world_xz)).r;
 	float g = clamp(shore * (1.0 + shore_foam_breakup) - ns * shore_foam_breakup, 0.0, 1.0);
 	return g * g * (3.0 - 2.0 * g) * shore_foam_strength;
 }
@@ -260,7 +272,7 @@ float shore_signal(vec2 world_xz, float time) {
 	float offset = swash_reach * clamp(0.5 + (n - 0.5) * 1.6 - 0.35 * wave, 0.0, 1.0);
 	vec2 q = world_xz;
 	float eb = 0.5 * foam_value_noise(q * 2.3 + vec2(time * 0.25, 0.0)) + 0.3 * foam_value_noise(q * 6.1 + vec2(3.0, time * 0.4)) + 0.2 * foam_value_noise(q * 15.0 - 7.0);
-	float run_up = texture(swash_tex, cuv_r).r;
+	float run_up = texture(swash_tex, shore_pattern_uv(world_xz)).r;
 	float jitter = (eb - 0.5) * 2.0 * swash_edge_breakup;
 	// On dry sand the jitter may only pull the edge back, never add water
 	// past what the swash covers -- or it left a permanent fringe of rim
@@ -352,7 +364,7 @@ void fragment() {
 	// Noise eats into the wet edge, so it dries back ragged rather than
 	// along a clean line.
 	float wn = 0.6 * foam_value_noise(v_rest_xz * 1.7) + 0.4 * foam_value_noise(v_rest_xz * 5.3 + 7.0);
-	float wet = clamp((texture(swash_tex, cuv_fade).g - 0.35 * wn) / 0.65, 0.0, 1.0);
+	float wet = clamp((texture(swash_tex, shore_pattern_uv(v_rest_xz)).g - 0.35 * wn) / 0.65, 0.0, 1.0);
 	float wet_a = wet * wet * (3.0 - 2.0 * wet) * wet_sand_color.a * (1.0 - water_a);
 	ALPHA = water_a + wet_a;
 	ALBEDO = (ALBEDO * water_a + wet_sand_color.rgb * wet_a) / max(ALPHA, 1e-4);

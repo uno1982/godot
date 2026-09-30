@@ -1393,6 +1393,12 @@ void WaterSolver::get_height_grid(Vector<float> &r_height, int &r_n, Vector2 &r_
 	}
 	MutexLock lock(gpu->cache_mtx);
 	r_height = gpu->ripple_height_cache;
+	if (r_height.size() != r_n * r_n) {
+		// grid_resolution just changed: the cache is still the old size until
+		// the rebuilt solver reads back. Report "not ready" rather than let
+		// callers index the old grid with the new size.
+		r_height.clear();
+	}
 }
 
 void WaterSolver::get_ocean_height_grid(Vector<float> &r_height, Vector<float> &r_imag, int &r_n, Vector2 &r_domain_size) const {
@@ -1406,6 +1412,11 @@ void WaterSolver::get_ocean_height_grid(Vector<float> &r_height, Vector<float> &
 	MutexLock lock(gpu->cache_mtx);
 	r_height = gpu->ocean_height_cache;
 	r_imag = gpu->ocean_imag_cache;
+	if (r_height.size() != r_n * r_n || r_imag.size() != r_n * r_n) {
+		// ocean_grid_resolution just changed (see get_height_grid()).
+		r_height.clear();
+		r_imag.clear();
+	}
 }
 
 void WaterSolver::sync_now() const {

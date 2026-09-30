@@ -245,7 +245,7 @@ for _glsl in _water_fft_glsl:
     env_physx.GLSL_HEADER(os.path.join("water", _glsl))
 
 # Blit-to-texture (Phase 3, shared-device rewrite) -- also self-contained.
-_water_blit_glsl = ("water_blit_ripple.glsl", "water_blit_ocean.glsl", "water_foam.glsl", "water_shore_foam.glsl")
+_water_blit_glsl = ("water_blit_ripple.glsl", "water_blit_ocean.glsl", "water_foam.glsl", "water_shore_foam.glsl", "water_swash.glsl")
 for _glsl in _water_blit_glsl:
     env_physx.GLSL_HEADER(os.path.join("water", _glsl))
 

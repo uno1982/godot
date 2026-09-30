@@ -144,6 +144,17 @@ public:
 	// that slides it back into the water over time.
 	void set_shore_undertow(float p_speed);
 	float get_shore_undertow() const { return shore_undertow; }
+	// Swash: the biggest arriving waves run up the dry sand as a thin film,
+	// at most this high (m above still water; 0 = none), then slide back
+	// down at swash_drain_speed (m/s, vertical). Sand the water has covered
+	// stays dark and glossy, drying over wet_sand_dry_time seconds. Only
+	// shows where the depth varies (seabed_from_floor).
+	void set_swash_run_up(float p_height);
+	float get_swash_run_up() const { return swash_run_up; }
+	void set_swash_drain_speed(float p_speed);
+	float get_swash_drain_speed() const { return swash_drain_speed; }
+	void set_wet_sand_dry_time(float p_seconds);
+	float get_wet_sand_dry_time() const { return wet_sand_dry_time; }
 
 	// Optional shape: any flat mesh whose X/Z footprint (node-local) is the
 	// water's outline -- a disc, a kidney bean, a lake with an island. When
@@ -238,6 +249,9 @@ private:
 	float foam_persistence = 2.5f;
 	float shore_foam_band = 0.5f;
 	float shore_undertow = 0.3f;
+	float swash_run_up = 0.3f;
+	float swash_drain_speed = 0.12f;
+	float wet_sand_dry_time = 12.0f;
 	// Longest side of the surface_mesh footprint (0 = none), for auto fetch.
 	real_t footprint_extent = 0.0;
 
@@ -275,6 +289,7 @@ private:
 	Ref<Texture2DRD> ocean_deriv_tex;
 	Ref<Texture2DRD> ocean_foam_tex;
 	Ref<Texture2DRD> shore_foam_tex;
+	Ref<Texture2DRD> swash_tex;
 	Ref<Texture2DRD> caustics_texture;
 	bool textures_bound = false; // set once, after the solver's RD textures actually exist (see _update())
 

@@ -150,6 +150,12 @@
 			Optional water outline: any flat [Mesh] (node-local) whose up-facing triangles' X/Z footprint is the water -- e.g. a disc baked from a [CSGCylinder3D], or a shape modelled elsewhere. Its own vertices are not displaced directly; the footprint is resampled into an even grid clipped to the outline, so a coarse or fan-triangulated mesh still gets vertices to animate everywhere.
 			When set, the ripple grid is fitted to the footprint's bounds ([member domain_size] is ignored) at [member grid_resolution], cells outside it are dry land the waves reflect off, caustics are cut to the water area, and [method sample_height] returns [code]-INF[/code] over dry cells. The FFT ocean layer still covers [member ocean_domain_size] around the same centre -- size it to cover the footprint. Unset, the water is the square [member domain_size] / [member ocean_domain_size] plane.
 		</member>
+		<member name="swash_drain_speed" type="float" setter="set_swash_drain_speed" getter="get_swash_drain_speed" default="0.12">
+			How fast (m/s, vertical) the swash slides back down the sand after a wave has run up. On a 1:14 beach the default 0.12 is a backwash of about 1.7 m/s along the sand.
+		</member>
+		<member name="swash_run_up" type="float" setter="set_swash_run_up" getter="get_swash_run_up" default="0.3">
+			Swash: the bigger arriving waves (the crests well above the usual ones, so it comes in sets) run up past the still-water line onto the dry sand as a thin film, at most this high (m above still water, not distance along the sand), in tongues that vary along the beach, then slide back down at [member swash_drain_speed]. The run-up grows with the sea state, so a calm lake barely moves. Sand the water has covered stays dark and glossy and dries over [member wet_sand_dry_time]. Needs a varying depth ([member seabed_from_floor]); a pool's walls don't get it. [code]0[/code] turns the run-up off (the sand below the still water still reads wet). The default material draws the film on the sand ([code]swash_film_thickness[/code]) and blends [code]wet_sand_color[/code] over the ground, so it works with any floor material.
+		</member>
 		<member name="water_level" type="float" setter="set_water_level" getter="get_water_level" default="0.0">
 			Mean world-space Y of the surface -- place the node here rather than relying on its own transform, since the rendered mesh and both simulation layers are displaced relative to this baseline.
 		</member>
@@ -158,6 +164,9 @@
 		</member>
 		<member name="wave_amplitude" type="float" setter="set_wave_amplitude" getter="get_wave_amplitude" default="1.0">
 			Linear height multiplier for the FFT ocean waves. At [code]1.0[/code] they have physical heights for the JONSWAP spectrum at [member wind_speed] and [member fetch] (in metres); below 1 reduces them proportionally, 0 removes the FFT ocean waves. This does not scale local ripple disturbances.
+		</member>
+		<member name="wet_sand_dry_time" type="float" setter="set_wet_sand_dry_time" getter="get_wet_sand_dry_time" default="12.0">
+			Time constant (s) for sand uncovered by the swash to dry: the wet darkening fades to about a third over this long. See [member swash_run_up].
 		</member>
 		<member name="wind_direction" type="Vector2" setter="set_wind_direction" getter="get_wind_direction" default="Vector2(1, 0)">
 			Direction (X, Z) the wind blows toward; the FFT ocean waves are aligned with it and travel downwind. Need not be normalized.

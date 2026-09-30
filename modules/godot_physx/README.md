@@ -465,7 +465,9 @@ surges in with the wave and slides back out with the backwash and undertow
 the sand along a waterline that scallops with the arriving waves rather than
 following the depth contour. That edge is measured in metres of water
 (`swash_reach`, `shore_edge_softness` in the material), so it behaves the same
-whatever `shallow_fade_depth` is.
+whatever `shallow_fade_depth` is. The bigger waves also run up past the still-water line as a
+thin film on the sand (`swash_run_up`, `swash_drain_speed`), and the sand they
+cover stays dark and glossy while it dries (`wet_sand_dry_time`).
 
 For open water, `render_extent` renders the surface out to the horizon: the FFT
 ocean tiles seamlessly past the simulated square and ripples settle to still

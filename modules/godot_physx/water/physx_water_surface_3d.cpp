@@ -133,6 +133,15 @@ uniform float shore_edge_softness : hint_range(0.0, 0.5, 0.005) = 0.08;
 // waves instead of following a depth contour, but only ever goes clear where
 // the water really is that thin.
 uniform float swash_reach : hint_range(0.0, 1.0, 0.01) = 0.25;
+// Swash and wet sand from PhysXWaterSurface3D (swash_run_up, ...): r = how
+// high (m) above still water the last waves ran up, g = sand wetness.
+uniform sampler2D swash_tex : hint_default_black, filter_linear, repeat_disable;
+// Thickness (m) of the swash film over the sand -- just enough to stay above
+// the ground mesh.
+uniform float swash_film_thickness : hint_range(0.0, 0.2, 0.005) = 0.03;
+// Wet sand: rgb blended over the ground where the water has been, alpha the
+// strength -- darkens it, fading as it dries.
+uniform vec4 wet_sand_color : source_color = vec4(0.16, 0.12, 0.07, 0.45);
 // Wave height (m) that pushes the waterline all the way in.
 uniform float swash_wave_height = 0.3;
 // Thin bright foam rim just behind the moving edge.
@@ -156,6 +165,11 @@ vec3 surface_offset(vec2 world_xz) {
 	float inside = 1.0 - smoothstep(0.46, 0.5, max(from_center.x, from_center.y));
 	float ripple = mix(water_level, texture(ripple_height_tex, cuv_r).r, inside);
 	float h = ripple + texture(ocean_height_tex, cuv_o).r * fade;
+	// Never below the ground: over dry sand (and in the deepest troughs over
+	// shallows) the surface lies on the sand as a thin film, which is where
+	// the swash shows.
+	float ground = water_level - texture(shore_depth_tex, cuv_r).r;
+	h = max(h, ground + swash_film_thickness);
 	return vec3(d.x, h, d.y);
 }
 
@@ -234,7 +248,9 @@ float shore_signal(vec2 world_xz, float time) {
 	float n = 0.65 * foam_value_noise(p + vec2(time * 0.12, time * 0.05)) + 0.35 * foam_value_noise(p * 2.4 - vec2(time * 0.07, 0.0));
 	float wave = clamp(eta / max(swash_wave_height, 1e-3), -1.0, 1.0);
 	float offset = swash_reach * clamp(0.5 + (n - 0.5) * 1.6 - 0.35 * wave, 0.0, 1.0);
-	return depth - offset;
+	// The pull-back only applies in the water; over dry sand the swash
+	// film reaches exactly as far as the run-up (and the wet sand) does.
+	return depth - offset * smoothstep(0.0, 0.1, depth) + texture(swash_tex, cuv_r).r;
 }
 
 void vertex() {
@@ -294,7 +310,11 @@ void fragment() {
 	// of filling the band. (Whitecaps are left alone.)
 	foam = max(foam, shore_foam_at(v_rest_xz) * (1.0 - smoothstep(0.02, 0.6, shore)));
 	// Bright rim right behind the moving edge, broken into lace.
-	float soft = max(shore_edge_softness, 1e-3);
+	// Over dry sand the swash film is only as thick as the run-up's excess
+	// over the sand -- a few cm -- so it fades in over a fifth of the
+	// softness there, or the uprush would barely show.
+	vec2 cuv_here = clamp((v_rest_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
+	float soft = max(shore_edge_softness, 1e-3) * mix(0.2, 1.0, smoothstep(-0.05, 0.1, texture(shore_depth_tex, cuv_here).r));
 	float rim = smoothstep(0.0, soft * 0.5, shore) * (1.0 - smoothstep(soft * 0.6, soft * 2.2, shore));
 	rim *= shore_rim_strength * (0.55 + 0.45 * foam_value_noise(v_rest_xz * 6.0));
 	foam = max(foam, rim);
@@ -302,8 +322,16 @@ void fragment() {
 	float shallow = (1.0 - texture(ocean_fade_tex, cuv_fade).r) * shallow_tint;
 	vec3 base_rgb = mix(water_color.rgb, shallow_color.rgb, shallow) * mix(0.75, 1.15, ndotl);
 	float base_a = mix(water_color.a, shallow_color.a, shallow);
+	// Thin water is clear: the swash film and the last few cm at the edge let
+	// the sand show through, turning opaque by ~25 cm of depth.
+	base_a *= mix(0.4, 1.0, smoothstep(0.0, 0.25, shore));
 	ALBEDO = mix(base_rgb, foam_color.rgb, foam);
-	ALPHA = mix(base_a, foam_color.a, foam) * smoothstep(0.0, soft, shore);
+	float water_a = mix(base_a, foam_color.a, foam) * smoothstep(0.0, soft, shore);
+	// Wet sand under and behind the swash: blended in where the water is
+	// thin or gone, so it shows through the film and lingers after it.
+	float wet_a = texture(swash_tex, cuv_fade).g * wet_sand_color.a * (1.0 - water_a);
+	ALPHA = water_a + wet_a;
+	ALBEDO = (ALBEDO * water_a + wet_sand_color.rgb * wet_a) / max(ALPHA, 1e-4);
 }
 )";
 
@@ -426,6 +454,12 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_shore_foam_band"), &PhysXWaterSurface3D::get_shore_foam_band);
 	ClassDB::bind_method(D_METHOD("set_shore_undertow", "speed"), &PhysXWaterSurface3D::set_shore_undertow);
 	ClassDB::bind_method(D_METHOD("get_shore_undertow"), &PhysXWaterSurface3D::get_shore_undertow);
+	ClassDB::bind_method(D_METHOD("set_swash_run_up", "height"), &PhysXWaterSurface3D::set_swash_run_up);
+	ClassDB::bind_method(D_METHOD("get_swash_run_up"), &PhysXWaterSurface3D::get_swash_run_up);
+	ClassDB::bind_method(D_METHOD("set_swash_drain_speed", "speed"), &PhysXWaterSurface3D::set_swash_drain_speed);
+	ClassDB::bind_method(D_METHOD("get_swash_drain_speed"), &PhysXWaterSurface3D::get_swash_drain_speed);
+	ClassDB::bind_method(D_METHOD("set_wet_sand_dry_time", "seconds"), &PhysXWaterSurface3D::set_wet_sand_dry_time);
+	ClassDB::bind_method(D_METHOD("get_wet_sand_dry_time"), &PhysXWaterSurface3D::get_wet_sand_dry_time);
 
 	ClassDB::bind_method(D_METHOD("set_surface_mesh", "mesh"), &PhysXWaterSurface3D::set_surface_mesh);
 	ClassDB::bind_method(D_METHOD("get_surface_mesh"), &PhysXWaterSurface3D::get_surface_mesh);
@@ -487,6 +521,9 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_foam_band", PROPERTY_HINT_RANGE, "0,5,0.05,or_greater,suffix:m"), "set_shore_foam_band", "get_shore_foam_band");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shore_undertow", PROPERTY_HINT_RANGE, "0,1.5,0.01,or_greater,suffix:m/s"), "set_shore_undertow", "get_shore_undertow");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_persistence", PROPERTY_HINT_RANGE, "0.05,20,0.05,or_greater,suffix:s"), "set_foam_persistence", "get_foam_persistence");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "swash_run_up", PROPERTY_HINT_RANGE, "0,1,0.01,or_greater,suffix:m"), "set_swash_run_up", "get_swash_run_up");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "swash_drain_speed", PROPERTY_HINT_RANGE, "0.01,1,0.01,or_greater,suffix:m/s"), "set_swash_drain_speed", "get_swash_drain_speed");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wet_sand_dry_time", PROPERTY_HINT_RANGE, "0.1,60,0.1,or_greater,suffix:s"), "set_wet_sand_dry_time", "get_wet_sand_dry_time");
 
 	ADD_GROUP("Rendering", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "render_extent", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_render_extent", "get_render_extent");
@@ -577,6 +614,21 @@ void PhysXWaterSurface3D::set_foam_enabled(bool p_enabled) {
 void PhysXWaterSurface3D::set_shore_undertow(float p_speed) {
 	shore_undertow = MAX(p_speed, 0.0f);
 	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
+}
+
+void PhysXWaterSurface3D::set_swash_run_up(float p_height) {
+	swash_run_up = MAX(p_height, 0.0f);
+	solver.set_swash_settings(swash_run_up, swash_drain_speed, wet_sand_dry_time);
+}
+
+void PhysXWaterSurface3D::set_swash_drain_speed(float p_speed) {
+	swash_drain_speed = MAX(p_speed, 0.01f);
+	solver.set_swash_settings(swash_run_up, swash_drain_speed, wet_sand_dry_time);
+}
+
+void PhysXWaterSurface3D::set_wet_sand_dry_time(float p_seconds) {
+	wet_sand_dry_time = MAX(p_seconds, 0.1f);
+	solver.set_swash_settings(swash_run_up, swash_drain_speed, wet_sand_dry_time);
 }
 
 void PhysXWaterSurface3D::set_shore_foam_band(float p_depth) {
@@ -867,6 +919,7 @@ void PhysXWaterSurface3D::_configure_solver() {
 	s.caustics_enabled = caustics_enabled;
 	solver.configure(s);
 	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
+	solver.set_swash_settings(swash_run_up, swash_drain_speed, wet_sand_dry_time);
 	if (!solver.has_device() && !warned_no_device) {
 		warned_no_device = true;
 		WARN_PRINT("PhysXWaterSurface3D: the water compute solver could not start (no RenderingDevice / compute support).");
@@ -936,6 +989,10 @@ void PhysXWaterSurface3D::_bind_textures() {
 		shore_foam_tex.instantiate();
 	}
 	shore_foam_tex->set_texture_rd_rid(solver.get_shore_foam_texture_rd_rid());
+	if (swash_tex.is_null()) {
+		swash_tex.instantiate();
+	}
+	swash_tex->set_texture_rd_rid(solver.get_swash_texture_rd_rid());
 	ripple_height_tex->set_texture_rd_rid(solver.get_ripple_height_texture_rd_rid());
 	ocean_height_tex->set_texture_rd_rid(solver.get_ocean_height_texture_rd_rid());
 	ocean_fade_tex->set_texture_rd_rid(solver.get_ocean_fade_texture_rd_rid());
@@ -958,6 +1015,7 @@ void PhysXWaterSurface3D::_bind_textures() {
 		water_material->set_shader_parameter("ocean_deriv_tex", ocean_deriv_tex);
 		water_material->set_shader_parameter("ocean_foam_tex", ocean_foam_tex);
 		water_material->set_shader_parameter("shore_foam_tex", shore_foam_tex);
+		water_material->set_shader_parameter("swash_tex", swash_tex);
 	}
 	textures_bound = true;
 }

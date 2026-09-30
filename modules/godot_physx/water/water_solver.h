@@ -77,6 +77,8 @@ public:
 	RID shader_foam, pipeline_foam;
 	// Shore foam (water_shore_foam.glsl), on the ripple grid, after the foam pass.
 	RID shader_shore_foam, pipeline_shore_foam;
+	// Swash run-up and wet sand (water_swash.glsl), on the ripple grid.
+	RID shader_swash, pipeline_swash;
 
 	RID buf_params;
 	RID buf_state_a, buf_state_b; // ping-pong ripple state (h, h_prev, foam, _)
@@ -112,6 +114,12 @@ public:
 	RID tex_shore_foam; // R32F shore foam 0..1 on the ripple grid, persists across steps
 	RID tex_shore_foam_tmp; // scratch for the foam's advection (see water_shore_foam.glsl)
 	RID buf_shore_foam_params, buf_shore_foam_copy_params, uset_shore_foam, uset_shore_foam_copy;
+	float swash_run_up = 0.3f;
+	float swash_drain_speed = 0.12f;
+	float wet_sand_dry_time = 12.0f;
+	RID tex_swash; // RGBA32F (run-up m, wetness 0..1, mean-square rise, 0) on the ripple grid
+	RID tex_swash_tmp; // scratch: the run-up climbs from neighbours (see water_swash.glsl)
+	RID buf_swash_params, buf_swash_copy_params, uset_swash, uset_swash_copy;
 	// Still-water depth per ripple cell (R16F metres, <= 0 dry -- see
 	// water_inc.glsl), bound to the ripple pass and the caustics pass, and
 	// the ocean chop's shallow-water fade derived from it (R8, sampled by the
@@ -198,6 +206,7 @@ public:
 	void rt_render_caustics(Ref<WaterSolverGPU> p_self, Vector3 p_sun_direction, Vector3 p_light_right, Vector3 p_light_up, Vector3 p_origin, float p_half_extent, float p_reference_depth, float p_ior);
 	void rt_free(Ref<WaterSolverGPU> p_self);
 	void rt_set_foam(Ref<WaterSolverGPU> p_self, bool p_enabled, float p_choppiness, float p_threshold, float p_persistence, float p_shore_band, float p_shore_undertow);
+	void rt_set_swash(Ref<WaterSolverGPU> p_self, float p_run_up, float p_drain_speed, float p_dry_time);
 
 	// Async readback callbacks: RenderingDevice invokes them with the data as
 	// the runtime arg; Callable::bind APPENDS the bound args, so the data
@@ -354,6 +363,13 @@ public:
 	void set_foam_settings(bool p_enabled, float p_choppiness, float p_threshold, float p_persistence, float p_shore_band, float p_shore_undertow);
 	// R32F shore foam (0..1) on the ripple grid; valid once is_available().
 	RID get_shore_foam_texture_rd_rid() const;
+	// Swash: the highest run-up (m above still water) of the biggest waves,
+	// the vertical speed (m/s) the backwash drains back down at, and how
+	// long (s) uncovered sand takes to dry. Applies live.
+	void set_swash_settings(float p_run_up, float p_drain_speed, float p_dry_time);
+	// RGBA32F on the ripple grid: r run-up level (m above still water), g sand
+	// wetness 0..1 (see water_swash.glsl); valid once is_available().
+	RID get_swash_texture_rd_rid() const;
 	// Dry cell that's a wall, not a shore (see Settings::cell_depth).
 	static constexpr float WALL_DEPTH = -10000.0f;
 	// The ocean layer's fade factor for a still-water depth (1 for a wall

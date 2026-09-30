@@ -1205,39 +1205,43 @@ PackedByteArray PhysXWaterSurface3D::_rasterize_wet_mask(const Vector<Vector2> &
 }
 
 Ref<Mesh> PhysXWaterSurface3D::_build_extended_plane(Vector2 p_inner, int p_inner_cells, real_t p_extent) const {
-	// Per axis: uniform steps across the simulated span, then each step 15%
-	// longer than the last until the extent is reached -- detail where the
-	// waves are simulated, a few hundred extra vertices out to the horizon.
-	auto axis = [&](real_t p_inner_size) {
-		LocalVector<real_t> pos;
-		const real_t step = p_inner_size / (real_t)MAX(p_inner_cells, 1);
-		for (int i = 0; i <= p_inner_cells; i++) {
-			pos.push_back(-p_inner_size * 0.5f + step * i);
+	// A regular grid of (2K+1)^2 vertices whose square rings are spread out
+	// from the centre: rings up to K0 are the simulated span at uniform
+	// spacing, and each ring past it is 15% further out than the step before
+	// -- detail where the waves are simulated, a few hundred rings out to the
+	// horizon. Spacing grows with the ring (distance from the centre), the
+	// same along X and Z. (A per-axis spacing left the simulated span's fine
+	// columns/rows running out to the horizon as two strips of fine mesh
+	// along the axes, and the same waves looked different either side of
+	// each strip's edge: a seam straight out to sea.)
+	const int k0 = MAX(p_inner_cells / 2, 1);
+	const Vector2 half_inner = p_inner * 0.5f;
+	const real_t max_half = MAX(half_inner.x, half_inner.y);
+	// radius[c]: ring c's half-size, in units of the inner step (ring c <= k0: c).
+	LocalVector<real_t> radius;
+	for (int c = 0; c <= k0; c++) {
+		radius.push_back((real_t)c);
+	}
+	{
+		const real_t limit = (p_extent * 0.5f) / max_half * (real_t)k0;
+		real_t r = (real_t)k0;
+		real_t step = 1.0f;
+		while (r < limit) {
+			step *= 1.15f;
+			r = MIN(r + step, limit);
+			radius.push_back(r);
 		}
-		LocalVector<real_t> outer;
-		real_t x = p_inner_size * 0.5f;
-		real_t s = step;
-		while (x < p_extent * 0.5f) {
-			s *= 1.15f;
-			x = MIN(x + s, p_extent * (real_t)0.5);
-			outer.push_back(x);
-		}
-		LocalVector<real_t> all;
-		for (int i = (int)outer.size() - 1; i >= 0; i--) {
-			all.push_back(-outer[i]);
-		}
-		for (real_t v : pos) {
-			all.push_back(v);
-		}
-		for (real_t v : outer) {
-			all.push_back(v);
-		}
-		return all;
+	}
+	const int kmax = (int)radius.size() - 1;
+	const int nx = 2 * kmax + 1;
+	const int nz = nx;
+	auto position = [&](int p_i, int p_j) {
+		const int ai = p_i < 0 ? -p_i : p_i;
+		const int aj = p_j < 0 ? -p_j : p_j;
+		const int ring = ai > aj ? ai : aj;
+		const real_t scale = ring == 0 ? (real_t)1.0 : radius[ring] / (real_t)ring;
+		return Vector2((real_t)p_i * scale * half_inner.x / (real_t)k0, (real_t)p_j * scale * half_inner.y / (real_t)k0);
 	};
-	const LocalVector<real_t> xs = axis(p_inner.x);
-	const LocalVector<real_t> zs = axis(p_inner.y);
-	const int nx = xs.size();
-	const int nz = zs.size();
 
 	PackedVector3Array verts;
 	PackedVector3Array normals;
@@ -1248,9 +1252,10 @@ Ref<Mesh> PhysXWaterSurface3D::_build_extended_plane(Vector2 p_inner, int p_inne
 	for (int j = 0; j < nz; j++) {
 		for (int i = 0; i < nx; i++) {
 			const int k = j * nx + i;
-			verts.set(k, Vector3(xs[i], 0.0f, zs[j]));
+			const Vector2 xz = position(i - kmax, j - kmax);
+			verts.set(k, Vector3(xz.x, 0.0f, xz.y));
 			normals.set(k, Vector3(0, 1, 0));
-			uvs.set(k, Vector2(xs[i], zs[j]) / p_extent + Vector2(0.5f, 0.5f));
+			uvs.set(k, xz / p_extent + Vector2(0.5f, 0.5f));
 		}
 	}
 	const bool flip = plane_mesh_xz_winding() < 0;

@@ -140,7 +140,7 @@ public:
 	// p_cell_depth: grid_resolution^2 still-water depths in metres (<= 0 =
 	// dry), row-major by Z then X like the ripple grid; empty = p_depth
 	// everywhere.
-	void rt_build(Ref<WaterSolverGPU> p_self, int p_grid_resolution, Vector2 p_domain_size, int p_ocean_grid_resolution, Vector2 p_ocean_domain_size, float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_gravity, bool p_caustics_enabled, PackedFloat32Array p_cell_depth, float p_depth, float p_shallow_fade_depth);
+	void rt_build(Ref<WaterSolverGPU> p_self, int p_grid_resolution, Vector2 p_domain_size, int p_ocean_grid_resolution, Vector2 p_ocean_domain_size, float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_gravity, bool p_caustics_enabled, PackedFloat32Array p_cell_depth, float p_depth, float p_shallow_fade_depth, float p_fetch);
 	// p_spheres/p_impulses: flat, 4 floats/entry (world_x, world_z, radius,
 	// strength), packed on the calling thread into an immutable value-copy
 	// snapshot before dispatch -- same thread-safety pattern
@@ -189,6 +189,7 @@ private:
 	Vector2 _init_wind_direction = Vector2(1, 0);
 	float _init_wave_amplitude = 1.0f;
 	float _init_gravity = 9.81f;
+	float _init_fetch = 100000.0f;
 	bool _init_caustics_enabled = false;
 	PackedFloat32Array _init_cell_depth;
 	float _init_depth = 3.0f;
@@ -234,7 +235,11 @@ public:
 		Vector2 ocean_domain_size = Vector2(40, 40);
 		float wind_speed = 8.0f;
 		Vector2 wind_direction = Vector2(1, 0); // need not be normalized, normalized on upload
-		float wave_amplitude = 1.0f; // linear height multiplier; squared when used as Phillips spectrum energy
+		float wave_amplitude = 1.0f; // linear height multiplier on the physical spectrum (1 = JONSWAP heights in metres)
+		// Distance in metres the wind has blown over open water: sets how
+		// tall and how long the wind waves get (JONSWAP). 100 km is a fully
+		// developed open sea; a pool's size gives tiny, short ripples.
+		float fetch = 100000.0f;
 
 		// Light-space caustic map (see water_caustics_map.glsl). The grid/
 		// buffers are only built if this is true at configure() time -- keep

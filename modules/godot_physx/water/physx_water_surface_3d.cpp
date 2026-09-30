@@ -240,6 +240,9 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wind_direction"), &PhysXWaterSurface3D::get_wind_direction);
 	ClassDB::bind_method(D_METHOD("set_wave_amplitude", "amplitude"), &PhysXWaterSurface3D::set_wave_amplitude);
 	ClassDB::bind_method(D_METHOD("get_wave_amplitude"), &PhysXWaterSurface3D::get_wave_amplitude);
+	ClassDB::bind_method(D_METHOD("set_fetch", "fetch"), &PhysXWaterSurface3D::set_fetch);
+	ClassDB::bind_method(D_METHOD("get_fetch"), &PhysXWaterSurface3D::get_fetch);
+	ClassDB::bind_method(D_METHOD("get_effective_fetch"), &PhysXWaterSurface3D::get_effective_fetch);
 
 	ClassDB::bind_method(D_METHOD("set_surface_mesh", "mesh"), &PhysXWaterSurface3D::set_surface_mesh);
 	ClassDB::bind_method(D_METHOD("get_surface_mesh"), &PhysXWaterSurface3D::get_surface_mesh);
@@ -289,6 +292,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_speed"), "set_wind_speed", "get_wind_speed");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "wind_direction"), "set_wind_direction", "get_wind_direction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wave_amplitude"), "set_wave_amplitude", "get_wave_amplitude");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "fetch", PROPERTY_HINT_RANGE, "0,100000,1,or_greater,suffix:m"), "set_fetch", "get_fetch");
 
 	ADD_GROUP("Rendering", "");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "water_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_water_material", "get_water_material");
@@ -359,6 +363,20 @@ void PhysXWaterSurface3D::set_wind_direction(Vector2 p_dir) {
 void PhysXWaterSurface3D::set_wave_amplitude(float p_amp) {
 	wave_amplitude = MAX(p_amp, 0.0f);
 	_rebuild();
+}
+
+void PhysXWaterSurface3D::set_fetch(float p_fetch) {
+	fetch = MAX(p_fetch, 0.0f);
+	_rebuild();
+}
+
+float PhysXWaterSurface3D::get_effective_fetch() const {
+	if (fetch > 0.0f) {
+		return fetch;
+	}
+	// Enclosed water (a surface_mesh outline) can't have more fetch than its
+	// own size; an open square stands for a patch of open sea.
+	return footprint_extent > 0.0 ? (float)footprint_extent : 100000.0f;
 }
 
 void PhysXWaterSurface3D::set_seabed_from_floor(bool p_enabled) {
@@ -449,6 +467,7 @@ void PhysXWaterSurface3D::_rebuild() {
 	active_domain_size = domain_size;
 	footprint_mask.clear();
 	cell_depth.clear();
+	footprint_extent = 0.0;
 	water_mesh.unref();
 	if (surface_mesh.is_valid()) {
 		const Vector<Vector2> tris = _collect_footprint();
@@ -463,6 +482,7 @@ void PhysXWaterSurface3D::_rebuild() {
 			// One dry cell of margin on each side, so the shoreline never sits
 			// on the grid edge.
 			const real_t side = MAX(bounds.size.x, bounds.size.y);
+			footprint_extent = side;
 			const real_t padded = side * (real_t)grid_resolution / (real_t)MAX(grid_resolution - 2, 1);
 			active_domain_size = Vector2(padded, padded);
 			footprint_mask = _rasterize_wet_mask(tris, local_center, active_domain_size, grid_resolution);
@@ -587,6 +607,7 @@ void PhysXWaterSurface3D::_configure_solver() {
 	s.wind_speed = wind_speed;
 	s.wind_direction = wind_direction;
 	s.wave_amplitude = wave_amplitude;
+	s.fetch = get_effective_fetch();
 	s.caustics_enabled = caustics_enabled;
 	solver.configure(s);
 	if (!solver.has_device() && !warned_no_device) {

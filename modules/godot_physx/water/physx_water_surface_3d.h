@@ -97,6 +97,14 @@ public:
 	Vector2 get_wind_direction() const { return wind_direction; }
 	void set_wave_amplitude(float p_amp);
 	float get_wave_amplitude() const { return wave_amplitude; }
+	// How far the wind has blown over open water, in metres (JONSWAP): sets
+	// how tall and long the wind waves get. 0 = auto: the surface_mesh
+	// footprint's longest side for enclosed water, a fully developed open sea
+	// otherwise.
+	void set_fetch(float p_fetch);
+	float get_fetch() const { return fetch; }
+	// The fetch actually in use (resolves the 0 = auto case).
+	float get_effective_fetch() const;
 
 	// Optional shape: any flat mesh whose X/Z footprint (node-local) is the
 	// water's outline -- a disc, a kidney bean, a lake with an island. When
@@ -174,6 +182,9 @@ private:
 	float wind_speed = 8.0f;
 	Vector2 wind_direction = Vector2(1, 0);
 	float wave_amplitude = 1.0f;
+	float fetch = 0.0f;
+	// Longest side of the surface_mesh footprint (0 = none), for auto fetch.
+	real_t footprint_extent = 0.0;
 
 	MeshInstance3D *mesh_instance = nullptr;
 	Ref<Mesh> surface_mesh;

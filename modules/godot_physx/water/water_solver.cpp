@@ -48,7 +48,7 @@
 
 namespace {
 constexpr int PARAMS_BYTES = 64; // 4 * vec4, std140 -- see water_inc.glsl's Params
-constexpr int OCEAN_INIT_PARAMS_BYTES = 48; // 3 * vec4 -- see water_spectrum_init.glsl's Params
+constexpr int OCEAN_INIT_PARAMS_BYTES = 64; // 4 * vec4 -- see water_spectrum_init.glsl's Params
 constexpr int OCEAN_EVOLVE_PARAMS_BYTES = 32; // 2 * vec4 -- see water_spectrum_evolve.glsl's Params
 constexpr int FFT_PARAMS_BYTES = 16; // 1 * ivec4 -- see water_fft.glsl's Params
 constexpr int BLIT_PARAMS_BYTES = 16; // 1 * ivec4 -- see water_blit_*.glsl's Params
@@ -402,6 +402,10 @@ void WaterSolverGPU::_rt_build_buffers() {
 		put_i(36, 0);
 		put_i(40, 0);
 		put_i(44, 0);
+		put_f(48, _init_fetch);
+		put_f(52, _init_depth);
+		put_f(56, 0.0f);
+		put_f(60, 0.0f);
 		rd->buffer_update(buf_ocean_init_params, 0, OCEAN_INIT_PARAMS_BYTES, ib.ptr());
 
 		RD::ComputeListID cl = rd->compute_list_begin();
@@ -504,7 +508,7 @@ void WaterSolverGPU::_rt_build_caustics_grid() {
 	uset_caustics = rd->uniform_set_create(uniforms, shader_caustics, 0);
 }
 
-void WaterSolverGPU::rt_build(Ref<WaterSolverGPU> p_self, int p_grid_resolution, Vector2 p_domain_size, int p_ocean_grid_resolution, Vector2 p_ocean_domain_size, float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_gravity, bool p_caustics_enabled, PackedFloat32Array p_cell_depth, float p_depth, float p_shallow_fade_depth) {
+void WaterSolverGPU::rt_build(Ref<WaterSolverGPU> p_self, int p_grid_resolution, Vector2 p_domain_size, int p_ocean_grid_resolution, Vector2 p_ocean_domain_size, float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_gravity, bool p_caustics_enabled, PackedFloat32Array p_cell_depth, float p_depth, float p_shallow_fade_depth, float p_fetch) {
 	if (rd == nullptr || !shaders_ok) {
 		return;
 	}
@@ -521,6 +525,7 @@ void WaterSolverGPU::rt_build(Ref<WaterSolverGPU> p_self, int p_grid_resolution,
 	_init_caustics_enabled = p_caustics_enabled;
 	_init_cell_depth = p_cell_depth;
 	_init_depth = p_depth;
+	_init_fetch = MAX(p_fetch, 1.0f);
 	shallow_fade_depth = p_shallow_fade_depth;
 	_rt_build_buffers();
 	built.set_to(true);
@@ -849,7 +854,7 @@ void WaterSolver::configure(const Settings &p_settings) {
 		s = SphereSlot();
 	}
 	pending_impulses.clear();
-	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_build).bind(gpu, settings.grid_resolution, settings.domain_size, settings.ocean_grid_resolution, settings.ocean_domain_size, settings.wind_speed, settings.wind_direction, settings.wave_amplitude, settings.gravity, settings.caustics_enabled, settings.cell_depth, settings.depth, settings.shallow_fade_depth));
+	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_build).bind(gpu, settings.grid_resolution, settings.domain_size, settings.ocean_grid_resolution, settings.ocean_domain_size, settings.wind_speed, settings.wind_direction, settings.wave_amplitude, settings.gravity, settings.caustics_enabled, settings.cell_depth, settings.depth, settings.shallow_fade_depth, settings.fetch));
 }
 
 PackedFloat32Array WaterSolver::_pack_spheres() const {

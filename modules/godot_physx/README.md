@@ -429,18 +429,20 @@ never in the editor.
 ## Water — `PhysXWaterSurface3D`
 
 An animated water surface with two GPU compute layers summed into one displaced
-mesh (created automatically as a child): a Tessendorf FFT ocean spectrum for
-wind-driven chop (`wind_speed`, `wind_direction`, `wave_amplitude`, over
-`ocean_domain_size`) and a local ripple layer — a damped shallow-water wave
-equation over `domain_size` whose wave speed follows `depth` — that bodies
-disturb.
+mesh (created automatically as a child): a Tessendorf FFT ocean with a
+fetch-limited JONSWAP wind spectrum (`wind_speed`, `wind_direction`, `fetch`,
+over `ocean_domain_size`; heights in metres at `wave_amplitude` 1) and a local
+ripple layer — a damped shallow-water wave equation over `domain_size` whose
+wave speed follows `depth` — that bodies disturb.
 
 The water is a square by default. Set `surface_mesh` to any flat mesh (a disc
 baked from `CSGCylinder3D`, a kidney bean, a lake with an island) and its X/Z
 footprint becomes the water: the ripple grid fits itself to the outline, waves
 reflect off the shoreline, and the rendered surface is the footprint resampled
 into an even grid, so a coarse or fan-triangulated mesh still animates
-everywhere. The simulation is centred on the node's position; keep the node
+everywhere. With `fetch` left at 0 the footprint also sets the fetch, so an
+enclosed pool only gets small, short wind ripples while an open square is a
+developed sea. The simulation is centred on the node's position; keep the node
 unrotated and unscaled.
 
 Set `seabed_from_floor` for water over uneven ground, like a beach or a lake

@@ -98,6 +98,9 @@
 		<member name="domain_size" type="Vector2" setter="set_domain_size" getter="get_domain_size" default="Vector2(20, 20)">
 			World-space extent (X, Z) of the local ripple layer -- independent of [member ocean_domain_size], see [member ocean_grid_resolution]'s own note on why. Ignored when [member surface_mesh] is set: the ripple grid is then fitted to the footprint's bounds.
 		</member>
+		<member name="fetch" type="float" setter="set_fetch" getter="get_fetch" default="0.0">
+			How far the wind has blown over open water, in metres. The ocean layer is a fetch-limited JONSWAP spectrum, so fetch sets how tall and how long the wind waves get at a given [member wind_speed]: a few metres give tiny, short ripples, kilometres give a developed sea. [code]0[/code] (auto) uses the [member surface_mesh] footprint's longest side for enclosed water, or a fully developed open sea (100 km) without one. Only wavelengths up to [member ocean_domain_size] are represented, and waves shorter than two ocean grid cells aren't, so a small fetch at a coarse [member ocean_grid_resolution] can leave the ocean layer flat.
+		</member>
 		<member name="grid_resolution" type="int" setter="set_grid_resolution" getter="get_grid_resolution" default="96">
 			Cell count per side of the local ripple layer's grid. Not required to be a power of two, unlike [member ocean_grid_resolution].
 		</member>
@@ -130,13 +133,13 @@
 			The material driving the surface mesh's displacement/shading. A default is created automatically if left unset -- assign your own only if you need to customize the look; it must keep sampling [code]ripple_height_tex[/code]/[code]ocean_height_tex[/code] in its vertex shader the same way the default does, or the mesh will stop moving.
 		</member>
 		<member name="wave_amplitude" type="float" setter="set_wave_amplitude" getter="get_wave_amplitude" default="1.0">
-			Linear height multiplier for the FFT ocean waves. Values below 1 reduce wave height proportionally; 0 removes the FFT ocean waves. This does not scale local ripple disturbances.
+			Linear height multiplier for the FFT ocean waves. At [code]1.0[/code] they have physical heights for the JONSWAP spectrum at [member wind_speed] and [member fetch] (in metres); below 1 reduces them proportionally, 0 removes the FFT ocean waves. This does not scale local ripple disturbances.
 		</member>
 		<member name="wind_direction" type="Vector2" setter="set_wind_direction" getter="get_wind_direction" default="Vector2(1, 0)">
 			Wind direction (X, Z) driving the FFT ocean layer's wave alignment. Need not be normalized.
 		</member>
 		<member name="wind_speed" type="float" setter="set_wind_speed" getter="get_wind_speed" default="8.0">
-			Wind speed driving the FFT ocean layer's spectrum -- higher produces longer, larger waves.
+			Wind speed in m/s driving the FFT ocean layer's spectrum -- higher produces longer, larger waves, up to what [member fetch] allows.
 		</member>
 	</members>
 </class>

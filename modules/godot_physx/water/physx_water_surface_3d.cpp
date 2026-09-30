@@ -521,6 +521,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_caustics_light_up"), &PhysXWaterSurface3D::get_caustics_light_up);
 	ClassDB::bind_method(D_METHOD("get_caustics_origin"), &PhysXWaterSurface3D::get_caustics_origin);
 	ClassDB::bind_method(D_METHOD("get_caustics_half_extent"), &PhysXWaterSurface3D::get_caustics_half_extent);
+	ClassDB::bind_method(D_METHOD("get_caustics_tile_size"), &PhysXWaterSurface3D::get_caustics_tile_size);
 
 	ClassDB::bind_method(D_METHOD("sample_height", "world_pos"), &PhysXWaterSurface3D::sample_height);
 	ClassDB::bind_method(D_METHOD("is_wet", "world_pos"), &PhysXWaterSurface3D::is_wet);

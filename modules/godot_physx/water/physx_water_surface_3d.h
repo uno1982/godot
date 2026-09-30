@@ -207,6 +207,8 @@ public:
 	Vector3 get_caustics_light_up() const { return solver.get_caustics_light_up(); }
 	Vector3 get_caustics_origin() const { return solver.get_caustics_origin(); }
 	float get_caustics_half_extent() const { return solver.get_caustics_half_extent(); }
+	// Period of the caustics (the ocean tile): see WaterSolver::get_caustics_tile_size().
+	Vector2 get_caustics_tile_size() const { return solver.get_caustics_tile_size(); }
 
 	// CPU-side, safe every physics tick -- bilinear samples of the last
 	// texture refresh (see _refresh_textures()'s throttle), summed across

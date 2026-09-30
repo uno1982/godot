@@ -171,6 +171,10 @@ void WaterSolverGPU::rt_compile(Ref<WaterSolverGPU> p_self) {
 		ss.repeat_v = RD::SAMPLER_REPEAT_MODE_CLAMP_TO_EDGE;
 		sampler_linear = rd->sampler_create(ss);
 		ERR_FAIL_COND(sampler_linear.is_null());
+		ss.repeat_u = RD::SAMPLER_REPEAT_MODE_REPEAT;
+		ss.repeat_v = RD::SAMPLER_REPEAT_MODE_REPEAT;
+		sampler_linear_repeat = rd->sampler_create(ss);
+		ERR_FAIL_COND(sampler_linear_repeat.is_null());
 	}
 	shaders_ok = true;
 }
@@ -636,8 +640,8 @@ void WaterSolverGPU::_rt_build_caustics_grid() {
 	for (int z = 0; z < n; z++) {
 		for (int x = 0; x < n; x++) {
 			const int i = (z * n + x) * 2;
-			vertices.write[i] = ((float)x / (n - 1) - 0.5f) * ocean_domain_size.x;
-			vertices.write[i + 1] = ((float)z / (n - 1) - 0.5f) * ocean_domain_size.y;
+			vertices.write[i] = ((float)x / (n - 1) - 0.5f) * ocean_domain_size.x * CAUSTICS_TILE_MARGIN;
+			vertices.write[i + 1] = ((float)z / (n - 1) - 0.5f) * ocean_domain_size.y * CAUSTICS_TILE_MARGIN;
 		}
 	}
 	caustics_vertex_buffer = rd->vertex_buffer_create(vertices.size() * sizeof(float), vertices.span().reinterpret<uint8_t>());
@@ -694,7 +698,9 @@ void WaterSolverGPU::_rt_build_caustics_grid() {
 		RD::Uniform height_uniform;
 		height_uniform.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
 		height_uniform.binding = i + 1;
-		height_uniform.append_id(sampler_linear);
+		// The ocean wraps across its edge (the map spans more than one tile):
+		// a clamping sampler put a seam of bright caustics there.
+		height_uniform.append_id(i == 0 ? sampler_linear : sampler_linear_repeat);
 		height_uniform.append_id(i == 0 ? tex_ripple_height : tex_ocean_height);
 		uniforms.push_back(height_uniform);
 	}
@@ -1103,6 +1109,10 @@ void WaterSolverGPU::rt_free(Ref<WaterSolverGPU> p_self) {
 		rd->free_rid(sampler_linear);
 		sampler_linear = RID();
 	}
+	if (sampler_linear_repeat.is_valid()) {
+		rd->free_rid(sampler_linear_repeat);
+		sampler_linear_repeat = RID();
+	}
 	shaders_ok = false;
 }
 
@@ -1264,7 +1274,7 @@ void WaterSolver::render_caustics(const Vector3 &p_origin, const Vector3 &p_sun_
 	caustics_origin = p_origin;
 	p_reference_depth = MAX(p_reference_depth, 0.1f);
 	p_ior = MAX(p_ior, 1.001f);
-	caustics_half_extent = MAX(settings.ocean_domain_size.x, settings.ocean_domain_size.y) * 0.5f + p_reference_depth * 0.75f;
+	caustics_half_extent = MAX(settings.ocean_domain_size.x, settings.ocean_domain_size.y) * 0.5f * WaterSolverGPU::CAUSTICS_TILE_MARGIN + p_reference_depth * 0.75f;
 	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_render_caustics).bind(gpu, sun_direction, caustics_light_right, caustics_light_up, caustics_origin, caustics_half_extent, p_reference_depth, p_ior));
 }
 

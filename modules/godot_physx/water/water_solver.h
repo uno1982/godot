@@ -146,6 +146,7 @@ public:
 	// reference-depth/sun direction change per step.
 	RID shader_caustics, pipeline_caustics;
 	RID sampler_linear;
+	RID sampler_linear_repeat; // the periodic ocean textures, where they're tiled (caustics)
 	RID buf_caustics_params;
 	RID caustics_vertex_buffer, caustics_index_buffer;
 	int64_t caustics_vertex_format = -1;
@@ -156,6 +157,11 @@ public:
 	int caustics_index_count = 0;
 	static constexpr int CAUSTICS_MAP_SIZE = 2048;
 	static constexpr int CAUSTICS_GRID_MIN_RESOLUTION = 256;
+	// The caustics grid spans this much more than one ocean tile, so light
+	// refracted in from beyond the tile's edge is in the map too and a
+	// receiver folding its position into the tile (get_caustics_tile_size())
+	// sees no seam.
+	static constexpr float CAUSTICS_TILE_MARGIN = 1.25f;
 
 	int ocean_log2n = 0;
 	double ocean_time_accum = 0.0;
@@ -394,6 +400,11 @@ public:
 	Vector3 get_caustics_light_up() const { return caustics_light_up; }
 	Vector3 get_caustics_origin() const { return caustics_origin; }
 	float get_caustics_half_extent() const { return caustics_half_extent; }
+	// The ocean waves repeat every ocean_domain_size, so the caustics do too:
+	// a receiver can fold its world XZ into the tile around the origin
+	// (p - tile * round((p - origin) / tile)) before projecting, and get
+	// caustics all along a beach instead of only over the simulated square.
+	Vector2 get_caustics_tile_size() const { return settings.ocean_domain_size; }
 
 	// CPU-side cached readback, for buoyancy sampling (a consumer with very
 	// different freshness/precision needs than rendering -- see the project

@@ -21,6 +21,10 @@
 				The zero-copy caustics light-pattern texture. Project a receiving surface's world position onto [method get_caustics_light_right] and [method get_caustics_light_up], relative to [method get_caustics_origin], and map the result through [method get_caustics_half_extent] to sample the texture. Null until [member caustics_enabled] is true and the node has built.
 			</description>
 		</method>
+		<method name="get_caustics_tile_size" qualifiers="const">
+			<return type="Vector2" />
+			<description>The caustics repeat with the ocean waves, every [member ocean_domain_size]. A receiver can fold its world XZ into the tile around [method get_caustics_origin] ([code]p -= tile * round((p - origin) / tile)[/code]) before projecting, so caustics reach the whole seabed -- all along a beach -- not just the simulated square. The map spans a little more than one tile, so there's no seam.</description>
+		</method>
 		<method name="get_caustics_half_extent" qualifiers="const">
 			<return type="float" />
 			<description>Half-width of the square light-space projection in world units, used to map receiver positions to [method get_caustics_texture] UV coordinates.</description>

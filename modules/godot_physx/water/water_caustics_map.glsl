@@ -44,16 +44,22 @@ layout(set = 0, binding = 3) uniform sampler2D cell_depth_tex;
 
 float depth_at(vec2 xz) {
 	vec2 uv = xz / ripple_domain.xy + 0.5;
-	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
-		// Beyond the ripple grid: open water when no per-cell depth is set,
-		// dry when one is (a surface_mesh or seabed defines the water).
-		return ripple_domain.z > 0.5 ? 0.0 : 1e6;
+	if (ripple_domain.z < 0.5 && (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))))) {
+		// Beyond the ripple grid with no per-cell depth: open water.
+		return 1e6;
 	}
-	return texture(cell_depth_tex, uv).r;
+	// With per-cell depth the edge carries on past the grid (the map spans a
+	// little more than one ocean tile, see _rt_build_caustics_grid), the same
+	// way the surface material treats it.
+	return texture(cell_depth_tex, clamp(uv, vec2(0.0), vec2(1.0))).r;
 }
 
+// The rendered chop fades out over shallow_fade_depth so it can't cut
+// through the sand, but the waves still arrive there: the light keeps
+// focusing into caustics right up to the shore, fading only over the last
+// 30 cm.
 float ocean_fade(vec2 xz) {
-	return smoothstep(0.0, max(ripple_domain.w, 1e-3), depth_at(xz));
+	return smoothstep(0.0, min(max(ripple_domain.w, 1e-3), 0.3), depth_at(xz));
 }
 
 layout(location = 0) in vec2 in_xz;
@@ -61,9 +67,12 @@ layout(location = 0) in vec2 in_xz;
 layout(location = 0) out vec2 v_flat_xz;
 
 float sample_h(vec2 world_xz) {
+	// Ocean wraps (it's periodic -- that's what lets receivers tile the
+	// map); ripples mirror past their grid, seam-free.
 	vec2 uv_r = world_xz / ripple_domain.xy + 0.5;
-	vec2 uv_o = world_xz / ocean_domain.xy + 0.5;
-	return texture(ripple_height_tex, clamp(uv_r, vec2(0.0), vec2(1.0))).r + texture(ocean_height_tex, clamp(uv_o, vec2(0.0), vec2(1.0))).r * ocean_fade(world_xz);
+	uv_r = 1.0 - abs(mod(uv_r, 2.0) - 1.0);
+	vec2 uv_o = world_xz / ocean_domain.xy + 0.5; // repeat sampler
+	return texture(ripple_height_tex, uv_r).r + texture(ocean_height_tex, uv_o).r * ocean_fade(world_xz);
 }
 
 void main() {
@@ -123,16 +132,22 @@ layout(set = 0, binding = 3) uniform sampler2D cell_depth_tex;
 
 float depth_at(vec2 xz) {
 	vec2 uv = xz / ripple_domain.xy + 0.5;
-	if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
-		// Beyond the ripple grid: open water when no per-cell depth is set,
-		// dry when one is (a surface_mesh or seabed defines the water).
-		return ripple_domain.z > 0.5 ? 0.0 : 1e6;
+	if (ripple_domain.z < 0.5 && (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))))) {
+		// Beyond the ripple grid with no per-cell depth: open water.
+		return 1e6;
 	}
-	return texture(cell_depth_tex, uv).r;
+	// With per-cell depth the edge carries on past the grid (the map spans a
+	// little more than one ocean tile, see _rt_build_caustics_grid), the same
+	// way the surface material treats it.
+	return texture(cell_depth_tex, clamp(uv, vec2(0.0), vec2(1.0))).r;
 }
 
+// The rendered chop fades out over shallow_fade_depth so it can't cut
+// through the sand, but the waves still arrive there: the light keeps
+// focusing into caustics right up to the shore, fading only over the last
+// 30 cm.
 float ocean_fade(vec2 xz) {
-	return smoothstep(0.0, max(ripple_domain.w, 1e-3), depth_at(xz));
+	return smoothstep(0.0, min(max(ripple_domain.w, 1e-3), 0.3), depth_at(xz));
 }
 
 layout(location = 0) in vec2 v_flat_xz;
@@ -141,9 +156,9 @@ layout(location = 0) out vec4 out_color;
 
 float sample_h(vec2 world_xz) {
 	vec2 uv_r = world_xz / ripple_domain.xy + 0.5;
-	vec2 uv_o = world_xz / ocean_domain.xy + 0.5;
-	return texture(ripple_height_tex, clamp(uv_r, vec2(0.0), vec2(1.0))).r +
-			texture(ocean_height_tex, clamp(uv_o, vec2(0.0), vec2(1.0))).r * ocean_fade(world_xz);
+	uv_r = 1.0 - abs(mod(uv_r, 2.0) - 1.0);
+	vec2 uv_o = world_xz / ocean_domain.xy + 0.5; // repeat sampler
+	return texture(ripple_height_tex, uv_r).r + texture(ocean_height_tex, uv_o).r * ocean_fade(world_xz);
 }
 
 vec2 project_refracted_point(vec2 xz, out float incidence) {

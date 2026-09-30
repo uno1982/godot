@@ -465,6 +465,10 @@ surges in with the wave and slides back out with the backwash and undertow
 the sand along a waterline that scallops with the arriving waves rather than
 following the depth contour.
 
+For open water, `render_extent` renders the surface out to the horizon: the FFT
+ocean tiles seamlessly past the simulated square and ripples settle to still
+water there.
+
 `sample_height(position)` returns the same combined surface height on the CPU,
 for buoyancy scripts. Over dry cells (outside a `surface_mesh` footprint, or
 where the seabed is above the water) it returns `-INF` and `is_wet()` is false,

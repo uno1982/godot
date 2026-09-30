@@ -125,6 +125,9 @@
 		<member name="ocean_grid_resolution" type="int" setter="set_ocean_grid_resolution" getter="get_ocean_grid_resolution" default="64">
 			Cell count per side of the FFT ocean layer's grid. Rounded up to the nearest power of two if set otherwise -- the Stockham FFT passes require it. Independent of [member grid_resolution]/[member domain_size] (the ripple layer's own grid) by design: they're two different consumers of "water height" with very different resolution/precision needs, kept architecturally separate rather than forced to share one grid.
 		</member>
+		<member name="render_extent" type="float" setter="set_render_extent" getter="get_render_extent" default="0.0">
+			Side length in metres of the rendered surface, centred on the simulation, for open water that runs to the horizon. Past the simulated square the FFT ocean tiles seamlessly (it's periodic), the ripples settle to still water, and the seabed/shoreline values at the square's edge carry on outward; vertex spacing grows with distance, so a few hundred metres costs only a few hundred extra vertices per side. [code]0[/code] (or anything up to [member ocean_domain_size]) renders just the simulated square -- keep it that way for walled water. Ignored with a [member surface_mesh]. Custom materials need to sample the ocean textures with repeat to match (the built-in one does).
+		</member>
 		<member name="ripple_amplitude" type="float" setter="set_ripple_amplitude" getter="get_ripple_amplitude" default="1.0">
 			Multiplier on the ripple displacement driven by submitted floating-body proxies and impulses. Set lower for small splashes and wakes in a pool; this does not scale the FFT ocean waves.
 		</member>

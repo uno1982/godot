@@ -76,17 +76,17 @@ shader_type spatial;
 render_mode blend_mix, cull_disabled, unshaded;
 
 uniform sampler2D ripple_height_tex : hint_default_black, filter_linear, repeat_disable;
-uniform sampler2D ocean_height_tex : hint_default_black, filter_linear, repeat_disable;
+uniform sampler2D ocean_height_tex : hint_default_black, filter_linear, repeat_enable;
 // Ocean chop multiplier over the ripple domain: 1 in deep water, fading to 0
 // at the waterline (set by PhysXWaterSurface3D when it has a seabed).
 uniform sampler2D ocean_fade_tex : hint_default_white, filter_linear, repeat_disable;
 // Choppy horizontal displacement (x, z) of the ocean layer; scaled by
 // choppiness (both set by PhysXWaterSurface3D).
-uniform sampler2D ocean_disp_tex : hint_default_black, filter_linear, repeat_disable;
+uniform sampler2D ocean_disp_tex : hint_default_black, filter_linear, repeat_enable;
 uniform float choppiness = 1.0;
 // Ocean slopes and displacement derivatives (dh/dx, dh/dz, dDx/dx, dDz/dz),
 // straight from the FFT, for exact per-pixel normals and foam.
-uniform sampler2D ocean_deriv_tex : hint_default_black, filter_linear, repeat_disable;
+uniform sampler2D ocean_deriv_tex : hint_default_black, filter_linear, repeat_enable;
 // true: normals and foam per pixel from ocean_deriv_tex (smooth crests at any
 // mesh density). false: per vertex, from finite differences of the displaced
 // mesh (set by PhysXWaterSurface3D::normal_mode).
@@ -95,11 +95,14 @@ uniform vec2 ripple_domain_size = vec2(20.0, 20.0);
 uniform vec2 ocean_domain_size = vec2(40.0, 40.0);
 // World XZ both height fields are centred on (set by PhysXWaterSurface3D).
 uniform vec2 grid_center = vec2(0.0);
+// Mean surface height (node-relative), what the ripple layer settles back to
+// past the edge of its domain when the surface is rendered further out.
+uniform float water_level = 0.0;
 uniform vec4 water_color : source_color = vec4(0.09, 0.32, 0.42, 0.65);
 // Persistent whitecap foam (0..1) on the ocean grid, injected where the
 // waves fold and fading over the node's foam_persistence (set by
 // PhysXWaterSurface3D).
-uniform sampler2D ocean_foam_tex : hint_default_black, filter_linear, repeat_disable;
+uniform sampler2D ocean_foam_tex : hint_default_black, filter_linear, repeat_enable;
 uniform vec4 foam_color : source_color = vec4(0.92, 0.95, 0.97, 0.95);
 // How much fading foam breaks up into lace instead of thinning evenly
 // (0 = solid sheet until it's gone).
@@ -138,12 +141,16 @@ varying vec2 v_rest_xz;
 vec3 surface_offset(vec2 world_xz) {
 	vec2 rel = world_xz - grid_center;
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
-	vec2 cuv_o = clamp(rel / ocean_domain_size + 0.5, vec2(0.0), vec2(1.0));
+	vec2 cuv_o = rel / ocean_domain_size + 0.5; // wraps: the FFT ocean is periodic
 	float fade = texture(ocean_fade_tex, cuv_r).r;
 	// Negative: the displacement points away from crests in this FFT's sign
 	// convention, so moving against it gathers points into the crests.
 	vec2 d = -choppiness * fade * texture(ocean_disp_tex, cuv_o).rg;
-	float h = texture(ripple_height_tex, cuv_r).r + texture(ocean_height_tex, cuv_o).r * fade;
+	// The ripple layer isn't periodic: past its domain, ease back to still water.
+	vec2 from_center = abs(rel / ripple_domain_size);
+	float inside = 1.0 - smoothstep(0.46, 0.5, max(from_center.x, from_center.y));
+	float ripple = mix(water_level, texture(ripple_height_tex, cuv_r).r, inside);
+	float h = ripple + texture(ocean_height_tex, cuv_o).r * fade;
 	return vec3(d.x, h, d.y);
 }
 
@@ -153,7 +160,7 @@ vec3 surface_offset(vec2 world_xz) {
 vec3 surface_normal_pixel(vec2 world_xz) {
 	vec2 rel = world_xz - grid_center;
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
-	vec2 cuv_o = clamp(rel / ocean_domain_size + 0.5, vec2(0.0), vec2(1.0));
+	vec2 cuv_o = rel / ocean_domain_size + 0.5; // wraps: the FFT ocean is periodic
 	float fade = texture(ocean_fade_tex, cuv_r).r;
 	float s = -choppiness * fade;
 	vec4 der = texture(ocean_deriv_tex, cuv_o);
@@ -186,7 +193,7 @@ float foam_value_noise(vec2 p) {
 float foam_at(vec2 world_xz) {
 	vec2 rel = world_xz - grid_center;
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
-	vec2 cuv_o = clamp(rel / ocean_domain_size + 0.5, vec2(0.0), vec2(1.0));
+	vec2 cuv_o = rel / ocean_domain_size + 0.5; // wraps: the FFT ocean is periodic
 	float amount = texture(ocean_foam_tex, cuv_o).r * texture(ocean_fade_tex, cuv_r).r;
 	vec2 p = world_xz * foam_detail_scale;
 	float n = 0.5 * foam_value_noise(p) + 0.3 * foam_value_noise(p * 2.7 + 17.0) + 0.2 * foam_value_noise(p * 7.3 - 5.0);
@@ -214,7 +221,7 @@ float shore_foam_at(vec2 world_xz) {
 float shore_signal(vec2 world_xz, float time) {
 	vec2 rel = world_xz - grid_center;
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
-	vec2 cuv_o = clamp(rel / ocean_domain_size + 0.5, vec2(0.0), vec2(1.0));
+	vec2 cuv_o = rel / ocean_domain_size + 0.5; // wraps: the FFT ocean is periodic
 	float fade = texture(ocean_fade_tex, cuv_r).r;
 	float eta = texture(ocean_height_tex, cuv_o).r; // unfaded: the waves arriving here
 	// Lobes a few metres across (like real swash), drifting, with the waves
@@ -423,6 +430,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_seabed_collision_mask"), &PhysXWaterSurface3D::get_seabed_collision_mask);
 	ClassDB::bind_method(D_METHOD("set_shallow_fade_depth", "depth"), &PhysXWaterSurface3D::set_shallow_fade_depth);
 	ClassDB::bind_method(D_METHOD("get_shallow_fade_depth"), &PhysXWaterSurface3D::get_shallow_fade_depth);
+	ClassDB::bind_method(D_METHOD("set_render_extent", "extent"), &PhysXWaterSurface3D::set_render_extent);
+	ClassDB::bind_method(D_METHOD("get_render_extent"), &PhysXWaterSurface3D::get_render_extent);
 	ClassDB::bind_method(D_METHOD("set_water_material", "material"), &PhysXWaterSurface3D::set_water_material);
 	ClassDB::bind_method(D_METHOD("get_water_material"), &PhysXWaterSurface3D::get_water_material);
 
@@ -475,6 +484,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "foam_persistence", PROPERTY_HINT_RANGE, "0.05,20,0.05,or_greater,suffix:s"), "set_foam_persistence", "get_foam_persistence");
 
 	ADD_GROUP("Rendering", "");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "render_extent", PROPERTY_HINT_RANGE, "0,2000,1,or_greater,suffix:m"), "set_render_extent", "get_render_extent");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "normal_mode", PROPERTY_HINT_ENUM, "Per Pixel,Per Vertex"), "set_normal_mode", "get_normal_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "water_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_water_material", "get_water_material");
 
@@ -615,6 +625,11 @@ void PhysXWaterSurface3D::set_shallow_fade_depth(float p_depth) {
 	_rebuild();
 }
 
+void PhysXWaterSurface3D::set_render_extent(float p_extent) {
+	render_extent = MAX(p_extent, 0.0f);
+	_rebuild();
+}
+
 void PhysXWaterSurface3D::set_surface_mesh(const Ref<Mesh> &p_mesh) {
 	surface_mesh = p_mesh;
 	_rebuild();
@@ -710,6 +725,9 @@ void PhysXWaterSurface3D::_rebuild() {
 			water_mesh = _build_footprint_mesh(tris, bounds, MAX(grid_resolution, ocean_grid_resolution));
 		}
 	}
+	if (water_mesh.is_null() && render_extent > MAX(ocean_domain_size.x, ocean_domain_size.y)) {
+		water_mesh = _build_extended_plane(ocean_domain_size, ocean_grid_resolution, render_extent);
+	}
 	if (water_mesh.is_null()) {
 		Ref<PlaneMesh> plane;
 		plane.instantiate();
@@ -727,6 +745,7 @@ void PhysXWaterSurface3D::_rebuild() {
 	water_material->set_shader_parameter("ripple_domain_size", active_domain_size);
 	water_material->set_shader_parameter("ocean_domain_size", ocean_domain_size);
 	water_material->set_shader_parameter("grid_center", grid_center);
+	water_material->set_shader_parameter("water_level", water_level);
 	water_material->set_shader_parameter("choppiness", choppiness);
 	water_material->set_shader_parameter("per_pixel_normals", normal_mode == NORMAL_MODE_PER_PIXEL);
 
@@ -1061,6 +1080,84 @@ PackedByteArray PhysXWaterSurface3D::_rasterize_wet_mask(const Vector<Vector2> &
 		}
 	}
 	return mask;
+}
+
+Ref<Mesh> PhysXWaterSurface3D::_build_extended_plane(Vector2 p_inner, int p_inner_cells, real_t p_extent) const {
+	// Per axis: uniform steps across the simulated span, then each step 15%
+	// longer than the last until the extent is reached -- detail where the
+	// waves are simulated, a few hundred extra vertices out to the horizon.
+	auto axis = [&](real_t p_inner_size) {
+		LocalVector<real_t> pos;
+		const real_t step = p_inner_size / (real_t)MAX(p_inner_cells, 1);
+		for (int i = 0; i <= p_inner_cells; i++) {
+			pos.push_back(-p_inner_size * 0.5f + step * i);
+		}
+		LocalVector<real_t> outer;
+		real_t x = p_inner_size * 0.5f;
+		real_t s = step;
+		while (x < p_extent * 0.5f) {
+			s *= 1.15f;
+			x = MIN(x + s, p_extent * (real_t)0.5);
+			outer.push_back(x);
+		}
+		LocalVector<real_t> all;
+		for (int i = (int)outer.size() - 1; i >= 0; i--) {
+			all.push_back(-outer[i]);
+		}
+		for (real_t v : pos) {
+			all.push_back(v);
+		}
+		for (real_t v : outer) {
+			all.push_back(v);
+		}
+		return all;
+	};
+	const LocalVector<real_t> xs = axis(p_inner.x);
+	const LocalVector<real_t> zs = axis(p_inner.y);
+	const int nx = xs.size();
+	const int nz = zs.size();
+
+	PackedVector3Array verts;
+	PackedVector3Array normals;
+	PackedVector2Array uvs;
+	verts.resize(nx * nz);
+	normals.resize(nx * nz);
+	uvs.resize(nx * nz);
+	for (int j = 0; j < nz; j++) {
+		for (int i = 0; i < nx; i++) {
+			const int k = j * nx + i;
+			verts.set(k, Vector3(xs[i], 0.0f, zs[j]));
+			normals.set(k, Vector3(0, 1, 0));
+			uvs.set(k, Vector2(xs[i], zs[j]) / p_extent + Vector2(0.5f, 0.5f));
+		}
+	}
+	const bool flip = plane_mesh_xz_winding() < 0;
+	PackedInt32Array indices;
+	indices.resize((nx - 1) * (nz - 1) * 6);
+	int w = 0;
+	for (int j = 0; j < nz - 1; j++) {
+		for (int i = 0; i < nx - 1; i++) {
+			const int a = j * nx + i;
+			const int b = a + 1;
+			const int c = a + nx;
+			const int d = c + 1;
+			// (a, b, d) has a positive X/Z cross product; flip to PlaneMesh's.
+			const int tri[6] = { a, flip ? d : b, flip ? b : d, a, flip ? c : d, flip ? d : c };
+			for (int t = 0; t < 6; t++) {
+				indices.set(w++, tri[t]);
+			}
+		}
+	}
+	Ref<ArrayMesh> mesh;
+	mesh.instantiate();
+	Array arrays;
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = verts;
+	arrays[Mesh::ARRAY_NORMAL] = normals;
+	arrays[Mesh::ARRAY_TEX_UV] = uvs;
+	arrays[Mesh::ARRAY_INDEX] = indices;
+	mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, arrays);
+	return mesh;
 }
 
 Ref<Mesh> PhysXWaterSurface3D::_build_footprint_mesh(const Vector<Vector2> &p_tris, const Rect2 &p_bounds, int p_cells) const {

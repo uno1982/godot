@@ -168,6 +168,14 @@ public:
 	void set_shallow_fade_depth(float p_depth);
 	float get_shallow_fade_depth() const { return shallow_fade_depth; }
 
+	// Side length (m) of the rendered surface, centred on the simulation.
+	// Past the simulated square the FFT ocean tiles seamlessly (it's
+	// periodic) and the ripples settle to still water, so open water can run
+	// to the horizon; vertex spacing grows with distance. 0 = just the
+	// simulated square. Ignored with a surface_mesh.
+	void set_render_extent(float p_extent);
+	float get_render_extent() const { return render_extent; }
+
 	void set_water_material(const Ref<ShaderMaterial> &p_material);
 	Ref<ShaderMaterial> get_water_material() const { return water_material; }
 
@@ -222,6 +230,7 @@ private:
 	Vector2 wind_direction = Vector2(1, 0);
 	float wave_amplitude = 1.0f;
 	float fetch = 0.0f;
+	float render_extent = 0.0f;
 	float choppiness = 1.0f;
 	NormalMode normal_mode = NORMAL_MODE_PER_PIXEL;
 	bool foam_enabled = true;
@@ -291,6 +300,9 @@ private:
 	// Casts the seabed rays; fills cell_depth.
 	void _sample_seabed();
 	static PackedByteArray _rasterize_wet_mask(const Vector<Vector2> &p_tris, Vector2 p_center, Vector2 p_domain, int p_n);
+	// Plane over [-extent/2, extent/2]^2: uniform cells over the simulated
+	// p_inner size, then spacing growing geometrically outward.
+	Ref<Mesh> _build_extended_plane(Vector2 p_inner, int p_inner_cells, real_t p_extent) const;
 	Ref<Mesh> _build_footprint_mesh(const Vector<Vector2> &p_tris, const Rect2 &p_bounds, int p_cells) const;
 	void _bind_textures();
 	void _refresh_cpu_cache();

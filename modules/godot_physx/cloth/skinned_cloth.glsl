@@ -15,6 +15,12 @@
 //   MODE_DISTANCE   one colour batch of distance constraints (structural +
 //                   bending). Within a batch no two constraints share a
 //                   particle, so each thread can write its pair directly.
+//   MODE_HASH_CLEAR / MODE_HASH_INSERT / MODE_SELF / MODE_SELF_APPLY
+//                   (self collision, opt-in) particles into a spatial hash of
+//                   thickness-sized cells, then every pair closer than the
+//                   thickness that isn't that close at rest is pushed apart
+//                   (Jacobi: each particle computes its own share, then all
+//                   apply at once).
 //   MODE_LIMITS     tethers (stay within the rest distance of the nearest
 //                   pinned particle -- keeps long robes from stretching with
 //                   few iterations), the backstop (no further inward, along
@@ -38,9 +44,13 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 #define MODE_LIMITS 3
 #define MODE_OUTPUT 4
 #define MODE_RESET 5
+#define MODE_HASH_CLEAR 6
+#define MODE_HASH_INSERT 7
+#define MODE_SELF 8
+#define MODE_SELF_APPLY 9
 
 layout(set = 0, binding = 0, std140) uniform Params {
-	ivec4 counts; // x particles, y unused, z substeps, w unused
+	ivec4 counts; // x particles, y self-collision hash size (power of two), z substeps, w unused
 	ivec4 counts2; // x capsules, y texture width, z bones, w unused
 	vec4 step; // x dt (substep), y damping (velocity kept per substep), z animation drive (fraction pulled to the target per substep), w stiffness
 	vec4 gravity; // xyz gravity (m/s^2), w thickness (m)
@@ -52,6 +62,7 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 out_x;
 	vec4 out_y;
 	vec4 out_z;
+	vec4 self_params; // x self-collision thickness (m), 0 = off
 };
 
 // Per dispatch (push constants -- the uniform buffer can't change between
@@ -110,6 +121,20 @@ layout(set = 0, binding = 16, std430) restrict readonly buffer RestNormal {
 layout(set = 0, binding = 17, std430) restrict buffer TargetNormal {
 	vec4 target_normal[]; // skinned normal, this frame
 };
+// Self collision: spatial hash as per-cell linked lists of particles.
+layout(set = 0, binding = 18, std430) restrict buffer CellHead {
+	uint cell_head[];
+};
+layout(set = 0, binding = 19, std430) restrict buffer CellNext {
+	uint cell_next[];
+};
+layout(set = 0, binding = 20, std430) restrict buffer SelfDelta {
+	vec4 self_delta[];
+};
+
+uint cell_hash(ivec3 c) {
+	return (uint(c.x * 73856093) ^ uint(c.y * 19349663) ^ uint(c.z * 83492791)) & uint(counts.y - 1);
+}
 
 mat4 skin_matrix(uint i) {
 	uvec4 b = skin_idx[i];
@@ -284,7 +309,59 @@ void main() {
 		return;
 	}
 
+	if (mode == MODE_HASH_CLEAR) {
+		if (i < uint(counts.y)) {
+			cell_head[i] = 0xffffffffu;
+		}
+		return;
+	}
+
 	if (i >= uint(counts.x)) {
+		return;
+	}
+
+	if (mode == MODE_HASH_INSERT) {
+		ivec3 c = ivec3(floor(pos[i].xyz / self_params.x));
+		cell_next[i] = atomicExchange(cell_head[cell_hash(c)], i);
+		return;
+	}
+
+	if (mode == MODE_SELF) {
+		vec4 pi = pos[i];
+		vec3 acc = vec3(0.0);
+		if (pi.w > 0.0) {
+			float h = self_params.x;
+			vec3 ri = rest[i].xyz;
+			ivec3 c = ivec3(floor(pi.xyz / h));
+			for (int dz = -1; dz <= 1; dz++) {
+				for (int dy = -1; dy <= 1; dy++) {
+					for (int dx = -1; dx <= 1; dx++) {
+						uint j = cell_head[cell_hash(c + ivec3(dx, dy, dz))];
+						for (int guard = 0; guard < 48 && j != 0xffffffffu; guard++) {
+							if (j != i) {
+								vec4 pj = pos[j];
+								vec3 d = pi.xyz - pj.xyz;
+								float l = length(d);
+								// Skip pairs that are this close in the garment
+								// itself (neighbours along the surface).
+								if (l < h && l > 1e-7 && distance(ri, rest[j].xyz) > h * 1.5) {
+									acc += d / l * ((h - l) * pi.w / (pi.w + pj.w));
+								}
+							}
+							j = cell_next[j];
+						}
+					}
+				}
+			}
+		}
+		self_delta[i] = vec4(acc * 0.5, 0.0); // relaxed: many pairs push at once
+		return;
+	}
+
+	if (mode == MODE_SELF_APPLY) {
+		if (pos[i].w > 0.0) {
+			pos[i].xyz += self_delta[i].xyz;
+		}
 		return;
 	}
 

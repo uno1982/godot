@@ -58,6 +58,8 @@ public:
 	RID buf_pos, buf_prev, buf_constraints, buf_tethers, buf_capsules, buf_adj_offsets, buf_adj_pairs;
 	RID tex_pos, tex_nrm;
 	RID buf_rest_normal, buf_target_normal;
+	RID buf_cell_head, buf_cell_next, buf_self_delta;
+	int hash_size = 1; // self-collision hash table, power of two
 	RID uniform_set;
 
 	int particle_count = 0;
@@ -93,6 +95,7 @@ public:
 		float tether_stiffness = 1.0f;
 		float friction = 0.2f;
 		float animation_drive = 0.0f; // fraction of the way back to the animated pose per 1/60 s
+		float self_collision_thickness = 0.0f; // > 0: particles keep this far apart (self collision)
 		float backstop = 0.02f; // how far (m) the cloth may sink inward past its animated position; < 0 = off
 		Transform3D output_xform; // world -> the space the output textures are written in
 	};

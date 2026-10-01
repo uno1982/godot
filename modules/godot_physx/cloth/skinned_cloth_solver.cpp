@@ -40,7 +40,7 @@
 #include "servers/rendering/rendering_server.h"
 
 namespace {
-constexpr int PARAMS_BYTES = 128; // 8 * vec4, std140 -- see skinned_cloth.glsl's Params
+constexpr int PARAMS_BYTES = 144; // 9 * vec4, std140 -- see skinned_cloth.glsl's Params
 constexpr uint32_t GROUP = 64; // local_size_x
 
 uint32_t groups_for(int p_count) {
@@ -54,6 +54,10 @@ enum Mode {
 	MODE_LIMITS = 3,
 	MODE_OUTPUT = 4,
 	MODE_RESET = 5,
+	MODE_HASH_CLEAR = 6,
+	MODE_HASH_INSERT = 7,
+	MODE_SELF = 8,
+	MODE_SELF_APPLY = 9,
 };
 
 struct PassConstants {
@@ -107,7 +111,7 @@ void SkinnedClothSolverGPU::rt_free_buffers() {
 	uniform_set = RID();
 	RID *rids[] = { &buf_params, &buf_rest, &buf_skin_idx, &buf_skin_w, &buf_bones, &buf_target, &buf_target_prev,
 		&buf_pos, &buf_prev, &buf_constraints, &buf_tethers, &buf_capsules, &buf_adj_offsets, &buf_adj_pairs, &tex_pos, &tex_nrm,
-		&buf_rest_normal, &buf_target_normal };
+		&buf_rest_normal, &buf_target_normal, &buf_cell_head, &buf_cell_next, &buf_self_delta };
 	for (RID *r : rids) {
 		if (r->is_valid()) {
 			rd->free_rid(*r);
@@ -163,6 +167,14 @@ void SkinnedClothSolverGPU::rt_build(Ref<SkinnedClothSolverGPU> p_self, PackedFl
 	buf_adj_offsets = storage_from(rd, (const uint8_t *)p_adj_offsets.ptr(), p_adj_offsets.size() * 4);
 	buf_adj_pairs = storage_from(rd, (const uint8_t *)p_adj_pairs.ptr(), p_adj_pairs.size() * 4);
 
+	hash_size = 1;
+	while (hash_size < n * 2) {
+		hash_size <<= 1;
+	}
+	buf_cell_head = storage_from(rd, nullptr, hash_size * 4);
+	buf_cell_next = storage_from(rd, nullptr, n * 4);
+	buf_self_delta = storage_from(rd, nullptr, n * 16);
+
 	tex_width = MIN(n, 1024);
 	tex_height = (n + tex_width - 1) / tex_width;
 	RD::TextureFormat tf;
@@ -203,8 +215,8 @@ void SkinnedClothSolverGPU::rt_build(Ref<SkinnedClothSolverGPU> p_self, PackedFl
 		u.append_id(images[i]);
 		uniforms.push_back(u);
 	}
-	const RID normals[] = { buf_rest_normal, buf_target_normal };
-	for (int i = 0; i < 2; i++) {
+	const RID normals[] = { buf_rest_normal, buf_target_normal, buf_cell_head, buf_cell_next, buf_self_delta };
+	for (int i = 0; i < 5; i++) {
 		RD::Uniform u;
 		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
 		u.binding = 16 + i;
@@ -234,9 +246,10 @@ void SkinnedClothSolverGPU::rt_step(Ref<SkinnedClothSolverGPU> p_self, PackedFlo
 	// transform rows = 24 floats).
 	uint8_t params[PARAMS_BYTES];
 	memset(params, 0, sizeof(params));
-	int32_t counts[8] = { n, 0, MAX(p_substeps, 1), 0, MIN((int)p_capsules.size() / 16, MAX_CAPSULES), tex_width, bone_count, 0 };
+	int32_t counts[8] = { n, hash_size, MAX(p_substeps, 1), 0, MIN((int)p_capsules.size() / 16, MAX_CAPSULES), tex_width, bone_count, 0 };
 	memcpy(params, counts, sizeof(counts));
-	memcpy(params + 32, p_params.ptr(), MIN(p_params.size(), 24) * 4);
+	memcpy(params + 32, p_params.ptr(), MIN(p_params.size(), 28) * 4);
+	const bool self_collision = p_params.size() > 24 && p_params[24] > 0.0f;
 	rd->buffer_update(buf_params, 0, PARAMS_BYTES, params);
 
 	PassConstants pc = { MODE_SKIN, 0, 0, 0.0f };
@@ -269,6 +282,12 @@ void SkinnedClothSolverGPU::rt_step(Ref<SkinnedClothSolverGPU> p_self, PackedFlo
 			if (count > 0) {
 				run(MODE_DISTANCE, start, count, frac, count);
 			}
+		}
+		if (self_collision) {
+			run(MODE_HASH_CLEAR, 0, 0, frac, hash_size);
+			run(MODE_HASH_INSERT, 0, 0, frac, n);
+			run(MODE_SELF, 0, 0, frac, n);
+			run(MODE_SELF_APPLY, 0, 0, frac, n);
 		}
 		run(MODE_LIMITS, 0, 0, frac, n);
 	}
@@ -348,7 +367,8 @@ void SkinnedClothSolver::step(const PackedFloat32Array &p_bones, const PackedFlo
 	// Velocity kept per substep from a per-second damping fraction.
 	const float keep = Math::pow(1.0f - CLAMP(p_settings.damping, 0.0f, 0.999f), dt);
 	PackedFloat32Array params;
-	params.resize(24);
+	params.resize(28);
+	params.fill(0.0f);
 	float *w = params.ptrw();
 	w[0] = dt;
 	w[1] = keep;
@@ -363,6 +383,7 @@ void SkinnedClothSolver::step(const PackedFloat32Array &p_bones, const PackedFlo
 	w[9] = p_settings.tether_stiffness;
 	w[10] = p_settings.friction;
 	w[11] = p_settings.backstop;
+	w[24] = MAX(p_settings.self_collision_thickness, 0.0f);
 	const Transform3D &o = p_settings.output_xform;
 	for (int r = 0; r < 3; r++) {
 		w[12 + r * 4 + 0] = o.basis.rows[r].x;

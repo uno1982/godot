@@ -63,6 +63,8 @@ class PhysXSkinnedCloth3D : public Node3D {
 	float thickness = 0.012f;
 	float backstop = 0.02f;
 	float animation_drive = 0.0f;
+	bool self_collision = false;
+	float self_collision_thickness = 0.02f;
 	float collision_radius_scale = 1.0f;
 	bool collide_with_body = true;
 	bool simulating = true;
@@ -141,6 +143,10 @@ public:
 	float get_thickness() const { return thickness; }
 	void set_backstop(float p_distance);
 	float get_backstop() const { return backstop; }
+	void set_self_collision(bool p_enabled);
+	bool get_self_collision() const { return self_collision; }
+	void set_self_collision_thickness(float p_thickness);
+	float get_self_collision_thickness() const { return self_collision_thickness; }
 	void set_animation_drive(float p_drive);
 	float get_animation_drive() const { return animation_drive; }
 	void set_collide_with_body(bool p_enabled);

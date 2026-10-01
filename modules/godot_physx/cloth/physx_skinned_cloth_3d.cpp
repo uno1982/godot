@@ -170,6 +170,10 @@ void PhysXSkinnedCloth3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_thickness"), &PhysXSkinnedCloth3D::get_thickness);
 	ClassDB::bind_method(D_METHOD("set_backstop", "distance"), &PhysXSkinnedCloth3D::set_backstop);
 	ClassDB::bind_method(D_METHOD("get_backstop"), &PhysXSkinnedCloth3D::get_backstop);
+	ClassDB::bind_method(D_METHOD("set_self_collision", "enabled"), &PhysXSkinnedCloth3D::set_self_collision);
+	ClassDB::bind_method(D_METHOD("get_self_collision"), &PhysXSkinnedCloth3D::get_self_collision);
+	ClassDB::bind_method(D_METHOD("set_self_collision_thickness", "thickness"), &PhysXSkinnedCloth3D::set_self_collision_thickness);
+	ClassDB::bind_method(D_METHOD("get_self_collision_thickness"), &PhysXSkinnedCloth3D::get_self_collision_thickness);
 	ClassDB::bind_method(D_METHOD("set_animation_drive", "drive"), &PhysXSkinnedCloth3D::set_animation_drive);
 	ClassDB::bind_method(D_METHOD("get_animation_drive"), &PhysXSkinnedCloth3D::get_animation_drive);
 	ClassDB::bind_method(D_METHOD("set_collide_with_body", "enabled"), &PhysXSkinnedCloth3D::set_collide_with_body);
@@ -203,6 +207,8 @@ void PhysXSkinnedCloth3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_radius_scale", PROPERTY_HINT_RANGE, "0.1,3,0.01"), "set_collision_radius_scale", "get_collision_radius_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "backstop", PROPERTY_HINT_RANGE, "-0.01,0.2,0.001,suffix:m"), "set_backstop", "get_backstop");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "animation_drive", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_animation_drive", "get_animation_drive");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "self_collision"), "set_self_collision", "get_self_collision");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "self_collision_thickness", PROPERTY_HINT_RANGE, "0.001,0.1,0.001,suffix:m"), "set_self_collision_thickness", "get_self_collision_thickness");
 }
 
 void PhysXSkinnedCloth3D::_notification(int p_what) {
@@ -894,6 +900,7 @@ void PhysXSkinnedCloth3D::_step(double p_delta) {
 	s.thickness = thickness;
 	s.backstop = backstop;
 	s.animation_drive = animation_drive;
+	s.self_collision_thickness = self_collision ? self_collision_thickness : 0.0f;
 	s.output_xform = source->get_global_transform().affine_inverse();
 	solver->step(bone_data, capsule_data, p_delta, substeps, s);
 
@@ -985,6 +992,14 @@ void PhysXSkinnedCloth3D::set_damping(float p_damping) {
 
 void PhysXSkinnedCloth3D::set_thickness(float p_thickness) {
 	thickness = MAX(p_thickness, 0.0f);
+}
+
+void PhysXSkinnedCloth3D::set_self_collision(bool p_enabled) {
+	self_collision = p_enabled;
+}
+
+void PhysXSkinnedCloth3D::set_self_collision_thickness(float p_thickness) {
+	self_collision_thickness = MAX(p_thickness, 0.001f);
 }
 
 void PhysXSkinnedCloth3D::set_animation_drive(float p_drive) {

@@ -84,6 +84,12 @@
 		<member name="pin_height" type="float" setter="set_pin_height" getter="get_pin_height" default="1.3">
 			Automatic painting: vertices at or above this height in the mesh's bind pose (metres) follow the animation exactly.
 		</member>
+		<member name="self_collision" type="bool" setter="set_self_collision" getter="get_self_collision" default="false">
+			Keep the cloth from passing through itself where it folds and gathers: particles closer than [member self_collision_thickness] are pushed apart, unless they're that close in the garment itself. Off by default -- it adds four compute passes per substep.
+		</member>
+		<member name="self_collision_thickness" type="float" setter="set_self_collision_thickness" getter="get_self_collision_thickness" default="0.02">
+			How far apart (metres) the cloth keeps its own layers with [member self_collision] on. Around the spacing of the mesh's vertices; much smaller lets layers slip between particles, much larger puffs folds up.
+		</member>
 		<member name="simulating" type="bool" setter="set_simulating" getter="is_simulating" default="true">
 			Pauses the simulation when off (the cloth holds its last shape).
 		</member>

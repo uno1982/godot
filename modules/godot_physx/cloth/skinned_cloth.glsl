@@ -127,6 +127,45 @@ vec3 skin_normal(uint i) {
 	return l > 1e-8 ? n / l : vec3(0.0, 1.0, 0.0);
 }
 
+// Closest points between segments p1-q1 and p2-q2 (Ericson, Real-Time
+// Collision Detection 5.1.9), as the parameters along each.
+vec2 closest_segments(vec3 p1, vec3 q1, vec3 p2, vec3 q2) {
+	vec3 d1 = q1 - p1;
+	vec3 d2 = q2 - p2;
+	vec3 r = p1 - p2;
+	float a = dot(d1, d1);
+	float e = dot(d2, d2);
+	float f = dot(d2, r);
+	float s;
+	float t;
+	if (a <= 1e-12) {
+		s = 0.0;
+		t = e > 1e-12 ? clamp(f / e, 0.0, 1.0) : 0.0;
+		return vec2(s, t);
+	}
+	float c = dot(d1, r);
+	if (e <= 1e-12) {
+		return vec2(clamp(-c / a, 0.0, 1.0), 0.0);
+	}
+	float b = dot(d1, d2);
+	float denom = a * e - b * b;
+	s = denom > 1e-12 ? clamp((b * f - c * e) / denom, 0.0, 1.0) : 0.0;
+	t = (b * s + f) / e;
+	if (t < 0.0) {
+		t = 0.0;
+		s = clamp(-c / a, 0.0, 1.0);
+	} else if (t > 1.0) {
+		t = 1.0;
+		s = clamp((b - c) / a, 0.0, 1.0);
+	}
+	return vec2(s, t);
+}
+
+// Keeps p outside the body capsules. Swept from prev_p (where the particle
+// was at the start of the substep): a particle whose path this substep
+// crossed a capsule -- carried past a limb by the max-distance limit or by
+// the limb itself moving -- is stopped at the surface on the side it came
+// from, instead of ending up through the limb.
 void project_capsules(inout vec3 p, vec3 prev_p, float frac) {
 	float thickness = gravity.w;
 	for (int c = 0; c < counts2.x; c++) {
@@ -134,19 +173,53 @@ void project_capsules(inout vec3 p, vec3 prev_p, float frac) {
 		vec4 b = mix(capsules[c * 4 + 1], capsules[c * 4 + 3], frac);
 		vec3 ab = b.xyz - a.xyz;
 		float len2 = max(dot(ab, ab), 1e-8);
-		float t = clamp(dot(p - a.xyz, ab) / len2, 0.0, 1.0);
-		vec3 q = a.xyz + ab * t;
-		float r = mix(a.w, b.w, t) + thickness;
-		vec3 d = p - q;
-		float dist = length(d);
-		if (dist < r) {
-			vec3 n = dist > 1e-6 ? d / dist : vec3(0.0, 1.0, 0.0);
+		// Where prev_p sits relative to this capsule.
+		float tp = clamp(dot(prev_p - a.xyz, ab) / len2, 0.0, 1.0);
+		vec3 qp = a.xyz + ab * tp;
+		vec3 dp = prev_p - qp;
+		float dpl = length(dp);
+		float rp = mix(a.w, b.w, tp) + thickness;
+		vec2 st = closest_segments(prev_p, p, a.xyz, b.xyz);
+		vec3 on_path = mix(prev_p, p, st.x);
+		vec3 on_axis = a.xyz + ab * st.y;
+		float r_path = mix(a.w, b.w, st.y) + thickness;
+		vec3 n;
+		vec3 q;
+		float r;
+		if (dpl >= rp * 0.98 && distance(on_path, on_axis) < r_path) {
+			// Came from outside and the path crosses the capsule: stop on the
+			// side it came from.
+			float tq = clamp(dot(p - a.xyz, ab) / len2, 0.0, 1.0);
+			q = a.xyz + ab * tq;
+			r = mix(a.w, b.w, tq) + thickness;
+			vec3 side = dp - ab * (dot(dp, ab) / len2);
+			float sl = length(side);
+			n = sl > 1e-6 ? side / sl : dp / max(dpl, 1e-6);
+			vec3 d = p - q;
+			// Keep the tangential part of the motion, drop what went inward.
+			vec3 tangential = d - n * dot(d, n);
+			p = q + tangential + n * r;
+			vec3 dd = p - q;
+			float ddl = length(dd);
+			if (ddl < r) {
+				p = q + (ddl > 1e-6 ? dd / ddl : n) * r;
+			}
+		} else {
+			float t = clamp(dot(p - a.xyz, ab) / len2, 0.0, 1.0);
+			q = a.xyz + ab * t;
+			r = mix(a.w, b.w, t) + thickness;
+			vec3 d = p - q;
+			float dist = length(d);
+			if (dist >= r) {
+				continue;
+			}
+			n = dist > 1e-6 ? d / dist : vec3(0.0, 1.0, 0.0);
 			p = q + n * r;
-			// Friction: bleed off tangential motion against the capsule.
-			vec3 v = p - prev_p;
-			vec3 vt = v - n * dot(v, n);
-			p -= vt * limits.z;
 		}
+		// Friction: bleed off tangential motion against the capsule.
+		vec3 v = p - prev_p;
+		vec3 vt = v - n * dot(v, n);
+		p -= vt * limits.z;
 	}
 }
 

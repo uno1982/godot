@@ -17,12 +17,13 @@
 //                   particle, so each thread can write its pair directly.
 //   MODE_LIMITS     tethers (stay within the rest distance of the nearest
 //                   pinned particle -- keeps long robes from stretching with
-//                   few iterations), body capsules (interpolated across the
-//                   substeps, so fast limbs don't jump through the cloth),
-//                   the backstop (no further inward, along the animated
-//                   normal, than a small distance -- keeps clothing outside
-//                   the body), then the max-distance sphere around the
-//                   animated target.
+//                   few iterations), the backstop (no further inward, along
+//                   the animated normal, than a small distance -- keeps
+//                   clothing outside the body), the max-distance sphere
+//                   around the animated target, then body capsules
+//                   (interpolated across the substeps, so fast limbs don't
+//                   jump through the cloth; last, so they win over the
+//                   max distance).
 // Once per frame after the substeps:
 //   MODE_RESET      (first frame / teleport) particles placed on the animated pose.
 //   MODE_OUTPUT     per-particle normal from the incident triangles, and
@@ -233,7 +234,6 @@ void main() {
 				q = mix(q, ap + d * (allowed / len), limits.y);
 			}
 		}
-		project_capsules(q, prev[i].xyz, pass.frac);
 		if (limits.w >= 0.0) {
 			vec3 n = target_normal[i].xyz;
 			float inward = dot(q - t, n);
@@ -246,6 +246,10 @@ void main() {
 		if (ol > max_dist) {
 			q = t + off * (max_dist / ol);
 		}
+		// Body collision last: where a limb moves further than the painted
+		// max distance allows (a leg swinging through a skirt), the cloth goes
+		// past the limit rather than letting the limb show through.
+		project_capsules(q, prev[i].xyz, pass.frac);
 		pos[i].xyz = q;
 		return;
 	}

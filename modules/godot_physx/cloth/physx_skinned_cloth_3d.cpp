@@ -185,7 +185,9 @@ void PhysXSkinnedCloth3D::_bind_methods() {
 
 void PhysXSkinnedCloth3D::_notification(int p_what) {
 	switch (p_what) {
-		case NOTIFICATION_READY: {
+		case NOTIFICATION_ENTER_TREE: {
+			// Built on the next process tick, once siblings (the skeleton, the
+			// source mesh) are in the tree too. Re-adding the node rebuilds it.
 			if (!Engine::get_singleton()->is_editor_hint()) {
 				set_process_internal(true);
 				build_pending = true;

@@ -144,6 +144,10 @@ void PhysXSkinnedCloth3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_pin_height"), &PhysXSkinnedCloth3D::get_pin_height);
 	ClassDB::bind_method(D_METHOD("set_max_distance", "distance"), &PhysXSkinnedCloth3D::set_max_distance);
 	ClassDB::bind_method(D_METHOD("get_max_distance"), &PhysXSkinnedCloth3D::get_max_distance);
+	ClassDB::bind_method(D_METHOD("set_use_vertex_color", "enabled"), &PhysXSkinnedCloth3D::set_use_vertex_color);
+	ClassDB::bind_method(D_METHOD("get_use_vertex_color"), &PhysXSkinnedCloth3D::get_use_vertex_color);
+	ClassDB::bind_method(D_METHOD("get_effective_max_distances"), &PhysXSkinnedCloth3D::get_effective_max_distances);
+	ClassDB::bind_method(D_METHOD("compute_height_ramp"), &PhysXSkinnedCloth3D::compute_height_ramp);
 	ClassDB::bind_method(D_METHOD("set_substeps", "substeps"), &PhysXSkinnedCloth3D::set_substeps);
 	ClassDB::bind_method(D_METHOD("get_substeps"), &PhysXSkinnedCloth3D::get_substeps);
 	ClassDB::bind_method(D_METHOD("set_stiffness", "stiffness"), &PhysXSkinnedCloth3D::set_stiffness);
@@ -172,6 +176,7 @@ void PhysXSkinnedCloth3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_FLOAT32_ARRAY, "max_distances"), "set_max_distances", "get_max_distances");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "pin_height", PROPERTY_HINT_RANGE, "-5,5,0.01,or_greater,or_less,suffix:m"), "set_pin_height", "get_pin_height");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_distance", PROPERTY_HINT_RANGE, "0,2,0.01,or_greater,suffix:m"), "set_max_distance", "get_max_distance");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_vertex_color"), "set_use_vertex_color", "get_use_vertex_color");
 	ADD_GROUP("Simulation", "");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "substeps", PROPERTY_HINT_RANGE, "1,32,1"), "set_substeps", "get_substeps");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "stiffness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_stiffness", "get_stiffness");
@@ -218,6 +223,19 @@ void PhysXSkinnedCloth3D::_clear() {
 	MeshInstance3D *source = ObjectDB::get_instance<MeshInstance3D>(source_id);
 	if (source != nullptr) {
 		source->set_visible(true);
+	}
+	// Let go of the solver's textures before it frees them, or the material
+	// still binds them on its next update.
+	if (render_material.is_valid()) {
+		render_material->set_shader_parameter("cloth_positions", Variant());
+		render_material->set_shader_parameter("cloth_normals", Variant());
+		render_material.unref();
+	}
+	for (Ref<Texture2DRD> *tex : { &pos_texture, &nrm_texture }) {
+		if (tex->is_valid()) {
+			(*tex)->set_texture_rd_rid(RID());
+			tex->unref();
+		}
 	}
 	if (solver != nullptr) {
 		memdelete(solver);
@@ -309,6 +327,55 @@ void PhysXSkinnedCloth3D::_fit_capsules(Skeleton3D *p_skeleton, MeshInstance3D *
 	}
 }
 
+MeshInstance3D *PhysXSkinnedCloth3D::get_source_mesh_instance() const {
+	return Object::cast_to<MeshInstance3D>(get_node_or_null(mesh_instance_path));
+}
+
+PackedFloat32Array PhysXSkinnedCloth3D::compute_height_ramp() const {
+	PackedFloat32Array out;
+	MeshInstance3D *source = get_source_mesh_instance();
+	if (source == nullptr || source->get_mesh().is_null() || surface >= source->get_mesh()->get_surface_count()) {
+		return out;
+	}
+	const PackedVector3Array verts = source->get_mesh()->surface_get_arrays(surface)[Mesh::ARRAY_VERTEX];
+	float min_y = 1e30f;
+	for (const Vector3 &v : verts) {
+		min_y = MIN(min_y, v.y);
+	}
+	const float span = MAX(pin_height - min_y, 1e-3f);
+	out.resize(verts.size());
+	for (int i = 0; i < verts.size(); i++) {
+		out.set(i, CLAMP((pin_height - verts[i].y) / span, 0.0f, 1.0f) * max_distance);
+	}
+	return out;
+}
+
+PackedFloat32Array PhysXSkinnedCloth3D::get_effective_max_distances() const {
+	MeshInstance3D *source = get_source_mesh_instance();
+	if (source == nullptr || source->get_mesh().is_null() || surface >= source->get_mesh()->get_surface_count()) {
+		return PackedFloat32Array();
+	}
+	const Array arrays = source->get_mesh()->surface_get_arrays(surface);
+	const int vcount = PackedVector3Array(arrays[Mesh::ARRAY_VERTEX]).size();
+	if (max_distances.size() == vcount) {
+		PackedFloat32Array out = max_distances;
+		for (int i = 0; i < vcount; i++) {
+			out.set(i, MAX(out[i], 0.0f));
+		}
+		return out;
+	}
+	const PackedColorArray colors = arrays[Mesh::ARRAY_COLOR];
+	if (use_vertex_color && colors.size() == vcount) {
+		PackedFloat32Array out;
+		out.resize(vcount);
+		for (int i = 0; i < vcount; i++) {
+			out.set(i, CLAMP(colors[i].r, 0.0f, 1.0f) * max_distance);
+		}
+		return out;
+	}
+	return compute_height_ramp();
+}
+
 void PhysXSkinnedCloth3D::_try_build() {
 	build_pending = false;
 	_clear();
@@ -348,24 +415,9 @@ void PhysXSkinnedCloth3D::_try_build() {
 		}
 	}
 
-	// Max distance per render vertex: painted, or ramped down from pin_height.
-	Vector<float> vertex_max;
-	vertex_max.resize(vcount);
-	if (max_distances.size() == vcount) {
-		for (int i = 0; i < vcount; i++) {
-			vertex_max.set(i, MAX(max_distances[i], 0.0f));
-		}
-	} else {
-		float min_y = 1e30f;
-		for (const Vector3 &v : verts) {
-			min_y = MIN(min_y, v.y);
-		}
-		const float span = MAX(pin_height - min_y, 1e-3f);
-		for (int i = 0; i < vcount; i++) {
-			const float t = CLAMP((pin_height - verts[i].y) / span, 0.0f, 1.0f);
-			vertex_max.set(i, t * max_distance);
-		}
-	}
+	// Max distance per render vertex: painted, vertex colour, or height ramp.
+	const PackedFloat32Array vertex_max = get_effective_max_distances();
+	ERR_FAIL_COND_MSG(vertex_max.size() != vcount, "PhysXSkinnedCloth3D: couldn't work out the max distances.");
 
 	// Weld split vertices (UV/normal seams) into particles.
 	HashMap<Vector3i, int> weld;
@@ -787,6 +839,11 @@ void PhysXSkinnedCloth3D::set_pin_height(float p_height) {
 
 void PhysXSkinnedCloth3D::set_max_distance(float p_distance) {
 	max_distance = MAX(p_distance, 0.0f);
+	rebuild();
+}
+
+void PhysXSkinnedCloth3D::set_use_vertex_color(bool p_enabled) {
+	use_vertex_color = p_enabled;
 	rebuild();
 }
 

@@ -61,6 +61,7 @@
 #include "servers/physics_3d/physics_server_3d_wrap_mt.h"
 
 #ifdef TOOLS_ENABLED
+#include "editor/physx_cloth_paint_plugin.h"
 #include "editor/physx_editor_plugin.h"
 #include "editor/plugins/editor_plugin.h"
 #endif
@@ -116,6 +117,7 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 #ifdef TOOLS_ENABLED
 	if (p_level == MODULE_INITIALIZATION_LEVEL_EDITOR) {
 		EditorPlugins::add_by_type<PhysXEditorPlugin>();
+		EditorPlugins::add_by_type<PhysXClothPaintPlugin>();
 	}
 #endif
 }

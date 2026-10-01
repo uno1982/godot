@@ -4,7 +4,8 @@
 		Cloth on a region of a character's skinned mesh -- a robe, cape or skirt that moves with the animation and swings and drapes on its own.
 	</brief_description>
 	<description>
-		Simulates a surface of a skinned [MeshInstance3D] (set [member mesh_instance_path]) as cloth driven by the character's animation. Every vertex has a max distance it may stray from where the animation puts it: [code]0[/code] follows the animation exactly (shoulders, a waistband), larger values swing freely (a hem, the tail of a cape). The distances are painted per vertex with [member max_distances], or ramped automatically from [member pin_height] down to [member max_distance] at the lowest point of the mesh.
+		Simulates a surface of a skinned [MeshInstance3D] (set [member mesh_instance_path]) as cloth driven by the character's animation. Every vertex has a max distance it may stray from where the animation puts it: [code]0[/code] follows the animation exactly (shoulders, a waistband), larger values swing freely (a hem, the tail of a cape). The distances are painted per vertex with [member max_distances], read from the mesh's vertex colours ([member use_vertex_color]), or ramped automatically from [member pin_height] down to [member max_distance] at the lowest point of the mesh.
+		To paint them in the editor, select the node and press [b]Paint Cloth[/b] in the 3D viewport toolbar. The garment turns into a heat map of its max distances (blue follows the animation, red swings furthest). Drag with the left mouse button to paint toward [b]Value[/b], hold [kbd]Shift[/kbd] to paint toward [code]0[/code], or hold [kbd]Ctrl[/kbd] to smooth. [b]Fill[/b] sets every vertex to [b]Value[/b], and [b]Ramp[/b] starts over from the automatic ramp. Each stroke can be undone.
 		The cloth runs on the GPU with compute shaders, so it works on any GPU the renderer supports (no CUDA needed). It collides with capsules on the character's bones (hips, spine, legs, arms), found by humanoid-profile or common Unreal-style bone names and swept across the solver's substeps so fast limbs don't jump through the cloth; set [member body_mesh_path] to the character's body mesh to fit the capsule radii to it. A [member backstop] keeps the cloth from sinking into the body. Free vertices are also tethered to their nearest pinned vertex, so long garments don't stretch.
 		The source mesh is hidden while the cloth runs and drawn instead from the simulated positions, read straight from GPU textures (no CPU readback). Only the source material's albedo texture, albedo colour and roughness carry over for now.
 		Runs only in a running game, not in the editor. The node should process after whatever poses the skeleton (an [AnimationPlayer] or [AnimationTree]); its default [member Node.process_priority] of [code]100[/code] does that.
@@ -12,6 +13,18 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="compute_height_ramp" qualifiers="const">
+			<return type="PackedFloat32Array" />
+			<description>
+				The automatic max distances, one per vertex of [member surface]: [code]0[/code] at and above [member pin_height], rising linearly to [member max_distance] at the mesh's lowest point. Empty if the source mesh can't be found.
+			</description>
+		</method>
+		<method name="get_effective_max_distances" qualifiers="const">
+			<return type="PackedFloat32Array" />
+			<description>
+				The max distances the cloth will be built with, one per vertex of [member surface]: [member max_distances] if it has one value per vertex, otherwise the vertex colours if [member use_vertex_color] is on and the mesh has them, otherwise [method compute_height_ramp]. Empty if the source mesh can't be found.
+			</description>
+		</method>
 		<method name="get_particle_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -51,10 +64,10 @@
 			Fraction of the cloth's own motion lost per second.
 		</member>
 		<member name="max_distance" type="float" setter="set_max_distance" getter="get_max_distance" default="0.4">
-			Automatic painting (used when [member max_distances] is empty): the max distance (metres) at the mesh's lowest point, ramping linearly up from [code]0[/code] at [member pin_height].
+			The largest max distance (metres) of the automatic painting: the ramp's value at the mesh's lowest point (it rises linearly from [code]0[/code] at [member pin_height]), and the value a vertex colour of [code]1[/code] maps to with [member use_vertex_color].
 		</member>
 		<member name="max_distances" type="PackedFloat32Array" setter="set_max_distances" getter="get_max_distances" default="PackedFloat32Array()">
-			Painted max distance (metres) per vertex of [member surface], in the mesh's vertex order: how far each vertex may stray from its animated position. [code]0[/code] follows the animation exactly. Empty uses the automatic ramp ([member pin_height], [member max_distance]).
+			Painted max distance (metres) per vertex of [member surface], in the mesh's vertex order: how far each vertex may stray from its animated position. [code]0[/code] follows the animation exactly. Painted in the editor with [b]Paint Cloth[/b] (see the class description). Empty, or a size that doesn't match the mesh, falls back to [member use_vertex_color] or the automatic ramp ([member pin_height], [member max_distance]).
 		</member>
 		<member name="mesh_instance_path" type="NodePath" setter="set_mesh_instance_path" getter="get_mesh_instance_path" default="NodePath(&quot;&quot;)">
 			The skinned [MeshInstance3D] whose [member surface] is simulated. It must have a [Skin] and a [Skeleton3D].
@@ -76,6 +89,9 @@
 		</member>
 		<member name="thickness" type="float" setter="set_thickness" getter="get_thickness" default="0.012">
 			Extra distance (metres) the cloth keeps from the body capsules.
+		</member>
+		<member name="use_vertex_color" type="bool" setter="set_use_vertex_color" getter="get_use_vertex_color" default="false">
+			When [member max_distances] isn't painted, take each vertex's max distance from the red channel of the mesh's vertex colour times [member max_distance], so distances painted in a modelling tool carry over. Ignored if the mesh has no vertex colours.
 		</member>
 	</members>
 </class>

@@ -55,6 +55,7 @@ class PhysXSkinnedCloth3D : public Node3D {
 	PackedFloat32Array max_distances; // per vertex of the surface; empty = auto from height
 	float pin_height = 1.3f; // auto paint: at/above this bind-space height the cloth follows the animation
 	float max_distance = 0.4f; // auto paint: max distance at the lowest point, ramping up from pin_height
+	bool use_vertex_color = false; // unpainted: the mesh's vertex colour red channel x max_distance
 	int substeps = 8;
 	float stiffness = 0.9f;
 	float bend_stiffness = 0.3f;
@@ -109,6 +110,16 @@ public:
 	float get_pin_height() const { return pin_height; }
 	void set_max_distance(float p_distance);
 	float get_max_distance() const { return max_distance; }
+	void set_use_vertex_color(bool p_enabled);
+	bool get_use_vertex_color() const { return use_vertex_color; }
+
+	// The source MeshInstance3D / surface arrays, and the max distance each of
+	// its vertices gets: painted (max_distances), else the vertex colour red
+	// channel (use_vertex_color), else the height ramp. Also used by the
+	// editor's paint tool.
+	MeshInstance3D *get_source_mesh_instance() const;
+	PackedFloat32Array get_effective_max_distances() const;
+	PackedFloat32Array compute_height_ramp() const;
 	void set_substeps(int p_substeps);
 	int get_substeps() const { return substeps; }
 	void set_stiffness(float p_stiffness);

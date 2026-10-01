@@ -6,7 +6,7 @@
 	<description>
 		Simulates a surface of a skinned [MeshInstance3D] (set [member mesh_instance_path]) as cloth driven by the character's animation. Every vertex has a max distance it may stray from where the animation puts it: [code]0[/code] follows the animation exactly (shoulders, a waistband), larger values swing freely (a hem, the tail of a cape). The distances are painted per vertex with [member max_distances], read from the mesh's vertex colours ([member use_vertex_color]), or ramped automatically from [member pin_height] down to [member max_distance] at the lowest point of the mesh.
 		To paint them in the editor, select the node and press [b]Paint Cloth[/b] in the 3D viewport toolbar. The garment turns into a heat map of its max distances (blue follows the animation, red swings furthest). Drag with the left mouse button to paint toward [b]Value[/b], hold [kbd]Shift[/kbd] to paint toward [code]0[/code], or hold [kbd]Ctrl[/kbd] to smooth. [b]Fill[/b] sets every vertex to [b]Value[/b], and [b]Ramp[/b] starts over from the automatic ramp. Each stroke can be undone.
-		The cloth runs on the GPU with compute shaders, so it works on any GPU the renderer supports (no CUDA needed). It collides with capsules on the character's bones (hips, spine, legs, arms), found by humanoid-profile or common Unreal-style bone names and swept across the solver's substeps so fast limbs don't jump through the cloth; set [member body_mesh_path] to the character's body mesh to fit the capsule radii to it. A [member backstop] keeps the cloth from sinking into the body. Free vertices are also tethered to their nearest pinned vertex, so long garments don't stretch.
+		The cloth runs on the GPU with compute shaders, so it works on any GPU the renderer supports (no CUDA needed). It collides with the character's physical bones: give the skeleton a [PhysicalBoneSimulator3D] with [PhysicalBone3D]s (select the [Skeleton3D] and use [b]Skeleton3D > Create Physical Skeleton[/b] in the 3D toolbar), and every enabled capsule or sphere [CollisionShape3D] on them is a collider, exactly where the editor shows it as the animation moves the bones. Edit, add or remove those shapes to fit the body; the physical bones don't need to simulate. Without a physical skeleton, capsules are placed automatically between the hips, spine, legs and arms (humanoid-profile or common Unreal-style bone names), fitted to [member body_mesh_path] if set. Collisions are swept across the solver's substeps, so fast limbs don't jump through the cloth, and they win over the max distances: where a limb moves further than the cloth may stray, the cloth moves past its limit rather than letting the limb show through. A [member backstop] keeps the cloth from sinking into the body. Free vertices are also tethered to their nearest pinned vertex, so long garments don't stretch.
 		The source mesh is hidden while the cloth runs and drawn instead from the simulated positions, read straight from GPU textures (no CPU readback). Only the source material's albedo texture, albedo colour and roughness carry over for now.
 		Runs only in a running game, not in the editor. The node should process after whatever poses the skeleton (an [AnimationPlayer] or [AnimationTree]); its default [member Node.process_priority] of [code]100[/code] does that.
 	</description>
@@ -17,6 +17,12 @@
 			<return type="PackedFloat32Array" />
 			<description>
 				The automatic max distances, one per vertex of [member surface]: [code]0[/code] at and above [member pin_height], rising linearly to [member max_distance] at the mesh's lowest point. Empty if the source mesh can't be found.
+			</description>
+		</method>
+		<method name="get_body_capsules" qualifiers="const">
+			<return type="Array" />
+			<description>
+				The colliders the cloth uses, for debugging: one [Dictionary] per capsule with [code]bone_a[/code], [code]bone_b[/code], [code]radius_a[/code], [code]radius_b[/code] and [code]from_physical_bone[/code]. Filled once the cloth is built (in a running game).
 			</description>
 		</method>
 		<method name="get_effective_max_distances" qualifiers="const">
@@ -55,13 +61,13 @@
 			Resistance to folding, [code]0..1[/code]. Low values crease and drape softly; high values keep broad, stiff folds.
 		</member>
 		<member name="body_mesh_path" type="NodePath" setter="set_body_mesh_path" getter="get_body_mesh_path" default="NodePath(&quot;&quot;)">
-			Optional skinned [MeshInstance3D] of the character's body. When set, each body capsule's radius is measured from the body vertices skinned to its bone, so the cloth wraps the actual limbs instead of generic ones.
+			Optional skinned [MeshInstance3D] of the character's body. For the automatic capsules (no physical skeleton), each radius is measured from the body vertices skinned to its bone, so the cloth wraps the actual limbs instead of generic ones.
 		</member>
 		<member name="collide_with_body" type="bool" setter="set_collide_with_body" getter="get_collide_with_body" default="true">
-			Collide the cloth with capsules on the character's bones.
+			Collide the cloth with the character's physical bones (or the automatic capsules).
 		</member>
 		<member name="collision_radius_scale" type="float" setter="set_collision_radius_scale" getter="get_collision_radius_scale" default="1.0">
-			Scales every body capsule's radius. Raise it if limbs poke through the cloth.
+			Scales the automatic capsules' radii (not the physical bones' shapes, which are used as they are). Raise it if limbs poke through the cloth.
 		</member>
 		<member name="damping" type="float" setter="set_damping" getter="get_damping" default="0.05">
 			Fraction of the cloth's own motion lost per second.

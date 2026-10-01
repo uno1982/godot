@@ -78,11 +78,17 @@ class PhysXSkinnedCloth3D : public Node3D {
 	Vector<int> bind_bones; // skeleton bone index per skin bind
 	Vector<Transform3D> bind_poses;
 	struct Capsule {
+		// Automatic: between two bones' heads. From a physical bone: a
+		// capsule (or sphere) shape fixed to one bone.
 		int bone_a = -1;
 		int bone_b = -1;
 		float radius_a = 0.05f;
 		float radius_b = 0.05f;
+		bool from_shape = false;
+		Transform3D shape_local; // bone space: body_offset * shape transform
+		float half_length = 0.0f; // along the shape's local Y
 	};
+	bool using_physical_bones = false;
 	Vector<Capsule> capsules;
 	PackedFloat32Array prev_capsules; // last frame's capsule ends, for blending across substeps
 	int particle_count = 0;
@@ -92,6 +98,7 @@ class PhysXSkinnedCloth3D : public Node3D {
 	void _try_build();
 	void _clear();
 	void _find_capsules(Skeleton3D *p_skeleton);
+	bool _find_physical_bone_shapes(Skeleton3D *p_skeleton);
 	void _fit_capsules(Skeleton3D *p_skeleton, MeshInstance3D *p_body);
 	void _step(double p_delta);
 
@@ -146,6 +153,7 @@ public:
 	void rebuild();
 	void reset();
 	int get_particle_count() const { return particle_count; }
+	Array get_body_capsules() const;
 
 	PhysXSkinnedCloth3D();
 	~PhysXSkinnedCloth3D();

@@ -34,6 +34,11 @@
 #include "core/object/class_db.h"
 #include "core/templates/hash_map.h"
 #include "scene/3d/mesh_instance_3d.h"
+#include "scene/3d/physics/collision_shape_3d.h"
+#include "scene/3d/physics/physical_bone_3d.h"
+#include "scene/3d/physics/physical_bone_simulator_3d.h"
+#include "scene/resources/3d/capsule_shape_3d.h"
+#include "scene/resources/3d/sphere_shape_3d.h"
 #include "scene/3d/skeleton_3d.h"
 #include "scene/resources/3d/skin.h"
 #include "scene/resources/material.h"
@@ -176,6 +181,7 @@ void PhysXSkinnedCloth3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("rebuild"), &PhysXSkinnedCloth3D::rebuild);
 	ClassDB::bind_method(D_METHOD("reset"), &PhysXSkinnedCloth3D::reset);
 	ClassDB::bind_method(D_METHOD("get_particle_count"), &PhysXSkinnedCloth3D::get_particle_count);
+	ClassDB::bind_method(D_METHOD("get_body_capsules"), &PhysXSkinnedCloth3D::get_body_capsules);
 
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "mesh_instance_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "MeshInstance3D"), "set_mesh_instance_path", "get_mesh_instance_path");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "surface", PROPERTY_HINT_RANGE, "0,16,1"), "set_surface", "get_surface");
@@ -255,8 +261,70 @@ void PhysXSkinnedCloth3D::_clear() {
 	particle_count = 0;
 }
 
+bool PhysXSkinnedCloth3D::_find_physical_bone_shapes(Skeleton3D *p_skeleton) {
+	// The skeleton's physical bones (Skeleton3D > Create Physical Skeleton in
+	// the editor): every enabled capsule or sphere CollisionShape3D on them,
+	// fixed to its bone the same way the PhysicalBone3D follows it.
+	for (int i = 0; i < p_skeleton->get_child_count(true); i++) {
+		PhysicalBoneSimulator3D *sim = Object::cast_to<PhysicalBoneSimulator3D>(p_skeleton->get_child(i, true));
+		if (sim == nullptr) {
+			continue;
+		}
+		for (int j = 0; j < sim->get_child_count(); j++) {
+			PhysicalBone3D *pb = Object::cast_to<PhysicalBone3D>(sim->get_child(j));
+			if (pb == nullptr) {
+				continue;
+			}
+			int bone = pb->get_bone_id();
+			if (bone < 0) {
+				bone = p_skeleton->find_bone(pb->get_bone_name());
+			}
+			if (bone < 0) {
+				continue;
+			}
+			for (int k = 0; k < pb->get_child_count(); k++) {
+				CollisionShape3D *cs = Object::cast_to<CollisionShape3D>(pb->get_child(k));
+				if (cs == nullptr || cs->is_disabled() || cs->get_shape().is_null()) {
+					continue;
+				}
+				Capsule c;
+				c.from_shape = true;
+				c.bone_a = bone;
+				c.bone_b = bone;
+				c.shape_local = pb->get_body_offset() * cs->get_transform();
+				const float sx = c.shape_local.basis.get_column(0).length();
+				const float sy = c.shape_local.basis.get_column(1).length();
+				Ref<CapsuleShape3D> capsule = cs->get_shape();
+				Ref<SphereShape3D> sphere = cs->get_shape();
+				float radius;
+				if (capsule.is_valid()) {
+					radius = capsule->get_radius();
+					c.half_length = MAX(capsule->get_height() * 0.5f - radius, 0.0f) * sy;
+				} else if (sphere.is_valid()) {
+					radius = sphere->get_radius();
+				} else {
+					continue;
+				}
+				c.radius_a = radius * sx;
+				c.radius_b = radius * sx;
+				c.shape_local.orthonormalize();
+				if (capsules.size() >= SkinnedClothSolverGPU::MAX_CAPSULES) {
+					WARN_PRINT_ONCE(vformat("PhysXSkinnedCloth3D: more than %d collision shapes on the physical bones; the rest are ignored.", SkinnedClothSolverGPU::MAX_CAPSULES));
+					return true;
+				}
+				capsules.push_back(c);
+			}
+		}
+	}
+	return !capsules.is_empty();
+}
+
 void PhysXSkinnedCloth3D::_find_capsules(Skeleton3D *p_skeleton) {
 	capsules.clear();
+	using_physical_bones = _find_physical_bone_shapes(p_skeleton);
+	if (using_physical_bones) {
+		return;
+	}
 	for (const CapsuleSpec &s : CAPSULE_SPECS) {
 		Capsule c;
 		c.bone_a = find_bone_any(p_skeleton, s.a);
@@ -755,7 +823,9 @@ void PhysXSkinnedCloth3D::_try_build() {
 	skeleton_id = skeleton->get_instance_id();
 	prev_capsules.clear();
 	_find_capsules(skeleton);
-	_fit_capsules(skeleton, Object::cast_to<MeshInstance3D>(get_node_or_null(body_mesh_path)));
+	if (!using_physical_bones) {
+		_fit_capsules(skeleton, Object::cast_to<MeshInstance3D>(get_node_or_null(body_mesh_path)));
+	}
 	built = true;
 }
 
@@ -784,16 +854,27 @@ void PhysXSkinnedCloth3D::_step(double p_delta) {
 		current.resize(capsules.size() * 8);
 		float *cw = current.ptrw();
 		for (int c = 0; c < capsules.size(); c++) {
-			const Vector3 a = skel_xform.xform(skeleton->get_bone_global_pose(capsules[c].bone_a).origin);
-			const Vector3 b = skel_xform.xform(skeleton->get_bone_global_pose(capsules[c].bone_b).origin);
+			Vector3 a;
+			Vector3 b;
+			float scale = collision_radius_scale;
+			if (capsules[c].from_shape) {
+				// Where the PhysicalBone3D puts its shape: bone pose * body offset.
+				const Transform3D x = skel_xform * skeleton->get_bone_global_pose(capsules[c].bone_a) * capsules[c].shape_local;
+				a = x.xform(Vector3(0, -capsules[c].half_length, 0));
+				b = x.xform(Vector3(0, capsules[c].half_length, 0));
+				scale = 1.0f; // authored shapes are used as they are
+			} else {
+				a = skel_xform.xform(skeleton->get_bone_global_pose(capsules[c].bone_a).origin);
+				b = skel_xform.xform(skeleton->get_bone_global_pose(capsules[c].bone_b).origin);
+			}
 			cw[c * 8 + 0] = a.x;
 			cw[c * 8 + 1] = a.y;
 			cw[c * 8 + 2] = a.z;
-			cw[c * 8 + 3] = capsules[c].radius_a * collision_radius_scale;
+			cw[c * 8 + 3] = capsules[c].radius_a * scale;
 			cw[c * 8 + 4] = b.x;
 			cw[c * 8 + 5] = b.y;
 			cw[c * 8 + 6] = b.z;
-			cw[c * 8 + 7] = capsules[c].radius_b * collision_radius_scale;
+			cw[c * 8 + 7] = capsules[c].radius_b * scale;
 		}
 		if (prev_capsules.size() != current.size()) {
 			prev_capsules = current;
@@ -820,6 +901,22 @@ void PhysXSkinnedCloth3D::_step(double p_delta) {
 	if (ri != nullptr && ri->get_transform() != source->get_transform()) {
 		ri->set_transform(source->get_transform());
 	}
+}
+
+Array PhysXSkinnedCloth3D::get_body_capsules() const {
+	Array out;
+	Skeleton3D *skeleton = ObjectDB::get_instance<Skeleton3D>(skeleton_id);
+	for (const Capsule &c : capsules) {
+		Dictionary d;
+		d["bone_a"] = skeleton != nullptr ? skeleton->get_bone_name(c.bone_a) : String();
+		d["bone_b"] = skeleton != nullptr ? skeleton->get_bone_name(c.bone_b) : String();
+		const float scale = c.from_shape ? 1.0f : collision_radius_scale;
+		d["radius_a"] = c.radius_a * scale;
+		d["radius_b"] = c.radius_b * scale;
+		d["from_physical_bone"] = c.from_shape;
+		out.push_back(d);
+	}
+	return out;
 }
 
 void PhysXSkinnedCloth3D::rebuild() {

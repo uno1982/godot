@@ -51,7 +51,7 @@ public:
 	bool local = false;
 	SafeFlag built;
 
-	static constexpr int MAX_CAPSULES = 32;
+	static constexpr int MAX_CAPSULES = 64;
 
 	RID shader, pipeline;
 	RID buf_params, buf_rest, buf_skin_idx, buf_skin_w, buf_bones, buf_target, buf_target_prev;

@@ -40,7 +40,7 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 #define MODE_RESET 5
 
 layout(set = 0, binding = 0, std140) uniform Params {
-	ivec4 counts; // x particles, y unused, z unused, w unused
+	ivec4 counts; // x particles, y unused, z substeps, w unused
 	ivec4 counts2; // x capsules, y texture width, z bones, w unused
 	vec4 step; // x dt (substep), y damping (velocity kept per substep), z animation drive (fraction pulled to the target per substep), w stiffness
 	vec4 gravity; // xyz gravity (m/s^2), w thickness (m)
@@ -246,8 +246,41 @@ void main() {
 			return;
 		}
 		vec3 corr = d * ((len - c.z) / (len * wsum)) * c.w * step.w;
-		pos[a].xyz = pa.xyz + corr * pa.w;
-		pos[b].xyz = pb.xyz - corr * pb.w;
+		vec3 qa = pa.xyz + corr * pa.w;
+		vec3 qb = pb.xyz - corr * pb.w;
+		// Edge collision (structural edges): keep the fabric between two
+		// particles out of the body capsules too, not just the particles --
+		// otherwise a round limb rolls neighbouring particles aside and
+		// passes between them.
+		if (c.w >= 0.999) {
+			for (int k = 0; k < counts2.x; k++) {
+				vec4 ca = mix(capsules[k * 4], capsules[k * 4 + 2], pass.frac);
+				vec4 cb = mix(capsules[k * 4 + 1], capsules[k * 4 + 3], pass.frac);
+				vec2 st = closest_segments(qa, qb, ca.xyz, cb.xyz);
+				vec3 on_edge = mix(qa, qb, st.x);
+				vec3 on_axis = mix(ca.xyz, cb.xyz, st.y);
+				float r = mix(ca.w, cb.w, st.y) + gravity.w;
+				vec3 dn = on_edge - on_axis;
+				float dl = length(dn);
+				if (dl >= r || dl < 1e-6) {
+					continue;
+				}
+				vec3 n = dn / dl;
+				// Push the edge point out, shared by the ends by barycentric
+				// weight and inverse mass.
+				float wa = (1.0 - st.x) * pa.w;
+				float wb = st.x * pb.w;
+				float denom = (1.0 - st.x) * wa + st.x * wb;
+				if (denom < 1e-6) {
+					continue;
+				}
+				float lambda = (r - dl) / denom;
+				qa += n * (lambda * wa);
+				qb += n * (lambda * wb);
+			}
+		}
+		pos[a].xyz = qa;
+		pos[b].xyz = qb;
 		return;
 	}
 
@@ -283,7 +316,12 @@ void main() {
 			pos[i] = vec4(t, 0.0);
 			return;
 		}
-		vec3 v = (p.xyz - prev[i].xyz) * step.y;
+		// Damping acts on the motion relative to the animated garment, not
+		// the world: running doesn't blow the cloth back like a headwind,
+		// swings and jiggle still settle.
+		vec3 t_last = mix(target_prev[i].xyz, target[i].xyz, max(pass.frac - 1.0 / float(max(counts.z, 1)), 0.0));
+		vec3 v_anim = t - t_last;
+		vec3 v = v_anim + ((p.xyz - prev[i].xyz) - v_anim) * step.y;
 		prev[i] = vec4(p.xyz, 0.0);
 		vec3 np = p.xyz + v + gravity.xyz * step.x * step.x;
 		pos[i] = vec4(mix(np, t, step.z), p.w);

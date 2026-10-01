@@ -70,7 +70,7 @@
 			Scales the automatic capsules' radii (not the physical bones' shapes, which are used as they are). Raise it if limbs poke through the cloth.
 		</member>
 		<member name="damping" type="float" setter="set_damping" getter="get_damping" default="0.05">
-			Fraction of the cloth's own motion lost per second.
+			Fraction of the cloth's motion relative to the animated garment lost per second: settles swinging and jiggle. Moving the character doesn't count, so running doesn't push the cloth back like a headwind.
 		</member>
 		<member name="max_distance" type="float" setter="set_max_distance" getter="get_max_distance" default="0.4">
 			The largest max distance (metres) of the automatic painting: the ramp's value at the mesh's lowest point (it rises linearly from [code]0[/code] at [member pin_height]), and the value a vertex colour of [code]1[/code] maps to with [member use_vertex_color].

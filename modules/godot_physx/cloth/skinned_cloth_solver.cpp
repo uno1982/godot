@@ -234,7 +234,7 @@ void SkinnedClothSolverGPU::rt_step(Ref<SkinnedClothSolverGPU> p_self, PackedFlo
 	// transform rows = 24 floats).
 	uint8_t params[PARAMS_BYTES];
 	memset(params, 0, sizeof(params));
-	int32_t counts[8] = { n, 0, 0, 0, MIN((int)p_capsules.size() / 16, MAX_CAPSULES), tex_width, bone_count, 0 };
+	int32_t counts[8] = { n, 0, MAX(p_substeps, 1), 0, MIN((int)p_capsules.size() / 16, MAX_CAPSULES), tex_width, bone_count, 0 };
 	memcpy(params, counts, sizeof(counts));
 	memcpy(params + 32, p_params.ptr(), MIN(p_params.size(), 24) * 4);
 	rd->buffer_update(buf_params, 0, PARAMS_BYTES, params);

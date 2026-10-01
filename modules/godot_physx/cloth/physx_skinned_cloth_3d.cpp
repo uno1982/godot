@@ -216,10 +216,12 @@ void PhysXSkinnedCloth3D::_notification(int p_what) {
 }
 
 void PhysXSkinnedCloth3D::_clear() {
-	if (render_instance != nullptr) {
-		render_instance->queue_free();
-		render_instance = nullptr;
+	MeshInstance3D *ri = ObjectDB::get_instance<MeshInstance3D>(render_instance_id);
+	if (ri != nullptr) {
+		ri->queue_free();
 	}
+	render_instance = nullptr;
+	render_instance_id = ObjectID();
 	MeshInstance3D *source = ObjectDB::get_instance<MeshInstance3D>(source_id);
 	if (source != nullptr) {
 		source->set_visible(true);
@@ -723,12 +725,18 @@ void PhysXSkinnedCloth3D::_try_build() {
 		render_material->set_shader_parameter("roughness", src_mat->get_roughness());
 	}
 
+	// Drawn as an internal sibling of the source mesh with the same local
+	// transform, in the source's space: it then moves exactly like the mesh it
+	// replaces, physics interpolation included (a top-level node in world
+	// space would lead the interpolated character by up to a tick).
 	render_instance = memnew(MeshInstance3D);
 	render_instance->set_mesh(render_mesh);
 	render_instance->set_surface_override_material(0, render_material);
-	add_child(render_instance, false, INTERNAL_MODE_BACK);
-	render_instance->set_as_top_level(true);
-	render_instance->set_global_transform(Transform3D());
+	render_instance->set_cast_shadows_setting(source->get_cast_shadows_setting());
+	source->get_parent()->add_child(render_instance, false, INTERNAL_MODE_BACK);
+	render_instance->set_transform(source->get_transform());
+	render_instance->set_custom_aabb(source->get_aabb().grow(MAX(max_distance, 0.5f)));
+	render_instance_id = render_instance->get_instance_id();
 	source->set_visible(false);
 
 	source_id = source->get_instance_id();
@@ -792,11 +800,12 @@ void PhysXSkinnedCloth3D::_step(double p_delta) {
 	s.damping = damping;
 	s.thickness = thickness;
 	s.backstop = backstop;
+	s.output_xform = source->get_global_transform().affine_inverse();
 	solver->step(bone_data, capsule_data, p_delta, substeps, s);
 
-	if (render_instance != nullptr) {
-		AABB box = source->get_global_transform().xform(source->get_aabb());
-		render_instance->set_custom_aabb(box.grow(MAX(max_distance, 0.5f)));
+	MeshInstance3D *ri = ObjectDB::get_instance<MeshInstance3D>(render_instance_id);
+	if (ri != nullptr && ri->get_transform() != source->get_transform()) {
+		ri->set_transform(source->get_transform());
 	}
 }
 

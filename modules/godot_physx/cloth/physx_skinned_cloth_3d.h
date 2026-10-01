@@ -68,6 +68,7 @@ class PhysXSkinnedCloth3D : public Node3D {
 
 	SkinnedClothSolver *solver = nullptr;
 	MeshInstance3D *render_instance = nullptr;
+	ObjectID render_instance_id;
 	Ref<ShaderMaterial> render_material;
 	Ref<Texture2DRD> pos_texture;
 	Ref<Texture2DRD> nrm_texture;

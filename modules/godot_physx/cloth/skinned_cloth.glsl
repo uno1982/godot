@@ -42,6 +42,13 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 step; // x dt (substep), y damping (velocity kept per substep), z unused, w stiffness
 	vec4 gravity; // xyz gravity (m/s^2), w thickness (m)
 	vec4 limits; // x tether slack (allowed stretch, e.g. 1.03), y tether stiffness, z capsule friction, w backstop distance (m, < 0 = off)
+	// World -> source mesh local space (rows of a 3x4 affine transform). The
+	// solver works in world space; the output images are in the source mesh's
+	// space so the cloth renders through the same (possibly interpolated)
+	// transform as the mesh it replaces.
+	vec4 out_x;
+	vec4 out_y;
+	vec4 out_z;
 };
 
 // Per dispatch (push constants -- the uniform buffer can't change between
@@ -249,9 +256,13 @@ void main() {
 		}
 		float nl = length(n);
 		n = nl > 1e-12 ? n / nl : vec3(0.0, 1.0, 0.0);
+		vec3 lp = vec3(dot(out_x.xyz, p) + out_x.w, dot(out_y.xyz, p) + out_y.w, dot(out_z.xyz, p) + out_z.w);
+		vec3 ln = vec3(dot(out_x.xyz, n), dot(out_y.xyz, n), dot(out_z.xyz, n));
+		float lnl = length(ln);
+		ln = lnl > 1e-12 ? ln / lnl : vec3(0.0, 1.0, 0.0);
 		ivec2 px = ivec2(int(i) % counts2.y, int(i) / counts2.y);
-		imageStore(pos_image, px, vec4(p, 1.0));
-		imageStore(nrm_image, px, vec4(n, 0.0));
+		imageStore(pos_image, px, vec4(lp, 1.0));
+		imageStore(nrm_image, px, vec4(ln, 0.0));
 		return;
 	}
 }

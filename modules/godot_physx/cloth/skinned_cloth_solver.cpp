@@ -40,7 +40,7 @@
 #include "servers/rendering/rendering_server.h"
 
 namespace {
-constexpr int PARAMS_BYTES = 80; // 5 * vec4, std140 -- see skinned_cloth.glsl's Params
+constexpr int PARAMS_BYTES = 128; // 8 * vec4, std140 -- see skinned_cloth.glsl's Params
 constexpr uint32_t GROUP = 64; // local_size_x
 
 uint32_t groups_for(int p_count) {
@@ -169,7 +169,7 @@ void SkinnedClothSolverGPU::rt_build(Ref<SkinnedClothSolverGPU> p_self, PackedFl
 	tf.format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT;
 	tf.width = tex_width;
 	tf.height = tex_height;
-	tf.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_UPDATE_BIT;
+	tf.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_UPDATE_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
 	Vector<uint8_t> zeros;
 	zeros.resize(tex_width * tex_height * 16);
 	memset(zeros.ptrw(), 0, zeros.size());
@@ -230,12 +230,13 @@ void SkinnedClothSolverGPU::rt_step(Ref<SkinnedClothSolverGPU> p_self, PackedFlo
 		rd->buffer_update(buf_capsules, 0, MIN(p_capsules.size(), MAX_CAPSULES * 16) * 4, p_capsules.ptr());
 	}
 	// Params: counts (particles), counts2 (capsules, tex width, bones), then
-	// the float block the caller packed (step, gravity, limits = 12 floats).
+	// the float block the caller packed (step, gravity, limits, output
+	// transform rows = 24 floats).
 	uint8_t params[PARAMS_BYTES];
 	memset(params, 0, sizeof(params));
 	int32_t counts[8] = { n, 0, 0, 0, MIN((int)p_capsules.size() / 16, MAX_CAPSULES), tex_width, bone_count, 0 };
 	memcpy(params, counts, sizeof(counts));
-	memcpy(params + 32, p_params.ptr(), MIN(p_params.size(), 12) * 4);
+	memcpy(params + 32, p_params.ptr(), MIN(p_params.size(), 24) * 4);
 	rd->buffer_update(buf_params, 0, PARAMS_BYTES, params);
 
 	PassConstants pc = { MODE_SKIN, 0, 0, 0.0f };
@@ -347,7 +348,7 @@ void SkinnedClothSolver::step(const PackedFloat32Array &p_bones, const PackedFlo
 	// Velocity kept per substep from a per-second damping fraction.
 	const float keep = Math::pow(1.0f - CLAMP(p_settings.damping, 0.0f, 0.999f), dt);
 	PackedFloat32Array params;
-	params.resize(12);
+	params.resize(24);
 	float *w = params.ptrw();
 	w[0] = dt;
 	w[1] = keep;
@@ -361,6 +362,13 @@ void SkinnedClothSolver::step(const PackedFloat32Array &p_bones, const PackedFlo
 	w[9] = p_settings.tether_stiffness;
 	w[10] = p_settings.friction;
 	w[11] = p_settings.backstop;
+	const Transform3D &o = p_settings.output_xform;
+	for (int r = 0; r < 3; r++) {
+		w[12 + r * 4 + 0] = o.basis.rows[r].x;
+		w[12 + r * 4 + 1] = o.basis.rows[r].y;
+		w[12 + r * 4 + 2] = o.basis.rows[r].z;
+		w[12 + r * 4 + 3] = o.origin[r];
+	}
 	_dispatch(callable_mp(gpu.ptr(), &SkinnedClothSolverGPU::rt_step).bind(gpu, p_bones, p_capsules, params, substeps));
 }
 

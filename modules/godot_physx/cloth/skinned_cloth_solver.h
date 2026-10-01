@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "core/math/transform_3d.h"
 #include "core/object/ref_counted.h"
 #include "core/templates/rid.h"
 #include "core/templates/safe_refcount.h"
@@ -92,6 +93,7 @@ public:
 		float tether_stiffness = 1.0f;
 		float friction = 0.2f;
 		float backstop = 0.02f; // how far (m) the cloth may sink inward past its animated position; < 0 = off
+		Transform3D output_xform; // world -> the space the output textures are written in
 	};
 
 	bool is_available() const { return gpu.is_valid() && gpu->rd != nullptr; }

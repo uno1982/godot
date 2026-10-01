@@ -5,7 +5,7 @@
 	</brief_description>
 	<description>
 		Simulates a surface of a skinned [MeshInstance3D] (set [member mesh_instance_path]) as cloth driven by the character's animation. Every vertex has a max distance it may stray from where the animation puts it: [code]0[/code] follows the animation exactly (shoulders, a waistband), larger values swing freely (a hem, the tail of a cape). The distances are painted per vertex with [member max_distances], or ramped automatically from [member pin_height] down to [member max_distance] at the lowest point of the mesh.
-		The cloth runs on the GPU with compute shaders, so it works on any GPU the renderer supports (no CUDA needed). It collides with capsules on the character's bones (hips, spine, legs, arms), found by humanoid-profile or common Unreal-style bone names; set [member body_mesh_path] to the character's body mesh to fit the capsule radii to it. Free vertices are also tethered to their nearest pinned vertex, so long garments don't stretch.
+		The cloth runs on the GPU with compute shaders, so it works on any GPU the renderer supports (no CUDA needed). It collides with capsules on the character's bones (hips, spine, legs, arms), found by humanoid-profile or common Unreal-style bone names and swept across the solver's substeps so fast limbs don't jump through the cloth; set [member body_mesh_path] to the character's body mesh to fit the capsule radii to it. A [member backstop] keeps the cloth from sinking into the body. Free vertices are also tethered to their nearest pinned vertex, so long garments don't stretch.
 		The source mesh is hidden while the cloth runs and drawn instead from the simulated positions, read straight from GPU textures (no CPU readback). Only the source material's albedo texture, albedo colour and roughness carry over for now.
 		Runs only in a running game, not in the editor. The node should process after whatever poses the skeleton (an [AnimationPlayer] or [AnimationTree]); its default [member Node.process_priority] of [code]100[/code] does that.
 	</description>
@@ -32,6 +32,9 @@
 		</method>
 	</methods>
 	<members>
+		<member name="backstop" type="float" setter="set_backstop" getter="get_backstop" default="0.02">
+			How far (metres) the cloth may sink inward past its animated position, measured along the animated surface's normal. Keeps clothing on the outside of the body even where the body capsules don't quite fit. A negative value turns it off.
+		</member>
 		<member name="bend_stiffness" type="float" setter="set_bend_stiffness" getter="get_bend_stiffness" default="0.3">
 			Resistance to folding, [code]0..1[/code]. Low values crease and drape softly; high values keep broad, stiff folds.
 		</member>

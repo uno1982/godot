@@ -56,6 +56,7 @@ public:
 	RID buf_params, buf_rest, buf_skin_idx, buf_skin_w, buf_bones, buf_target, buf_target_prev;
 	RID buf_pos, buf_prev, buf_constraints, buf_tethers, buf_capsules, buf_adj_offsets, buf_adj_pairs;
 	RID tex_pos, tex_nrm;
+	RID buf_rest_normal, buf_target_normal;
 	RID uniform_set;
 
 	int particle_count = 0;
@@ -66,7 +67,7 @@ public:
 	bool needs_reset = true;
 
 	void rt_compile(Ref<SkinnedClothSolverGPU> p_self);
-	void rt_build(Ref<SkinnedClothSolverGPU> p_self, PackedFloat32Array p_rest, PackedInt32Array p_skin_idx, PackedFloat32Array p_skin_w,
+	void rt_build(Ref<SkinnedClothSolverGPU> p_self, PackedFloat32Array p_rest, PackedFloat32Array p_rest_normals, PackedInt32Array p_skin_idx, PackedFloat32Array p_skin_w,
 			PackedFloat32Array p_constraints, PackedInt32Array p_batch_offsets, PackedFloat32Array p_tethers,
 			PackedInt32Array p_adj_offsets, PackedInt32Array p_adj_pairs, int p_bone_count);
 	void rt_step(Ref<SkinnedClothSolverGPU> p_self, PackedFloat32Array p_bones, PackedFloat32Array p_capsules, PackedFloat32Array p_params, int p_substeps);
@@ -90,6 +91,7 @@ public:
 		float tether_slack = 1.03f; // a particle may drift this far beyond its rest distance to its anchor
 		float tether_stiffness = 1.0f;
 		float friction = 0.2f;
+		float backstop = 0.02f; // how far (m) the cloth may sink inward past its animated position; < 0 = off
 	};
 
 	bool is_available() const { return gpu.is_valid() && gpu->rd != nullptr; }
@@ -99,11 +101,12 @@ public:
 	// float bits, rest length, stiffness) sorted into colour batches,
 	// tethers (anchor as float bits or ~0u, rest distance), triangle
 	// adjacency for normals.
-	void build(const PackedFloat32Array &p_rest, const PackedInt32Array &p_skin_idx, const PackedFloat32Array &p_skin_w,
+	void build(const PackedFloat32Array &p_rest, const PackedFloat32Array &p_rest_normals, const PackedInt32Array &p_skin_idx, const PackedFloat32Array &p_skin_w,
 			const PackedFloat32Array &p_constraints, const PackedInt32Array &p_batch_offsets, const PackedFloat32Array &p_tethers,
 			const PackedInt32Array &p_adj_offsets, const PackedInt32Array &p_adj_pairs, int p_bone_count);
 	// p_bones: 16 floats (column-major mat4) per skin bind, world space.
-	// p_capsules: 8 floats per capsule (a.xyz, ra, b.xyz, rb), world space.
+	// p_capsules: 16 floats per capsule -- previous frame (a.xyz, ra, b.xyz,
+	// rb) then this frame's -- world space, blended across the substeps.
 	void step(const PackedFloat32Array &p_bones, const PackedFloat32Array &p_capsules, double p_delta, int p_substeps, const Settings &p_settings);
 	void reset();
 

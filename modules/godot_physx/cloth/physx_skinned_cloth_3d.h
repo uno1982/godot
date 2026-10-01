@@ -60,6 +60,7 @@ class PhysXSkinnedCloth3D : public Node3D {
 	float bend_stiffness = 0.3f;
 	float damping = 0.05f;
 	float thickness = 0.012f;
+	float backstop = 0.02f;
 	float collision_radius_scale = 1.0f;
 	bool collide_with_body = true;
 	bool simulating = true;
@@ -80,6 +81,7 @@ class PhysXSkinnedCloth3D : public Node3D {
 		float radius_b = 0.05f;
 	};
 	Vector<Capsule> capsules;
+	PackedFloat32Array prev_capsules; // last frame's capsule ends, for blending across substeps
 	int particle_count = 0;
 	bool built = false;
 	bool build_pending = false;
@@ -117,6 +119,8 @@ public:
 	float get_damping() const { return damping; }
 	void set_thickness(float p_thickness);
 	float get_thickness() const { return thickness; }
+	void set_backstop(float p_distance);
+	float get_backstop() const { return backstop; }
 	void set_collide_with_body(bool p_enabled);
 	bool get_collide_with_body() const { return collide_with_body; }
 	void set_collision_radius_scale(float p_scale);

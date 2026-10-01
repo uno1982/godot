@@ -154,6 +154,8 @@ void PhysXSkinnedCloth3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_damping"), &PhysXSkinnedCloth3D::get_damping);
 	ClassDB::bind_method(D_METHOD("set_thickness", "thickness"), &PhysXSkinnedCloth3D::set_thickness);
 	ClassDB::bind_method(D_METHOD("get_thickness"), &PhysXSkinnedCloth3D::get_thickness);
+	ClassDB::bind_method(D_METHOD("set_backstop", "distance"), &PhysXSkinnedCloth3D::set_backstop);
+	ClassDB::bind_method(D_METHOD("get_backstop"), &PhysXSkinnedCloth3D::get_backstop);
 	ClassDB::bind_method(D_METHOD("set_collide_with_body", "enabled"), &PhysXSkinnedCloth3D::set_collide_with_body);
 	ClassDB::bind_method(D_METHOD("get_collide_with_body"), &PhysXSkinnedCloth3D::get_collide_with_body);
 	ClassDB::bind_method(D_METHOD("set_collision_radius_scale", "scale"), &PhysXSkinnedCloth3D::set_collision_radius_scale);
@@ -181,6 +183,7 @@ void PhysXSkinnedCloth3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "collide_with_body"), "set_collide_with_body", "get_collide_with_body");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "body_mesh_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "MeshInstance3D"), "set_body_mesh_path", "get_body_mesh_path");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_radius_scale", PROPERTY_HINT_RANGE, "0.1,3,0.01"), "set_collision_radius_scale", "get_collision_radius_scale");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "backstop", PROPERTY_HINT_RANGE, "-0.01,0.2,0.001,suffix:m"), "set_backstop", "get_backstop");
 }
 
 void PhysXSkinnedCloth3D::_notification(int p_what) {
@@ -390,6 +393,30 @@ void PhysXSkinnedCloth3D::_try_build() {
 
 	PackedFloat32Array rest;
 	rest.resize(n * 4);
+	// Rest normal per particle: the welded vertices' normals averaged (seams
+	// carry the same normal on both sides, hard edges get the average).
+	PackedFloat32Array rest_normals;
+	rest_normals.resize(n * 4);
+	{
+		Vector<Vector3> acc;
+		acc.resize(n);
+		Vector3 *aw = acc.ptrw();
+		for (int i = 0; i < n; i++) {
+			aw[i] = Vector3();
+		}
+		if (normals.size() == vcount) {
+			for (int i = 0; i < vcount; i++) {
+				aw[vertex_particle[i]] += normals[i];
+			}
+		}
+		for (int p = 0; p < n; p++) {
+			const Vector3 nn = acc[p].length_squared() > 1e-12f ? acc[p].normalized() : Vector3(0, 1, 0);
+			rest_normals.set(p * 4 + 0, nn.x);
+			rest_normals.set(p * 4 + 1, nn.y);
+			rest_normals.set(p * 4 + 2, nn.z);
+			rest_normals.set(p * 4 + 3, 0.0f);
+		}
+	}
 	PackedInt32Array skin_idx;
 	skin_idx.resize(n * 4);
 	PackedFloat32Array skin_w;
@@ -595,7 +622,7 @@ void PhysXSkinnedCloth3D::_try_build() {
 		solver = nullptr;
 		ERR_FAIL_MSG("PhysXSkinnedCloth3D: no RenderingDevice -- compute cloth needs a GPU renderer.");
 	}
-	solver->build(rest, skin_idx, skin_w, con_data, batch_offsets, tethers, adj_offsets, adj_pairs, bind_bones.size());
+	solver->build(rest, rest_normals, skin_idx, skin_w, con_data, batch_offsets, tethers, adj_offsets, adj_pairs, bind_bones.size());
 	particle_count = n;
 
 	// Render copy: same surface, no skinning, CUSTOM0.x = particle index.
@@ -654,6 +681,7 @@ void PhysXSkinnedCloth3D::_try_build() {
 
 	source_id = source->get_instance_id();
 	skeleton_id = skeleton->get_instance_id();
+	prev_capsules.clear();
 	_find_capsules(skeleton);
 	_fit_capsules(skeleton, Object::cast_to<MeshInstance3D>(get_node_or_null(body_mesh_path)));
 	built = true;
@@ -677,8 +705,12 @@ void PhysXSkinnedCloth3D::_step(double p_delta) {
 
 	PackedFloat32Array capsule_data;
 	if (collide_with_body) {
-		capsule_data.resize(capsules.size() * 8);
-		float *cw = capsule_data.ptrw();
+		// This frame's capsule ends, after last frame's: the solver blends
+		// between them across the substeps, so a fast leg sweeps through the
+		// substeps instead of jumping through the cloth once per frame.
+		PackedFloat32Array current;
+		current.resize(capsules.size() * 8);
+		float *cw = current.ptrw();
 		for (int c = 0; c < capsules.size(); c++) {
 			const Vector3 a = skel_xform.xform(skeleton->get_bone_global_pose(capsules[c].bone_a).origin);
 			const Vector3 b = skel_xform.xform(skeleton->get_bone_global_pose(capsules[c].bone_b).origin);
@@ -691,12 +723,23 @@ void PhysXSkinnedCloth3D::_step(double p_delta) {
 			cw[c * 8 + 6] = b.z;
 			cw[c * 8 + 7] = capsules[c].radius_b * collision_radius_scale;
 		}
+		if (prev_capsules.size() != current.size()) {
+			prev_capsules = current;
+		}
+		capsule_data.resize(capsules.size() * 16);
+		float *dw = capsule_data.ptrw();
+		for (int c = 0; c < capsules.size(); c++) {
+			memcpy(dw + c * 16, prev_capsules.ptr() + c * 8, 8 * sizeof(float));
+			memcpy(dw + c * 16 + 8, current.ptr() + c * 8, 8 * sizeof(float));
+		}
+		prev_capsules = current;
 	}
 
 	SkinnedClothSolver::Settings s;
 	s.stiffness = stiffness;
 	s.damping = damping;
 	s.thickness = thickness;
+	s.backstop = backstop;
 	solver->step(bone_data, capsule_data, p_delta, substeps, s);
 
 	if (render_instance != nullptr) {
@@ -766,6 +809,10 @@ void PhysXSkinnedCloth3D::set_damping(float p_damping) {
 
 void PhysXSkinnedCloth3D::set_thickness(float p_thickness) {
 	thickness = MAX(p_thickness, 0.0f);
+}
+
+void PhysXSkinnedCloth3D::set_backstop(float p_distance) {
+	backstop = p_distance;
 }
 
 void PhysXSkinnedCloth3D::set_collide_with_body(bool p_enabled) {

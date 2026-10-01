@@ -15,8 +15,12 @@
 //                   particle, so each thread can write its pair directly.
 //   MODE_LIMITS     tethers (stay within the rest distance of the nearest
 //                   pinned particle -- keeps long robes from stretching with
-//                   few iterations), body capsules, then the max-distance
-//                   sphere around the animated target.
+//                   few iterations), body capsules (interpolated across the
+//                   substeps, so fast limbs don't jump through the cloth),
+//                   the backstop (no further inward, along the animated
+//                   normal, than a small distance -- keeps clothing outside
+//                   the body), then the max-distance sphere around the
+//                   animated target.
 // Once per frame after the substeps:
 //   MODE_RESET      (first frame / teleport) particles placed on the animated pose.
 //   MODE_OUTPUT     per-particle normal from the incident triangles, and
@@ -37,7 +41,7 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	ivec4 counts2; // x capsules, y texture width, z bones, w unused
 	vec4 step; // x dt (substep), y damping (velocity kept per substep), z unused, w stiffness
 	vec4 gravity; // xyz gravity (m/s^2), w thickness (m)
-	vec4 limits; // x tether slack (allowed stretch, e.g. 1.03), y tether stiffness, z capsule friction, w unused
+	vec4 limits; // x tether slack (allowed stretch, e.g. 1.03), y tether stiffness, z capsule friction, w backstop distance (m, < 0 = off)
 };
 
 // Per dispatch (push constants -- the uniform buffer can't change between
@@ -80,7 +84,7 @@ layout(set = 0, binding = 10, std430) restrict readonly buffer Tethers {
 	vec2 tethers[]; // x anchor particle (float bits; ~0 = none), y rest distance
 };
 layout(set = 0, binding = 11, std430) restrict readonly buffer Capsules {
-	vec4 capsules[]; // pairs: (a.xyz, radius a), (b.xyz, radius b)
+	vec4 capsules[]; // per capsule: previous frame (a.xyz, ra), (b.xyz, rb), then this frame's
 };
 layout(set = 0, binding = 12, std430) restrict readonly buffer AdjOffsets {
 	uint adj_offsets[]; // particle -> start in adj_pairs, count = next - this
@@ -90,20 +94,34 @@ layout(set = 0, binding = 13, std430) restrict readonly buffer AdjPairs {
 };
 layout(set = 0, binding = 14, rgba32f) uniform restrict writeonly image2D pos_image;
 layout(set = 0, binding = 15, rgba32f) uniform restrict writeonly image2D nrm_image;
+layout(set = 0, binding = 16, std430) restrict readonly buffer RestNormal {
+	vec4 rest_normal[]; // bind-space normal
+};
+layout(set = 0, binding = 17, std430) restrict buffer TargetNormal {
+	vec4 target_normal[]; // skinned normal, this frame
+};
 
-vec3 skin(uint i) {
-	vec4 p = vec4(rest[i].xyz, 1.0);
+mat4 skin_matrix(uint i) {
 	uvec4 b = skin_idx[i];
 	vec4 w = skin_w[i];
-	mat4 m = bones[b.x] * w.x + bones[b.y] * w.y + bones[b.z] * w.z + bones[b.w] * w.w;
-	return (m * p).xyz;
+	return bones[b.x] * w.x + bones[b.y] * w.y + bones[b.z] * w.z + bones[b.w] * w.w;
 }
 
-void project_capsules(inout vec3 p, vec3 prev_p) {
+vec3 skin(uint i) {
+	return (skin_matrix(i) * vec4(rest[i].xyz, 1.0)).xyz;
+}
+
+vec3 skin_normal(uint i) {
+	vec3 n = mat3(skin_matrix(i)) * rest_normal[i].xyz;
+	float l = length(n);
+	return l > 1e-8 ? n / l : vec3(0.0, 1.0, 0.0);
+}
+
+void project_capsules(inout vec3 p, vec3 prev_p, float frac) {
 	float thickness = gravity.w;
 	for (int c = 0; c < counts2.x; c++) {
-		vec4 a = capsules[c * 2];
-		vec4 b = capsules[c * 2 + 1];
+		vec4 a = mix(capsules[c * 4], capsules[c * 4 + 2], frac);
+		vec4 b = mix(capsules[c * 4 + 1], capsules[c * 4 + 3], frac);
 		vec3 ab = b.xyz - a.xyz;
 		float len2 = max(dot(ab, ab), 1e-8);
 		float t = clamp(dot(p - a.xyz, ab) / len2, 0.0, 1.0);
@@ -157,6 +175,7 @@ void main() {
 	if (mode == MODE_SKIN) {
 		target_prev[i] = target[i];
 		target[i] = vec4(skin(i), 0.0);
+		target_normal[i] = vec4(skin_normal(i), 0.0);
 		return;
 	}
 
@@ -164,6 +183,7 @@ void main() {
 		// First frame (or a teleport): start at rest on the animated pose.
 		vec4 tt = vec4(skin(i), 0.0);
 		target[i] = tt;
+		target_normal[i] = vec4(skin_normal(i), 0.0);
 		target_prev[i] = tt;
 		pos[i] = vec4(tt.xyz, rest[i].w > 0.0 ? 1.0 : 0.0);
 		prev[i] = tt;
@@ -203,7 +223,14 @@ void main() {
 				q = mix(q, ap + d * (allowed / len), limits.y);
 			}
 		}
-		project_capsules(q, prev[i].xyz);
+		project_capsules(q, prev[i].xyz, pass.frac);
+		if (limits.w >= 0.0) {
+			vec3 n = target_normal[i].xyz;
+			float inward = dot(q - t, n);
+			if (inward < -limits.w) {
+				q -= n * (inward + limits.w);
+			}
+		}
 		vec3 off = q - t;
 		float ol = length(off);
 		if (ol > max_dist) {

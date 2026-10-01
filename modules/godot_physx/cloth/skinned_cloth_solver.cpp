@@ -106,7 +106,8 @@ void SkinnedClothSolverGPU::rt_free_buffers() {
 	}
 	uniform_set = RID();
 	RID *rids[] = { &buf_params, &buf_rest, &buf_skin_idx, &buf_skin_w, &buf_bones, &buf_target, &buf_target_prev,
-		&buf_pos, &buf_prev, &buf_constraints, &buf_tethers, &buf_capsules, &buf_adj_offsets, &buf_adj_pairs, &tex_pos, &tex_nrm };
+		&buf_pos, &buf_prev, &buf_constraints, &buf_tethers, &buf_capsules, &buf_adj_offsets, &buf_adj_pairs, &tex_pos, &tex_nrm,
+		&buf_rest_normal, &buf_target_normal };
 	for (RID *r : rids) {
 		if (r->is_valid()) {
 			rd->free_rid(*r);
@@ -130,7 +131,7 @@ void SkinnedClothSolverGPU::rt_free(Ref<SkinnedClothSolverGPU> p_self) {
 	}
 }
 
-void SkinnedClothSolverGPU::rt_build(Ref<SkinnedClothSolverGPU> p_self, PackedFloat32Array p_rest, PackedInt32Array p_skin_idx, PackedFloat32Array p_skin_w,
+void SkinnedClothSolverGPU::rt_build(Ref<SkinnedClothSolverGPU> p_self, PackedFloat32Array p_rest, PackedFloat32Array p_rest_normals, PackedInt32Array p_skin_idx, PackedFloat32Array p_skin_w,
 		PackedFloat32Array p_constraints, PackedInt32Array p_batch_offsets, PackedFloat32Array p_tethers,
 		PackedInt32Array p_adj_offsets, PackedInt32Array p_adj_pairs, int p_bone_count) {
 	if (rd == nullptr || shader.is_null()) {
@@ -156,7 +157,9 @@ void SkinnedClothSolverGPU::rt_build(Ref<SkinnedClothSolverGPU> p_self, PackedFl
 	buf_prev = storage_from(rd, nullptr, n * 16);
 	buf_constraints = storage_from(rd, (const uint8_t *)p_constraints.ptr(), p_constraints.size() * 4);
 	buf_tethers = storage_from(rd, (const uint8_t *)p_tethers.ptr(), p_tethers.size() * 4);
-	buf_capsules = storage_from(rd, nullptr, MAX_CAPSULES * 32);
+	buf_capsules = storage_from(rd, nullptr, MAX_CAPSULES * 64);
+	buf_rest_normal = storage_from(rd, (const uint8_t *)p_rest_normals.ptr(), p_rest_normals.size() * 4);
+	buf_target_normal = storage_from(rd, nullptr, n * 16);
 	buf_adj_offsets = storage_from(rd, (const uint8_t *)p_adj_offsets.ptr(), p_adj_offsets.size() * 4);
 	buf_adj_pairs = storage_from(rd, (const uint8_t *)p_adj_pairs.ptr(), p_adj_pairs.size() * 4);
 
@@ -200,6 +203,14 @@ void SkinnedClothSolverGPU::rt_build(Ref<SkinnedClothSolverGPU> p_self, PackedFl
 		u.append_id(images[i]);
 		uniforms.push_back(u);
 	}
+	const RID normals[] = { buf_rest_normal, buf_target_normal };
+	for (int i = 0; i < 2; i++) {
+		RD::Uniform u;
+		u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+		u.binding = 16 + i;
+		u.append_id(normals[i]);
+		uniforms.push_back(u);
+	}
 	uniform_set = rd->uniform_set_create(uniforms, shader, 0);
 	needs_reset = true;
 	built.set();
@@ -216,13 +227,13 @@ void SkinnedClothSolverGPU::rt_step(Ref<SkinnedClothSolverGPU> p_self, PackedFlo
 	const int n = particle_count;
 	rd->buffer_update(buf_bones, 0, MIN(p_bones.size(), bone_count * 16) * 4, p_bones.ptr());
 	if (!p_capsules.is_empty()) {
-		rd->buffer_update(buf_capsules, 0, MIN(p_capsules.size(), MAX_CAPSULES * 8) * 4, p_capsules.ptr());
+		rd->buffer_update(buf_capsules, 0, MIN(p_capsules.size(), MAX_CAPSULES * 16) * 4, p_capsules.ptr());
 	}
 	// Params: counts (particles), counts2 (capsules, tex width, bones), then
 	// the float block the caller packed (step, gravity, limits = 12 floats).
 	uint8_t params[PARAMS_BYTES];
 	memset(params, 0, sizeof(params));
-	int32_t counts[8] = { n, 0, 0, 0, MIN((int)p_capsules.size() / 8, MAX_CAPSULES), tex_width, bone_count, 0 };
+	int32_t counts[8] = { n, 0, 0, 0, MIN((int)p_capsules.size() / 16, MAX_CAPSULES), tex_width, bone_count, 0 };
 	memcpy(params, counts, sizeof(counts));
 	memcpy(params + 32, p_params.ptr(), MIN(p_params.size(), 12) * 4);
 	rd->buffer_update(buf_params, 0, PARAMS_BYTES, params);
@@ -320,10 +331,10 @@ void SkinnedClothSolver::_dispatch(const Callable &p_call) const {
 	}
 }
 
-void SkinnedClothSolver::build(const PackedFloat32Array &p_rest, const PackedInt32Array &p_skin_idx, const PackedFloat32Array &p_skin_w,
+void SkinnedClothSolver::build(const PackedFloat32Array &p_rest, const PackedFloat32Array &p_rest_normals, const PackedInt32Array &p_skin_idx, const PackedFloat32Array &p_skin_w,
 		const PackedFloat32Array &p_constraints, const PackedInt32Array &p_batch_offsets, const PackedFloat32Array &p_tethers,
 		const PackedInt32Array &p_adj_offsets, const PackedInt32Array &p_adj_pairs, int p_bone_count) {
-	_dispatch(callable_mp(gpu.ptr(), &SkinnedClothSolverGPU::rt_build).bind(gpu, p_rest, p_skin_idx, p_skin_w, p_constraints, p_batch_offsets, p_tethers, p_adj_offsets, p_adj_pairs, p_bone_count));
+	_dispatch(callable_mp(gpu.ptr(), &SkinnedClothSolverGPU::rt_build).bind(gpu, p_rest, p_rest_normals, p_skin_idx, p_skin_w, p_constraints, p_batch_offsets, p_tethers, p_adj_offsets, p_adj_pairs, p_bone_count));
 	if (gpu.is_valid() && !gpu->local) {
 		// Texture RIDs must exist before the caller wraps them.
 		RenderingServer::get_singleton()->sync();
@@ -349,7 +360,7 @@ void SkinnedClothSolver::step(const PackedFloat32Array &p_bones, const PackedFlo
 	w[8] = p_settings.tether_slack;
 	w[9] = p_settings.tether_stiffness;
 	w[10] = p_settings.friction;
-	w[11] = 0.0f;
+	w[11] = p_settings.backstop;
 	_dispatch(callable_mp(gpu.ptr(), &SkinnedClothSolverGPU::rt_step).bind(gpu, p_bones, p_capsules, params, substeps));
 }
 

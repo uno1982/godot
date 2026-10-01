@@ -149,6 +149,10 @@ uniform float swash_film_thickness : hint_range(0.0, 0.2, 0.005) = 0.03;
 // small-scale noise adds or takes away there (on a 1:14 beach, 0.035 m is
 // about half a metre of ragged edge).
 uniform float swash_edge_breakup : hint_range(0.0, 0.2, 0.005) = 0.035;
+// Size of the shore's small-scale detail -- the lace on the waterline rim,
+// the fingering of the swash edge and the ragged wet-sand line, which
+// foam_detail_scale doesn't reach. 1 = default; higher = finer.
+uniform float shore_detail_scale : hint_range(0.1, 5.0, 0.05) = 1.0;
 // Wet sand: rgb blended over the ground where the water has been, alpha the
 // strength -- darkens it, fading as it dries.
 uniform vec4 wet_sand_color : source_color = vec4(0.16, 0.12, 0.07, 0.45);
@@ -276,7 +280,7 @@ float shore_signal(vec2 world_xz, float time) {
 	float n = 0.65 * foam_value_noise(p + vec2(time * 0.12, time * 0.05)) + 0.35 * foam_value_noise(p * 2.4 - vec2(time * 0.07, 0.0));
 	float wave = clamp(eta / max(swash_wave_height, 1e-3), -1.0, 1.0);
 	float offset = swash_reach * clamp(0.5 + (n - 0.5) * 1.6 - 0.35 * wave, 0.0, 1.0);
-	vec2 q = world_xz;
+	vec2 q = world_xz * shore_detail_scale;
 	float eb = 0.5 * foam_value_noise(q * 2.3 + vec2(time * 0.25, 0.0)) + 0.3 * foam_value_noise(q * 6.1 + vec2(3.0, time * 0.4)) + 0.2 * foam_value_noise(q * 15.0 - 7.0);
 	float run_up = texture(swash_tex, shore_pattern_uv(world_xz)).r;
 	float jitter = (eb - 0.5) * 2.0 * swash_edge_breakup;
@@ -365,7 +369,7 @@ void fragment() {
 	vec2 cuv_here = clamp((v_rest_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	float soft = max(shore_edge_softness, 1e-3) * mix(0.2, 1.0, smoothstep(-0.05, 0.1, texture(shore_depth_tex, cuv_here).r));
 	float rim = smoothstep(0.0, soft * 0.5, shore) * (1.0 - smoothstep(soft * 0.6, soft * 2.2, shore));
-	rim *= shore_rim_strength * (0.55 + 0.45 * foam_value_noise(v_rest_xz * 6.0));
+	rim *= shore_rim_strength * (0.55 + 0.45 * foam_value_noise(v_rest_xz * 6.0 * shore_detail_scale));
 	foam = max(foam, rim);
 	vec2 cuv_fade = clamp((v_rest_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	float shallow = (1.0 - texture(ocean_fade_tex, cuv_fade).r) * shallow_tint;
@@ -380,7 +384,8 @@ void fragment() {
 	// thin or gone, so it shows through the film and lingers after it.
 	// Noise eats into the wet edge, so it dries back ragged rather than
 	// along a clean line.
-	float wn = 0.6 * foam_value_noise(v_rest_xz * 1.7) + 0.4 * foam_value_noise(v_rest_xz * 5.3 + 7.0);
+	vec2 wp = v_rest_xz * shore_detail_scale;
+	float wn = 0.6 * foam_value_noise(wp * 1.7) + 0.4 * foam_value_noise(wp * 5.3 + 7.0);
 	float wet = clamp((texture(swash_tex, shore_pattern_uv(v_rest_xz)).g - 0.35 * wn) / 0.65, 0.0, 1.0);
 	// Only where sand is near the surface: under deeper water the "wet" flag
 	// is meaningless, and blending it there tinted and roughened all deep

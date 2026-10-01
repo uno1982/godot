@@ -39,6 +39,7 @@
 #include "blast/physx_destructible_3d.h"
 #endif
 #include "nodes/physx_chunk_emitter_3d.h"
+#include "cloth/physx_skinned_cloth_3d.h"
 #include "nodes/physx_cloth_3d.h"
 #include "nodes/physx_gas_3d.h"
 #include "nodes/physx_gas_emitter_3d.h"
@@ -86,6 +87,7 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(PhysXParticleFluid3D);
 		GDREGISTER_CLASS(PhysXGranular3D);
 		GDREGISTER_CLASS(PhysXCloth3D);
+		GDREGISTER_CLASS(PhysXSkinnedCloth3D);
 		GDREGISTER_CLASS(PhysXChunkEmitter3D);
 		GDREGISTER_CLASS(PhysXGas3D);
 		GDREGISTER_CLASS(PhysXGasEmitter3D);

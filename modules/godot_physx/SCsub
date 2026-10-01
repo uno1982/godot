@@ -259,6 +259,8 @@ module_obj = []
 env_physx.add_source_files(module_obj, "*.cpp")
 if blast_sdk:
     env_physx.add_source_files(module_obj, "blast/*.cpp")
+# Character cloth compute pass (any GPU) -- self-contained, no shared include.
+env_physx.GLSL_HEADER(os.path.join("cloth", "skinned_cloth.glsl"))
 env_physx.add_source_files(module_obj, "cloth/*.cpp")
 env_physx.add_source_files(module_obj, "joints/*.cpp")
 env_physx.add_source_files(module_obj, "nodes/*.cpp")

@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXSkinnedCloth3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Cloth on a region of a character's skinned mesh -- a robe, cape or skirt that moves with the animation and swings and drapes on its own.
+	</brief_description>
+	<description>
+		Simulates a surface of a skinned [MeshInstance3D] (set [member mesh_instance_path]) as cloth driven by the character's animation. Every vertex has a max distance it may stray from where the animation puts it: [code]0[/code] follows the animation exactly (shoulders, a waistband), larger values swing freely (a hem, the tail of a cape). The distances are painted per vertex with [member max_distances], or ramped automatically from [member pin_height] down to [member max_distance] at the lowest point of the mesh.
+		The cloth runs on the GPU with compute shaders, so it works on any GPU the renderer supports (no CUDA needed). It collides with capsules on the character's bones (hips, spine, legs, arms), found by humanoid-profile or common Unreal-style bone names; set [member body_mesh_path] to the character's body mesh to fit the capsule radii to it. Free vertices are also tethered to their nearest pinned vertex, so long garments don't stretch.
+		The source mesh is hidden while the cloth runs and drawn instead from the simulated positions, read straight from GPU textures (no CPU readback). Only the source material's albedo texture, albedo colour and roughness carry over for now.
+		Runs only in a running game, not in the editor. The node should process after whatever poses the skeleton (an [AnimationPlayer] or [AnimationTree]); its default [member Node.process_priority] of [code]100[/code] does that.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_particle_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				The number of simulated particles: the surface's vertices with seams (split UV/normal vertices at the same position) welded together.
+			</description>
+		</method>
+		<method name="rebuild">
+			<return type="void" />
+			<description>
+				Rebuilds the cloth from the source mesh on the next frame (after changing the mesh or its painted distances).
+			</description>
+		</method>
+		<method name="reset">
+			<return type="void" />
+			<description>
+				Puts the cloth back on the animated pose at rest, e.g. after teleporting the character.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="bend_stiffness" type="float" setter="set_bend_stiffness" getter="get_bend_stiffness" default="0.3">
+			Resistance to folding, [code]0..1[/code]. Low values crease and drape softly; high values keep broad, stiff folds.
+		</member>
+		<member name="body_mesh_path" type="NodePath" setter="set_body_mesh_path" getter="get_body_mesh_path" default="NodePath(&quot;&quot;)">
+			Optional skinned [MeshInstance3D] of the character's body. When set, each body capsule's radius is measured from the body vertices skinned to its bone, so the cloth wraps the actual limbs instead of generic ones.
+		</member>
+		<member name="collide_with_body" type="bool" setter="set_collide_with_body" getter="get_collide_with_body" default="true">
+			Collide the cloth with capsules on the character's bones.
+		</member>
+		<member name="collision_radius_scale" type="float" setter="set_collision_radius_scale" getter="get_collision_radius_scale" default="1.0">
+			Scales every body capsule's radius. Raise it if limbs poke through the cloth.
+		</member>
+		<member name="damping" type="float" setter="set_damping" getter="get_damping" default="0.05">
+			Fraction of the cloth's own motion lost per second.
+		</member>
+		<member name="max_distance" type="float" setter="set_max_distance" getter="get_max_distance" default="0.4">
+			Automatic painting (used when [member max_distances] is empty): the max distance (metres) at the mesh's lowest point, ramping linearly up from [code]0[/code] at [member pin_height].
+		</member>
+		<member name="max_distances" type="PackedFloat32Array" setter="set_max_distances" getter="get_max_distances" default="PackedFloat32Array()">
+			Painted max distance (metres) per vertex of [member surface], in the mesh's vertex order: how far each vertex may stray from its animated position. [code]0[/code] follows the animation exactly. Empty uses the automatic ramp ([member pin_height], [member max_distance]).
+		</member>
+		<member name="mesh_instance_path" type="NodePath" setter="set_mesh_instance_path" getter="get_mesh_instance_path" default="NodePath(&quot;&quot;)">
+			The skinned [MeshInstance3D] whose [member surface] is simulated. It must have a [Skin] and a [Skeleton3D].
+		</member>
+		<member name="pin_height" type="float" setter="set_pin_height" getter="get_pin_height" default="1.3">
+			Automatic painting: vertices at or above this height in the mesh's bind pose (metres) follow the animation exactly.
+		</member>
+		<member name="simulating" type="bool" setter="set_simulating" getter="is_simulating" default="true">
+			Pauses the simulation when off (the cloth holds its last shape).
+		</member>
+		<member name="stiffness" type="float" setter="set_stiffness" getter="get_stiffness" default="0.9">
+			Resistance to stretching, [code]0..1[/code].
+		</member>
+		<member name="substeps" type="int" setter="set_substeps" getter="get_substeps" default="8">
+			Solver substeps per frame. More is stiffer and more stable under fast motion, at a proportional GPU cost.
+		</member>
+		<member name="surface" type="int" setter="set_surface" getter="get_surface" default="0">
+			Which surface of the mesh is the cloth.
+		</member>
+		<member name="thickness" type="float" setter="set_thickness" getter="get_thickness" default="0.012">
+			Extra distance (metres) the cloth keeps from the body capsules.
+		</member>
+	</members>
+</class>

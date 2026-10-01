@@ -465,13 +465,20 @@ surges in with the wave and slides back out with the backwash and undertow
 the sand along a waterline that scallops with the arriving waves rather than
 following the depth contour. That edge is measured in metres of water
 (`swash_reach`, `shore_edge_softness` in the material), so it behaves the same
-whatever `shallow_fade_depth` is. The bigger waves also run up past the still-water line as a
-thin film on the sand (`swash_run_up`, `swash_drain_speed`), and the sand they
-cover stays dark and glossy while it dries (`wet_sand_dry_time`).
+whatever `shallow_fade_depth` is. The bigger waves also run up past the
+still-water line as a thin film on the sand (`swash_run_up`,
+`swash_drain_speed`), and the sand they cover stays dark and glossy while it
+dries (`wet_sand_dry_time`). The material's `shore_detail_scale` sets how fine
+the swash edge, the rim lace and the wet-sand line are. The shore patterns
+mirror-repeat past the simulated square, so the beach keeps its variation all
+along the shore.
 
 For open water, `render_extent` renders the surface out to the horizon: the FFT
 ocean tiles seamlessly past the simulated square and ripples settle to still
-water there.
+water there. The surface draws only the side facing the camera (the top from
+above, the underside from below), and its shaders take their clock from the
+node's `water_time` parameter rather than `TIME`, so an open scene doesn't
+keep the editor redrawing (and competing with Play Scene for the GPU).
 
 `sample_height(position)` returns the same combined surface height on the CPU,
 for buoyancy scripts. Over dry cells (outside a `surface_mesh` footprint, or
@@ -486,6 +493,10 @@ floor, walls, submerged props — can sample it by projecting its world position
 with `get_caustics_texture()`, `get_caustics_origin()`,
 `get_caustics_light_right()` / `_up()` and `get_caustics_half_extent()`, so the
 light pattern lands on anything under the water rather than only a flat floor.
+The map's green channel marks where sunlight actually came through the water
+(multiply by it, or a pool wall's outside picks up caustics), and the pattern
+repeats every `ocean_domain_size` (`get_caustics_tile_size()`), so a receiver
+can fold its position into one tile and light a whole seabed.
 
 Runs on any GPU with compute support, no CUDA needed. Without compute (e.g.
 headless) the surface stays flat and `sample_height()` returns `water_level`.

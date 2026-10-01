@@ -147,7 +147,7 @@ void WaterSolverGPU::rt_compile(Ref<WaterSolverGPU> p_self) {
 		Vector<RD::AttachmentFormat> afs;
 		RD::AttachmentFormat af;
 		af.format = RD::DATA_FORMAT_R8G8B8A8_UNORM; // R caustics, G water mask (4 channels: a 2-channel texture got sampled with a luminance-alpha swizzle)
-		af.usage_flags = RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
+		af.usage_flags = RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT;
 		afs.push_back(af);
 		RD::FramebufferFormatID fb_format = rd->framebuffer_format_create(afs);
 
@@ -477,7 +477,6 @@ void WaterSolverGPU::_rt_build_buffers() {
 	}
 	{
 		RD::TextureFormat shore_tf = ripple_tf;
-		shore_tf.usage_bits |= RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
 		Vector<uint8_t> zeros;
 		zeros.resize(cells * sizeof(float));
 		memset(zeros.ptrw(), 0, zeros.size());
@@ -489,7 +488,6 @@ void WaterSolverGPU::_rt_build_buffers() {
 	{
 		RD::TextureFormat swash_tf = ripple_tf;
 		swash_tf.format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT;
-		swash_tf.usage_bits |= RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
 		Vector<uint8_t> zeros;
 		zeros.resize(cells * 4 * sizeof(float));
 		memset(zeros.ptrw(), 0, zeros.size());
@@ -674,13 +672,13 @@ void WaterSolverGPU::_rt_build_caustics_grid() {
 	texture_format.format = RD::DATA_FORMAT_R8G8B8A8_UNORM;
 	texture_format.width = CAUSTICS_MAP_SIZE;
 	texture_format.height = CAUSTICS_MAP_SIZE;
-	texture_format.usage_bits = RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
+	texture_format.usage_bits = RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT;
 	tex_caustics = rd->texture_create(texture_format, RD::TextureView());
 
 	Vector<RD::AttachmentFormat> attachment_formats;
 	RD::AttachmentFormat attachment_format;
 	attachment_format.format = RD::DATA_FORMAT_R8G8B8A8_UNORM;
-	attachment_format.usage_flags = RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_FROM_BIT;
+	attachment_format.usage_flags = RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT;
 	attachment_formats.push_back(attachment_format);
 	const RD::FramebufferFormatID framebuffer_format = rd->framebuffer_format_create(attachment_formats);
 	Vector<RID> attachments;

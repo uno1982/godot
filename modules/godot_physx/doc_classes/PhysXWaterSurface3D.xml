@@ -15,6 +15,37 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="clear_sphere">
+			<return type="void" />
+			<param index="0" name="owner" type="int" />
+			<description>
+				Removes a previously-submitted sphere proxy (see [method submit_sphere]) by its owner id. Call this when a floating body leaves the water or is freed; a proxy left in place otherwise keeps disturbing the ripple layer at its last submitted position.
+			</description>
+		</method>
+		<method name="get_caustics_half_extent" qualifiers="const">
+			<return type="float" />
+			<description>
+				Half-width of the square light-space projection in world units, used to map receiver positions to [method get_caustics_texture] UV coordinates.
+			</description>
+		</method>
+		<method name="get_caustics_light_right" qualifiers="const">
+			<return type="Vector3" />
+			<description>
+				Light-space horizontal projection axis used to sample [method get_caustics_texture].
+			</description>
+		</method>
+		<method name="get_caustics_light_up" qualifiers="const">
+			<return type="Vector3" />
+			<description>
+				Light-space vertical projection axis used to sample [method get_caustics_texture].
+			</description>
+		</method>
+		<method name="get_caustics_origin" qualifiers="const">
+			<return type="Vector3" />
+			<description>
+				World-space center of the light-space caustics projection.
+			</description>
+		</method>
 		<method name="get_caustics_texture" qualifiers="const">
 			<return type="Texture2D" />
 			<description>
@@ -23,29 +54,14 @@
 		</method>
 		<method name="get_caustics_tile_size" qualifiers="const">
 			<return type="Vector2" />
-			<description>The caustics repeat with the ocean waves, every [member ocean_domain_size]. A receiver can fold its world XZ into the tile around [method get_caustics_origin] ([code]p -= tile * round((p - origin) / tile)[/code]) before projecting, so caustics reach the whole seabed -- all along a beach -- not just the simulated square. The map spans a little more than one tile, so there's no seam.</description>
-		</method>
-		<method name="get_caustics_half_extent" qualifiers="const">
-			<return type="float" />
-			<description>Half-width of the square light-space projection in world units, used to map receiver positions to [method get_caustics_texture] UV coordinates.</description>
-		</method>
-		<method name="get_caustics_light_right" qualifiers="const">
-			<return type="Vector3" />
-			<description>Light-space horizontal projection axis used to sample [method get_caustics_texture].</description>
-		</method>
-		<method name="get_caustics_light_up" qualifiers="const">
-			<return type="Vector3" />
-			<description>Light-space vertical projection axis used to sample [method get_caustics_texture].</description>
-		</method>
-		<method name="get_caustics_origin" qualifiers="const">
-			<return type="Vector3" />
-			<description>World-space center of the light-space caustics projection.</description>
-		</method>
-		<method name="clear_sphere">
-			<return type="void" />
-			<param index="0" name="owner" type="int" />
 			<description>
-				Removes a previously-submitted sphere proxy (see [method submit_sphere]) by its owner id. Call this when a floating body leaves the water or is freed; a proxy left in place otherwise keeps disturbing the ripple layer at its last submitted position.
+				The caustics repeat with the ocean waves, every [member ocean_domain_size]. A receiver can fold its world XZ into the tile around [method get_caustics_origin] ([code]p -= tile * round((p - origin) / tile)[/code]) before projecting, so caustics reach the whole seabed -- all along a beach -- not just the simulated square. The map spans a little more than one tile, so there's no seam.
+			</description>
+		</method>
+		<method name="get_effective_fetch" qualifiers="const">
+			<return type="float" />
+			<description>
+				The fetch (metres of open water the wind blows over) the wave spectrum actually uses: [member fetch] when it's above 0, otherwise the automatic value -- the longest side of the [member surface_mesh] footprint for enclosed water, or 100 km (a fully developed open sea) for the plain square.
 			</description>
 		</method>
 		<method name="is_wet" qualifiers="const">
@@ -84,11 +100,11 @@
 		</method>
 	</methods>
 	<members>
-		<member name="caustics_reference_depth" type="float" setter="set_caustics_reference_depth" getter="get_caustics_reference_depth" default="2.5">
-			Approximate distance the refracted light travels below the surface before it is mapped into the caustics texture. Larger values spread the pattern farther sideways for oblique light.
-		</member>
 		<member name="caustics_enabled" type="bool" setter="set_caustics_enabled" getter="get_caustics_enabled" default="true">
 			Enables the light-space caustics draw pass and its render target. When disabled, the extra GPU buffers and draw are skipped. See [method get_caustics_texture].
+		</member>
+		<member name="caustics_reference_depth" type="float" setter="set_caustics_reference_depth" getter="get_caustics_reference_depth" default="2.5">
+			Approximate distance the refracted light travels below the surface before it is mapped into the caustics texture. Larger values spread the pattern farther sideways for oblique light.
 		</member>
 		<member name="caustics_sun_direction" type="Vector3" setter="set_caustics_sun_direction" getter="get_caustics_sun_direction" default="Vector3(-0.35, -1, -0.25)">
 			World-space direction that light travels from the source toward the water. It need not be normalized.
@@ -141,14 +157,14 @@
 		<member name="seabed_from_floor" type="bool" setter="set_seabed_from_floor" getter="get_seabed_from_floor" default="false">
 			When on, the still-water depth of each ripple cell is measured on the first physics tick by a ray straight down onto the static bodies in [member seabed_collision_mask], starting 100 m above the water. Waves then travel at the local shallow-water speed, cells where the floor is above the water are dry shore ([method sample_height] returns [code]-INF[/code] and [method is_wet] [code]false[/code] there), and the ocean chop fades out over the shallows (see [member shallow_fade_depth]). Where no floor is found the constant [member depth] applies. Combines with [member surface_mesh]: cells outside its footprint stay dry. The floor is measured once; moving it afterwards needs a property change to re-measure.
 		</member>
+		<member name="shallow_fade_depth" type="float" setter="set_shallow_fade_depth" getter="get_shallow_fade_depth" default="1.0">
+			Water shallower than this many metres fades the ocean chop out, down to none at the waterline, so the surface meets a beach calmly instead of the chop cutting through the sand. Only has an effect where the depth varies ([member seabed_from_floor] or [member surface_mesh]).
+		</member>
 		<member name="shore_foam_band" type="float" setter="set_shore_foam_band" getter="get_shore_foam_band" default="0.5">
 			Shore foam: where the still water is shallower than this many metres, each arriving wave crest leaves a thin, lacy foam sheet at the waterline that moves with the water (see [member shore_undertow]), carries on up the swash onto the sand thinning out as it goes (see [member swash_run_up]), and fades out after it (about 1.5 x [member foam_persistence]). Needs a varying depth, so it only appears with [member seabed_from_floor] -- a pool's walls don't get it. [code]0[/code] turns it off, as does [member foam_enabled]. The default material also tints the shallows toward a milky [code]shallow_color[/code] ([code]shallow_tint[/code]) and feathers the surface where it meets the shore; [code]shore_foam_strength[/code] and [code]shore_foam_breakup[/code] tune the sheet. The visible waterline isn't the still-water depth contour: it moves with the arriving waves and slow noise, forming drifting lobes and bays, with a thin bright rim behind it ([code]shore_rim_strength[/code]). The edge is measured in real water depth, independent of [member shallow_fade_depth]: it pulls back over at most [code]swash_reach[/code] metres of depth (pushed in by crests of [code]swash_wave_height[/code]), and [code]shore_edge_softness[/code] is the depth in metres it feathers out over, so the surface only turns clear where the water really is that thin.
 		</member>
 		<member name="shore_undertow" type="float" setter="set_shore_undertow" getter="get_shore_undertow" default="0.3">
 			Steady seaward drift (m/s) of the shore foam. The foam moves with the water along the seabed slope at the shallow-water particle velocity -- pushed up the beach under each arriving crest, drawn back under each trough (with the local wave height capped by depth-limited breaking) -- and this undertow drags it back out into the water on top of that, so the sheet surges in and slides back out in streaks. [code]0[/code] leaves it rocking in place.
-		</member>
-		<member name="shallow_fade_depth" type="float" setter="set_shallow_fade_depth" getter="get_shallow_fade_depth" default="1.0">
-			Water shallower than this many metres fades the ocean chop out, down to none at the waterline, so the surface meets a beach calmly instead of the chop cutting through the sand. Only has an effect where the depth varies ([member seabed_from_floor] or [member surface_mesh]).
 		</member>
 		<member name="surface_mesh" type="Mesh" setter="set_surface_mesh" getter="get_surface_mesh">
 			Optional water outline: any flat [Mesh] (node-local) whose up-facing triangles' X/Z footprint is the water -- e.g. a disc baked from a [CSGCylinder3D], or a shape modelled elsewhere. Its own vertices are not displaced directly; the footprint is resampled into an even grid clipped to the outline, so a coarse or fan-triangulated mesh still gets vertices to animate everywhere.

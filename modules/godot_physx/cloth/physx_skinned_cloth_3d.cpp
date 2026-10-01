@@ -67,6 +67,11 @@ void fragment() {
 	vec4 c = texture(albedo_texture, UV) * albedo_color;
 	ALBEDO = c.rgb;
 	ROUGHNESS = roughness;
+	// Single-layer cloth shows both sides (capes, open hems): light the back
+	// faces from their own side.
+	if (!FRONT_FACING) {
+		NORMAL = -NORMAL;
+	}
 }
 )";
 

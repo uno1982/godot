@@ -160,6 +160,8 @@ void PhysXSkinnedCloth3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_thickness"), &PhysXSkinnedCloth3D::get_thickness);
 	ClassDB::bind_method(D_METHOD("set_backstop", "distance"), &PhysXSkinnedCloth3D::set_backstop);
 	ClassDB::bind_method(D_METHOD("get_backstop"), &PhysXSkinnedCloth3D::get_backstop);
+	ClassDB::bind_method(D_METHOD("set_animation_drive", "drive"), &PhysXSkinnedCloth3D::set_animation_drive);
+	ClassDB::bind_method(D_METHOD("get_animation_drive"), &PhysXSkinnedCloth3D::get_animation_drive);
 	ClassDB::bind_method(D_METHOD("set_collide_with_body", "enabled"), &PhysXSkinnedCloth3D::set_collide_with_body);
 	ClassDB::bind_method(D_METHOD("get_collide_with_body"), &PhysXSkinnedCloth3D::get_collide_with_body);
 	ClassDB::bind_method(D_METHOD("set_collision_radius_scale", "scale"), &PhysXSkinnedCloth3D::set_collision_radius_scale);
@@ -189,6 +191,7 @@ void PhysXSkinnedCloth3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "body_mesh_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "MeshInstance3D"), "set_body_mesh_path", "get_body_mesh_path");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_radius_scale", PROPERTY_HINT_RANGE, "0.1,3,0.01"), "set_collision_radius_scale", "get_collision_radius_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "backstop", PROPERTY_HINT_RANGE, "-0.01,0.2,0.001,suffix:m"), "set_backstop", "get_backstop");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "animation_drive", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_animation_drive", "get_animation_drive");
 }
 
 void PhysXSkinnedCloth3D::_notification(int p_what) {
@@ -735,7 +738,11 @@ void PhysXSkinnedCloth3D::_try_build() {
 	render_instance->set_cast_shadows_setting(source->get_cast_shadows_setting());
 	source->get_parent()->add_child(render_instance, false, INTERNAL_MODE_BACK);
 	render_instance->set_transform(source->get_transform());
-	render_instance->set_custom_aabb(source->get_aabb().grow(MAX(max_distance, 0.5f)));
+	float largest = 0.0f;
+	for (int i = 0; i < vertex_max.size(); i++) {
+		largest = MAX(largest, vertex_max[i]);
+	}
+	render_instance->set_custom_aabb(source->get_aabb().grow(largest + 0.25f));
 	render_instance_id = render_instance->get_instance_id();
 	source->set_visible(false);
 
@@ -800,6 +807,7 @@ void PhysXSkinnedCloth3D::_step(double p_delta) {
 	s.damping = damping;
 	s.thickness = thickness;
 	s.backstop = backstop;
+	s.animation_drive = animation_drive;
 	s.output_xform = source->get_global_transform().affine_inverse();
 	solver->step(bone_data, capsule_data, p_delta, substeps, s);
 
@@ -875,6 +883,10 @@ void PhysXSkinnedCloth3D::set_damping(float p_damping) {
 
 void PhysXSkinnedCloth3D::set_thickness(float p_thickness) {
 	thickness = MAX(p_thickness, 0.0f);
+}
+
+void PhysXSkinnedCloth3D::set_animation_drive(float p_drive) {
+	animation_drive = CLAMP(p_drive, 0.0f, 1.0f);
 }
 
 void PhysXSkinnedCloth3D::set_backstop(float p_distance) {

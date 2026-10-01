@@ -9,7 +9,9 @@
 //                   interpolating across substeps).
 // Per substep:
 //   MODE_INTEGRATE  pinned particles snap to their (interpolated) target, the
-//                   rest take a Verlet step under gravity with damping.
+//                   rest take a Verlet step under gravity with damping, then
+//                   are pulled part of the way back to the target (animation
+//                   drive -- keeps the garment's authored shape).
 //   MODE_DISTANCE   one colour batch of distance constraints (structural +
 //                   bending). Within a batch no two constraints share a
 //                   particle, so each thread can write its pair directly.
@@ -39,7 +41,7 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 layout(set = 0, binding = 0, std140) uniform Params {
 	ivec4 counts; // x particles, y unused, z unused, w unused
 	ivec4 counts2; // x capsules, y texture width, z bones, w unused
-	vec4 step; // x dt (substep), y damping (velocity kept per substep), z unused, w stiffness
+	vec4 step; // x dt (substep), y damping (velocity kept per substep), z animation drive (fraction pulled to the target per substep), w stiffness
 	vec4 gravity; // xyz gravity (m/s^2), w thickness (m)
 	vec4 limits; // x tether slack (allowed stretch, e.g. 1.03), y tether stiffness, z capsule friction, w backstop distance (m, < 0 = off)
 	// World -> source mesh local space (rows of a 3x4 affine transform). The
@@ -209,7 +211,8 @@ void main() {
 		}
 		vec3 v = (p.xyz - prev[i].xyz) * step.y;
 		prev[i] = vec4(p.xyz, 0.0);
-		pos[i] = vec4(p.xyz + v + gravity.xyz * step.x * step.x, p.w);
+		vec3 np = p.xyz + v + gravity.xyz * step.x * step.x;
+		pos[i] = vec4(mix(np, t, step.z), p.w);
 		return;
 	}
 

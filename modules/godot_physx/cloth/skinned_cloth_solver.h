@@ -92,6 +92,7 @@ public:
 		float tether_slack = 1.03f; // a particle may drift this far beyond its rest distance to its anchor
 		float tether_stiffness = 1.0f;
 		float friction = 0.2f;
+		float animation_drive = 0.0f; // fraction of the way back to the animated pose per 1/60 s
 		float backstop = 0.02f; // how far (m) the cloth may sink inward past its animated position; < 0 = off
 		Transform3D output_xform; // world -> the space the output textures are written in
 	};

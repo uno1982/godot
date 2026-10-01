@@ -352,7 +352,8 @@ void SkinnedClothSolver::step(const PackedFloat32Array &p_bones, const PackedFlo
 	float *w = params.ptrw();
 	w[0] = dt;
 	w[1] = keep;
-	w[2] = 0.0f;
+	// Animation drive given per 1/60 s, applied per substep.
+	w[2] = 1.0f - Math::pow(1.0f - CLAMP(p_settings.animation_drive, 0.0f, 0.999f), dt * 60.0f);
 	w[3] = p_settings.stiffness;
 	w[4] = p_settings.gravity.x;
 	w[5] = p_settings.gravity.y;

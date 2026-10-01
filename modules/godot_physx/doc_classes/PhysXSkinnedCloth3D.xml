@@ -45,6 +45,9 @@
 		</method>
 	</methods>
 	<members>
+		<member name="animation_drive" type="float" setter="set_animation_drive" getter="get_animation_drive" default="0.0">
+			How strongly free cloth is pulled back toward its animated shape: the fraction of the way back per 1/60 s, [code]0..1[/code]. [code]0[/code] lets the cloth move freely within its max distances; around [code]0.1[/code]-[code]0.2[/code] keeps a long robe or skirt close to its authored shape (instead of collapsing into folds between the legs) while it still swings. [code]1[/code] follows the animation exactly.
+		</member>
 		<member name="backstop" type="float" setter="set_backstop" getter="get_backstop" default="0.02">
 			How far (metres) the cloth may sink inward past its animated position, measured along the animated surface's normal. Keeps clothing on the outside of the body even where the body capsules don't quite fit. A negative value turns it off.
 		</member>

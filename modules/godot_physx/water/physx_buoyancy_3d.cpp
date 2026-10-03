@@ -31,6 +31,7 @@
 #include "physx_buoyancy_3d.h"
 
 #include "physx_water_surface_3d.h"
+#include "physx_water_wake_3d.h"
 
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
@@ -93,12 +94,20 @@ PhysXWaterSurface3D *PhysXBuoyancy3D::get_water_surface() const {
 
 float PhysXBuoyancy3D::get_water_height(const Vector3 &p_world_pos) const {
 	PhysXWaterSurface3D *water = get_water_surface();
-	return water != nullptr ? water->sample_height(p_world_pos) : -Math::INF;
+	return water != nullptr ? water->sample_height_excluding_wake(p_world_pos, wake_id) : -Math::INF;
 }
 
 void PhysXBuoyancy3D::_resolve() {
 	PhysXWaterSurface3D *water = Object::cast_to<PhysXWaterSurface3D>(get_node_or_null(water_surface_path));
 	water_id = water != nullptr ? water->get_instance_id() : ObjectID();
+	wake_id = ObjectID();
+	if (get_parent() != nullptr) {
+		for (int i = 0; i < get_parent()->get_child_count(); i++) {
+			if (Object::cast_to<PhysXWaterWake3D>(get_parent()->get_child(i)) != nullptr) {
+				wake_id = get_parent()->get_child(i)->get_instance_id();
+			}
+		}
+	}
 
 	// Hull bounds from the body's collision shapes, in the body's space.
 	AABB bounds;
@@ -164,7 +173,7 @@ void PhysXBuoyancy3D::_physics_step() {
 	float used = 0.0f;
 	for (int i = 0; i < points.size(); i++) {
 		const Vector3 wp = xf.xform(points[i]);
-		const float depth = water->sample_height(wp) - wp.y;
+		const float depth = water->sample_height_excluding_wake(wp, wake_id) - wp.y;
 		point_depths.set(i, depth);
 		if (!(depth > 0.0f)) {
 			continue;
@@ -187,7 +196,7 @@ void PhysXBuoyancy3D::_physics_step() {
 	if (disturb_water) {
 		// Only near the surface, harder the faster it moves -- a still
 		// floater only dimples the water.
-		const float above = xf.origin.y - water->sample_height(xf.origin);
+		const float above = xf.origin.y - water->sample_height_excluding_wake(xf.origin, wake_id);
 		const float proximity = CLAMP(1.0f - above / radius, 0.0f, 1.0f);
 		if (proximity > 0.0f) {
 			const float speed_frac = lin.length() / ripple_reference_speed;

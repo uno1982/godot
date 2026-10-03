@@ -233,6 +233,8 @@ for _glsl in _gas_glsl:
 
 # Water ripple solver (Phase 1 of the FFT ocean + ripple plan).
 _water_glsl = ("water_ripple.glsl",)
+# Moving wake grid -- self-contained, no shared include.
+env_physx.GLSL_HEADER(os.path.join("water", "water_wake.glsl"))
 _water_glsl_dep = [os.path.join("water", "water_inc.glsl"), "#glsl_builders.py"]
 for _glsl in _water_glsl:
     env_physx.GLSL_HEADER(os.path.join("water", _glsl))

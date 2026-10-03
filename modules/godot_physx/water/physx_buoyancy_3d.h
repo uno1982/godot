@@ -59,6 +59,7 @@ class PhysXBuoyancy3D : public Node3D {
 
 	// Resolved at runtime.
 	ObjectID water_id;
+	ObjectID wake_id; // a sibling PhysXWaterWake3D: its own dip doesn't count
 	PackedVector3Array points; // in use (explicit or generated)
 	float area = 1.0f;
 	float height = 0.5f;

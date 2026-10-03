@@ -1,0 +1,116 @@
+/**************************************************************************/
+/*  water_wake_solver.h                                                   */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
+
+#pragma once
+
+#include "core/math/vector2.h"
+#include "core/object/ref_counted.h"
+#include "core/os/mutex.h"
+#include "core/templates/rid.h"
+#include "core/templates/safe_refcount.h"
+#include "core/variant/variant.h"
+
+class RenderingDevice;
+
+// GPU side of the moving wake grid (see water_wake.glsl). Methods run on the
+// render thread, or synchronously on a private device when headless -- the
+// same arrangement as WaterSolverGPU / SkinnedClothSolverGPU.
+class WaterWakeSolverGPU : public RefCounted {
+	GDSOFTCLASS(WaterWakeSolverGPU, RefCounted);
+
+public:
+	static constexpr int MAX_SOURCES = 16;
+
+	RenderingDevice *rd = nullptr;
+	bool local = false;
+	SafeFlag built;
+
+	RID shader, pipeline;
+	RID buf_params, buf_state_a, buf_state_b, buf_sources;
+	RID tex_height;
+	RID uset_atob, uset_btoa;
+	bool a_is_current = true;
+	int n = 0;
+
+	// Last readback: heights (m) on the grid, and the grid origin (world xz
+	// of cell 0's corner) they were computed at.
+	Mutex cache_mtx;
+	Vector<float> height_cache;
+	Vector2 cache_origin;
+
+	void rt_compile(Ref<WaterWakeSolverGPU> p_self);
+	void rt_build(Ref<WaterWakeSolverGPU> p_self, int p_n);
+	// p_params: 12 floats/ints packed as the shader's Params; p_sources: 4
+	// floats per source.
+	void rt_step(Ref<WaterWakeSolverGPU> p_self, PackedByteArray p_params, PackedFloat32Array p_sources, Vector2 p_origin, bool p_readback);
+	void rt_on_readback(const PackedByteArray &p_data, Ref<WaterWakeSolverGPU> p_self, Vector2 p_origin);
+	void rt_free(Ref<WaterWakeSolverGPU> p_self);
+	void rt_free_buffers();
+};
+
+// Front end: one moving wake grid. Call step() once per physics tick with the
+// world position it should be centred on.
+class WaterWakeSolver {
+	Ref<WaterWakeSolverGPU> gpu;
+	void _dispatch(const Callable &p_call) const;
+
+	int n = 128;
+	float size = 32.0f;
+	bool have_origin = false;
+	Vector2i origin_cell; // grid origin in whole cells of the world
+	int ticks = 0;
+
+public:
+	struct Source {
+		Vector2 world_xz;
+		float radius = 0.5f;
+		float depth = 0.1f;
+	};
+
+	bool is_available() const { return gpu.is_valid() && gpu->rd != nullptr; }
+	bool is_built() const { return is_available() && gpu->built.is_set(); }
+
+	void build(int p_cells, float p_size);
+	// p_wave_speed m/s, p_damping and p_border_damping per second.
+	void step(double p_delta, const Vector2 &p_center, const Vector<Source> &p_sources, float p_wave_speed, float p_damping, float p_border_damping, float p_border_width);
+
+	int get_cells() const { return n; }
+	float get_size() const { return size; }
+	float get_cell_size() const { return size / n; }
+	// World xz of the grid's corner (cell 0), as last stepped.
+	Vector2 get_origin() const { return Vector2(origin_cell) * get_cell_size(); }
+	RID get_height_texture_rd_rid() const;
+	// Height (m) at world xz from the last readback (a few frames behind); 0
+	// outside the grid. The weight fades to 0 toward the grid's edge.
+	float sample_height(const Vector2 &p_world_xz) const;
+
+	WaterWakeSolver();
+	~WaterWakeSolver();
+};

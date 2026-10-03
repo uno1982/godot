@@ -215,6 +215,16 @@ public:
 	// both layers (ripple + ocean), matching what the rendered mesh shows.
 	// Returns -INF over dry cells when a surface_mesh is set.
 	float sample_height(Vector3 p_world_pos) const;
+	// The same, leaving out one wake (a boat's buoyancy reading the water
+	// under it shouldn't sink into its own wake's dip).
+	float sample_height_excluding_wake(Vector3 p_world_pos, ObjectID p_wake) const;
+	// Moving wake grids (PhysXWaterWake3D): up to MAX_WAKES are drawn and
+	// sampled. register_wake() returns a slot (-1 when full).
+	static constexpr int MAX_WAKES = 4;
+	int register_wake(ObjectID p_wake);
+	void unregister_wake(int p_slot);
+	// The wake's height texture and its rect (xy world xz corner, zw size).
+	void set_wake_slot(int p_slot, const Ref<Texture2D> &p_height, const Vector4 &p_rect);
 	// False outside the surface_mesh footprint (always true without one).
 	bool is_wet(Vector3 p_world_pos) const;
 
@@ -284,6 +294,7 @@ private:
 	// seabed_from_floor the solver is configured on the first physics tick.
 	bool seabed_pending = false;
 	Ref<ShaderMaterial> water_material;
+	ObjectID wakes[MAX_WAKES];
 	Ref<Texture2DRD> ripple_height_tex;
 	Ref<Texture2DRD> ocean_height_tex;
 	Ref<Texture2DRD> ocean_fade_tex;

@@ -1019,8 +1019,7 @@ void PhysXWaterSurface3D::_update(double p_delta) {
 		_bind_textures();
 	}
 	if (solver.is_available() && caustics_enabled) {
-		const bool open_beyond = surface_mesh.is_null() && render_extent > MAX(domain_size.x, domain_size.y);
-		solver.render_caustics(Vector3(grid_center.x, get_global_position().y, grid_center.y), caustics_sun_direction, caustics_reference_depth, 1.333f, open_beyond);
+		solver.render_caustics(Vector3(grid_center.x, get_global_position().y, grid_center.y), caustics_sun_direction, caustics_reference_depth, 1.333f, _open_beyond());
 	}
 	frames_since_refresh++;
 	if (frames_since_refresh >= REFRESH_EVERY_FRAMES) {
@@ -1101,18 +1100,32 @@ void PhysXWaterSurface3D::_refresh_cpu_cache() {
 	solver.get_ocean_dz_grid(cached_ocean_dz);
 }
 
-float PhysXWaterSurface3D::_bilinear_sample(const Vector<float> &p_grid, int p_n, Vector2 p_domain, float p_world_x, float p_world_z) const {
+float PhysXWaterSurface3D::_bilinear_sample(const Vector<float> &p_grid, int p_n, Vector2 p_domain, float p_world_x, float p_world_z, bool p_repeat) const {
 	if (p_grid.is_empty() || p_n <= 0) {
 		return 0.0f;
 	}
 	const float gx = (p_world_x / (p_domain.x * 0.5f) + 1.0f) * 0.5f * p_n - 0.5f;
 	const float gz = (p_world_z / (p_domain.y * 0.5f) + 1.0f) * 0.5f * p_n - 0.5f;
-	const int x0 = CLAMP((int)floorf(gx), 0, p_n - 1);
-	const int z0 = CLAMP((int)floorf(gz), 0, p_n - 1);
-	const int x1 = CLAMP(x0 + 1, 0, p_n - 1);
-	const int z1 = CLAMP(z0 + 1, 0, p_n - 1);
-	const float fx = CLAMP(gx - x0, 0.0f, 1.0f);
-	const float fz = CLAMP(gz - z0, 0.0f, 1.0f);
+	int x0, z0, x1, z1;
+	float fx, fz;
+	if (p_repeat) {
+		const float flx = floorf(gx);
+		const float flz = floorf(gz);
+		auto wrap = [p_n](int p_i) { return ((p_i % p_n) + p_n) % p_n; };
+		x0 = wrap((int)flx);
+		z0 = wrap((int)flz);
+		x1 = wrap((int)flx + 1);
+		z1 = wrap((int)flz + 1);
+		fx = gx - flx;
+		fz = gz - flz;
+	} else {
+		x0 = CLAMP((int)floorf(gx), 0, p_n - 1);
+		z0 = CLAMP((int)floorf(gz), 0, p_n - 1);
+		x1 = CLAMP(x0 + 1, 0, p_n - 1);
+		z1 = CLAMP(z0 + 1, 0, p_n - 1);
+		fx = CLAMP(gx - x0, 0.0f, 1.0f);
+		fz = CLAMP(gz - z0, 0.0f, 1.0f);
+	}
 	const float h00 = p_grid[z0 * p_n + x0];
 	const float h10 = p_grid[z0 * p_n + x1];
 	const float h01 = p_grid[z1 * p_n + x0];
@@ -1129,7 +1142,14 @@ float PhysXWaterSurface3D::sample_height(Vector3 p_world_pos) const {
 	// The ripple readback already includes water_level (it's the composed
 	// height the renderer draws), so only fall back to it before the first
 	// readback lands. Both are relative to the node, like the rendered mesh.
-	const float ripple = cached_ripple_height.is_empty() ? water_level : _bilinear_sample(cached_ripple_height, cached_ripple_n, cached_ripple_domain, x, z);
+	// Past the simulated square the ripples ease back to still water, as the
+	// shader draws them.
+	float ripple = cached_ripple_height.is_empty() ? water_level : _bilinear_sample(cached_ripple_height, cached_ripple_n, cached_ripple_domain, x, z);
+	if (!cached_ripple_height.is_empty()) {
+		const float from_center = MAX(Math::abs(x / cached_ripple_domain.x), Math::abs(z / cached_ripple_domain.y));
+		const float inside = 1.0f - Math::smoothstep(0.46f, 0.5f, from_center);
+		ripple = Math::lerp(water_level, ripple, inside);
+	}
 	const float fade = cell_fade.is_empty() ? 1.0f : _bilinear_sample(cell_fade, grid_resolution, active_domain_size, x, z);
 	// With choppy displacement the surface point above (x, z) rested
 	// somewhere else: find p0 with p0 + s * D(p0) = (x, z) by fixed-point
@@ -1139,24 +1159,47 @@ float PhysXWaterSurface3D::sample_height(Vector3 p_world_pos) const {
 	const float s = -choppiness * fade;
 	if (s != 0.0f && cached_ocean_dx.size() == cached_ocean_height.size() && cached_ocean_dz.size() == cached_ocean_height.size()) {
 		for (int i = 0; i < 4; i++) {
-			const Vector2 d(_bilinear_sample(cached_ocean_dx, cached_ocean_n, cached_ocean_domain, p0.x, p0.y),
-					_bilinear_sample(cached_ocean_dz, cached_ocean_n, cached_ocean_domain, p0.x, p0.y));
+			const Vector2 d(_bilinear_sample(cached_ocean_dx, cached_ocean_n, cached_ocean_domain, p0.x, p0.y, true),
+					_bilinear_sample(cached_ocean_dz, cached_ocean_n, cached_ocean_domain, p0.x, p0.y, true));
 			p0 = Vector2(x, z) - d * s;
 		}
 	}
-	const float ocean = _bilinear_sample(cached_ocean_height, cached_ocean_n, cached_ocean_domain, p0.x, p0.y) * fade;
+	const float ocean = _bilinear_sample(cached_ocean_height, cached_ocean_n, cached_ocean_domain, p0.x, p0.y, true) * fade;
 	return get_global_position().y + ripple + ocean;
 }
 
+bool PhysXWaterSurface3D::_open_beyond() const {
+	return surface_mesh.is_null() && render_extent > MAX(domain_size.x, domain_size.y);
+}
+
+bool PhysXWaterSurface3D::_inside_render_extent(float p_rel_x, float p_rel_z) const {
+	return Math::abs(p_rel_x) <= render_extent * 0.5f && Math::abs(p_rel_z) <= render_extent * 0.5f;
+}
+
 bool PhysXWaterSurface3D::is_wet(Vector3 p_world_pos) const {
+	const float rel_x = p_world_pos.x - grid_center.x;
+	const float rel_z = p_world_pos.z - grid_center.y;
+	if (_open_beyond() && !_inside_render_extent(rel_x, rel_z)) {
+		return false; // past the drawn surface
+	}
 	if (cell_depth.is_empty()) {
 		return true;
 	}
 	const int n = grid_resolution;
-	const int gx = (int)Math::floor(((p_world_pos.x - grid_center.x) / active_domain_size.x + 0.5f) * n);
-	const int gz = (int)Math::floor(((p_world_pos.z - grid_center.y) / active_domain_size.y + 0.5f) * n);
-	if (gx < 0 || gz < 0 || gx >= n || gz >= n || cell_depth.size() != n * n) {
+	if (cell_depth.size() != n * n) {
 		return false;
+	}
+	int gx = (int)Math::floor((rel_x / active_domain_size.x + 0.5f) * n);
+	int gz = (int)Math::floor((rel_z / active_domain_size.y + 0.5f) * n);
+	if (gx < 0 || gz < 0 || gx >= n || gz >= n) {
+		if (!_open_beyond()) {
+			return false;
+		}
+		// Open water past the simulated square carries the edge's seabed on
+		// outward, as the shader draws it: the sea side stays sea, the beach
+		// side stays sand.
+		gx = CLAMP(gx, 0, n - 1);
+		gz = CLAMP(gz, 0, n - 1);
 	}
 	return cell_depth[gz * n + gx] > 0.0f;
 }

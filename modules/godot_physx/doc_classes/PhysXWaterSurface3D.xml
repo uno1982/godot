@@ -68,7 +68,7 @@
 			<return type="bool" />
 			<param index="0" name="world_pos" type="Vector3" />
 			<description>
-				Whether [code]world_pos[/code]'s XZ lies inside the [member surface_mesh] footprint, at the ripple grid's resolution. Always [code]true[/code] when no [member surface_mesh] is set. [code]world_pos.y[/code] is ignored.
+				Whether there is water at [code]world_pos[/code]'s XZ, at the ripple grid's resolution: inside the [member surface_mesh] footprint, and not over dry seabed ([member seabed_from_floor]). With a [member render_extent] past the simulated square, the open water out to the edge of the rendered surface counts too, carrying on the seabed at the square's edge the way the surface is drawn (the sea side stays sea, a beach stays dry). [code]world_pos.y[/code] is ignored.
 			</description>
 		</method>
 		<method name="sample_height" qualifiers="const">
@@ -76,7 +76,8 @@
 			<param index="0" name="world_pos" type="Vector3" />
 			<description>
 				The combined surface height (ripple + ocean layers, plus [member water_level]) at [code]world_pos[/code]'s XZ, bilinearly sampled from the last periodic readback (a few frames behind the GPU simulation -- fine for buoyancy, not meant for sub-frame precision). [code]world_pos.y[/code] is ignored.
-				Returns [code]-INF[/code] where [method is_wet] is [code]false[/code] (outside the [member surface_mesh] footprint), so anything comparing a point's height against it -- a buoyancy script's submersion depth -- reads "not in water" there.
+				Returns [code]-INF[/code] where [method is_wet] is [code]false[/code] (outside the [member surface_mesh] footprint, or over dry seabed), so anything comparing a point's height against it -- a buoyancy script's submersion depth -- reads "not in water" there.
+				Past the simulated square (with a [member render_extent]) it is the FFT ocean, tiled, on still water -- the same surface that is drawn there, so bodies float on the open sea too.
 			</description>
 		</method>
 		<method name="submit_impulse">

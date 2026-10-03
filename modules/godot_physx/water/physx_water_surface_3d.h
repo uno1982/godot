@@ -326,7 +326,13 @@ private:
 	void _bind_textures();
 	void _refresh_cpu_cache();
 	void _update(double p_delta);
-	float _bilinear_sample(const Vector<float> &p_grid, int p_n, Vector2 p_domain, float p_world_x, float p_world_z) const;
+	// p_repeat: wrap around instead of clamping at the edge (the FFT ocean is
+	// periodic).
+	float _bilinear_sample(const Vector<float> &p_grid, int p_n, Vector2 p_domain, float p_world_x, float p_world_z, bool p_repeat = false) const;
+	// The water carries on past the simulated square (render_extent), and
+	// whether world XZ (relative to grid_center) is inside what's drawn.
+	bool _open_beyond() const;
+	bool _inside_render_extent(float p_rel_x, float p_rel_z) const;
 };
 
 VARIANT_ENUM_CAST(PhysXWaterSurface3D::NormalMode);

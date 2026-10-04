@@ -234,7 +234,10 @@ vec3 surface_offset(vec2 world_xz) {
 	float inside = 1.0 - smoothstep(0.46, 0.5, max(from_center.x, from_center.y));
 	float ripple = mix(water_level, texture(ripple_height_tex, cuv_r).r, inside);
 	float h = ripple + texture(ocean_height_tex, cuv_o).r * fade;
-	h += wake_height(world_xz);
+	// The wake grid is laid out where the water is now, not where it rests
+	// (its sources sit under the hull, and sample_height() reads it there):
+	// read it at this point's displaced position.
+	h += wake_height(world_xz + d);
 	// Never below the ground: over dry sand (and in the deepest troughs over
 	// shallows) the surface lies on the sand as a thin film, which is where
 	// the swash shows.
@@ -264,10 +267,12 @@ vec3 surface_normal_pixel(vec2 world_xz) {
 	float wet_w = smoothstep(0.0, 0.15, texture(shore_depth_tex, cuv_r).r);
 	rx *= wet_w;
 	rz *= wet_w;
-	// Wake slopes (zero over the shore grid).
+	// Wake slopes (zero over the shore grid), at the displaced position as
+	// surface_offset() reads the wake.
 	const float ew = 0.12;
-	rx += (wake_height(world_xz + vec2(ew, 0.0)) - wake_height(world_xz - vec2(ew, 0.0))) / (2.0 * ew);
-	rz += (wake_height(world_xz + vec2(0.0, ew)) - wake_height(world_xz - vec2(0.0, ew))) / (2.0 * ew);
+	vec2 wake_xz = world_xz + s * texture(ocean_disp_tex, cuv_o).rg;
+	rx += (wake_height(wake_xz + vec2(ew, 0.0)) - wake_height(wake_xz - vec2(ew, 0.0))) / (2.0 * ew);
+	rz += (wake_height(wake_xz + vec2(0.0, ew)) - wake_height(wake_xz - vec2(0.0, ew))) / (2.0 * ew);
 	vec3 tx = vec3(1.0 + s * der.z, der.x * fade + rx, s * dxz);
 	vec3 tz = vec3(s * dxz, der.y * fade + rz, 1.0 + s * der.w);
 	return normalize(cross(tz, tx));
@@ -293,8 +298,10 @@ float foam_at(vec2 world_xz) {
 	vec2 rel = world_xz - grid_center;
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	vec2 cuv_o = rel / ocean_domain_size + 0.5; // wraps: the FFT ocean is periodic
-	float amount = texture(ocean_foam_tex, cuv_o).r * texture(ocean_fade_tex, cuv_r).r;
-	amount = max(amount, wake_foam(world_xz));
+	float fade = texture(ocean_fade_tex, cuv_r).r;
+	float amount = texture(ocean_foam_tex, cuv_o).r * fade;
+	// Wake foam at the displaced position, as surface_offset() reads the wake.
+	amount = max(amount, wake_foam(world_xz - choppiness * fade * texture(ocean_disp_tex, cuv_o).rg));
 	vec2 p = world_xz * foam_detail_scale;
 	float n = 0.5 * foam_value_noise(p) + 0.3 * foam_value_noise(p * 2.7 + 17.0) + 0.2 * foam_value_noise(p * 7.3 - 5.0);
 	// Gentle ramp: fresh foam is solid, thinning foam turns translucent and

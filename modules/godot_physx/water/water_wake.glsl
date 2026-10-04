@@ -35,7 +35,7 @@ layout(set = 0, binding = 2, std430) restrict writeonly buffer StateOut {
 layout(set = 0, binding = 3, std430) restrict readonly buffer Sources {
 	vec4 sources[];
 };
-layout(set = 0, binding = 4, rgba32f) uniform restrict writeonly image2D height_tex; // r height (m), g hull foam, b propeller foam (0..1)
+layout(set = 0, binding = 4, rgba16f) uniform restrict writeonly image2D height_tex; // r height (m), g hull foam, b propeller foam (0..1)
 
 int n() {
 	return grid.x;

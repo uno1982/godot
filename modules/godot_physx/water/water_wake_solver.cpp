@@ -112,12 +112,12 @@ void WaterWakeSolverGPU::rt_build(Ref<WaterWakeSolverGPU> p_self, int p_n) {
 	buf_sources = storage(rd, MAX_SOURCES * 32);
 
 	RD::TextureFormat tf;
-	tf.format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT;
+	tf.format = RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
 	tf.width = n;
 	tf.height = n;
 	tf.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_UPDATE_BIT;
 	Vector<uint8_t> zeros;
-	zeros.resize(n * n * 16);
+	zeros.resize(n * n * 8); // rgba16f
 	memset(zeros.ptrw(), 0, zeros.size());
 	Vector<Vector<uint8_t>> data;
 	data.push_back(zeros);

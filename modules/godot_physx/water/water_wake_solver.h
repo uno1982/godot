@@ -46,7 +46,7 @@ class WaterWakeSolverGPU : public RefCounted {
 	GDSOFTCLASS(WaterWakeSolverGPU, RefCounted);
 
 public:
-	static constexpr int MAX_SOURCES = 16;
+	static constexpr int MAX_SOURCES = 48;
 
 	RenderingDevice *rd = nullptr;
 	bool local = false;

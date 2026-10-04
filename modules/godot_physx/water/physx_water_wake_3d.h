@@ -75,6 +75,7 @@ class PhysXWaterWake3D : public Node3D {
 	float foam_spread = 1.0f; // m/s foam is pushed out from the hull's line
 
 	WaterWakeSolver *solver = nullptr;
+	Vector<WaterWakeSolver::Source> pending_foam; // add_foam() calls since the last step
 	Ref<Texture2DRD> height_texture;
 	ObjectID water_id;
 	int slot = -1;
@@ -110,7 +111,8 @@ public:
 	float get_hull_length() const { return hull_length; }
 	void set_hull_beam(float p_beam) { hull_beam = MAX(p_beam, 0.0f); }
 	float get_hull_beam() const { return hull_beam; }
-	void set_source_count(int p_count) { source_count = CLAMP(p_count, 1, WaterWakeSolverGPU::MAX_SOURCES - 1); } // one kept for the propeller
+	static constexpr int MAX_KEEL_SOURCES = 15;
+	void set_source_count(int p_count) { source_count = CLAMP(p_count, 1, MAX_KEEL_SOURCES); }
 	int get_source_count() const { return source_count; }
 	void set_rest_depth(float p_depth) { rest_depth = MAX(p_depth, 0.0f); }
 	float get_rest_depth() const { return rest_depth; }
@@ -132,6 +134,12 @@ public:
 	float get_foam_spread() const { return foam_spread; }
 	void set_shore_grid_fade(float p_fade) { shore_grid_fade = CLAMP(p_fade, 0.0f, 1.0f); }
 	float get_shore_grid_fade() const { return shore_grid_fade; }
+
+	// Foam churned into the wake's water around a world position until the
+	// next physics step: amount_per_second at the centre (1 = fully white),
+	// fading out over radius. Call it every tick for a steady source (spray
+	// landing), or once with amount / delta for a one-off patch.
+	void add_foam(const Vector3 &p_world_pos, float p_radius, float p_amount_per_second);
 
 	// Wake height (m) at a world position, from the last readback; 0 outside
 	// the grid.

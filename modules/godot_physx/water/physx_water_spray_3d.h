@@ -57,7 +57,13 @@ class RigidBody3D;
 // slope included), so spray with collision on lands on the water and skids
 // along it instead of falling through. The emitters are then lifted
 // collision_margin clear of it: a particle born touching a collider loses
-// its speed off the surface at once.
+// its speed off the surface at once. The plane is eased over
+// collision_smoothing so spray resting on it isn't jolted each time the
+// water's heights update.
+// With spray_foam, the spray leaves foam where it lands: each tick the
+// landing spots are worked out from the emitters' launch points, speeds and
+// gravity, and foam is added there to the sibling PhysXWaterWake3D (a slam
+// leaves a patch of it).
 class PhysXWaterSpray3D : public Node3D {
 	GDCLASS(PhysXWaterSpray3D, Node3D);
 
@@ -81,6 +87,12 @@ private:
 		float prev_water = 0.0f;
 		bool have_prev = false;
 		float cooldown = 0.0f;
+		// Where the spray leaves the emitter (its local frame), a few spots
+		// along it, and the direction it goes: for working out where it lands.
+		Vector<Vector3> launch_points;
+		Vector<Vector3> launch_dirs;
+		float inherit_velocity = 0.0f;
+		float gravity = 9.8f;
 	};
 
 	NodePath water_surface_path; // empty = the sibling PhysXBuoyancy3D's
@@ -98,12 +110,22 @@ private:
 	float collision_size = 12.0f;
 	float collision_fit_radius = 3.0f;
 	float collision_margin = 0.08f;
+	float collision_smoothing = 0.1f;
+	float spray_foam = 3.0f;
 
 	Vector<Emitter> emitters;
 	GPUParticlesCollisionBox3D *collider = nullptr; // internal child
 	bool have_plane = false; // the collider's top, as last placed
 	Vector3 plane_point;
 	Vector3 plane_normal;
+	// The collider's place at the last two physics ticks: it is moved every
+	// frame between them, as spray steps every frame, not every tick.
+	Transform3D collider_from;
+	Transform3D collider_to;
+	bool have_collider_xform = false;
+	bool have_smooth = false; // the eased plane: height under the hull, normal
+	float smooth_height = 0.0f;
+	Vector3 smooth_normal;
 	ObjectID water_id;
 	ObjectID wake_id; // the sibling PhysXWaterWake3D: the hull's own wake isn't water it clears
 	bool built = false;
@@ -112,7 +134,8 @@ private:
 	void _clear();
 	void _physics_step(double p_delta);
 	void _add_emitters(const TypedArray<NodePath> &p_paths, Role p_role);
-	void _update_collider(const PhysXWaterSurface3D *p_water, const Vector3 &p_center, const Basis &p_level);
+	void _update_collider(const PhysXWaterSurface3D *p_water, const Vector3 &p_center, const Basis &p_level, double p_delta);
+	void _deposit_foam(const Emitter &p_emitter, const GPUParticles3D *p_particles, const Vector3 &p_body_velocity, float p_ratio, float p_velocity_scale);
 
 protected:
 	void _notification(int p_what);
@@ -152,6 +175,10 @@ public:
 	float get_collision_fit_radius() const { return collision_fit_radius; }
 	void set_collision_margin(float p_margin) { collision_margin = MAX(p_margin, 0.0f); }
 	float get_collision_margin() const { return collision_margin; }
+	void set_collision_smoothing(float p_seconds) { collision_smoothing = MAX(p_seconds, 0.0f); }
+	float get_collision_smoothing() const { return collision_smoothing; }
+	void set_spray_foam(float p_foam) { spray_foam = MAX(p_foam, 0.0f); }
+	float get_spray_foam() const { return spray_foam; }
 
 	PackedStringArray get_configuration_warnings() const override;
 };

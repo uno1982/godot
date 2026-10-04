@@ -324,7 +324,11 @@ private:
 	Vector2 cached_ocean_domain;
 
 	int frames_since_refresh = 0;
-	static constexpr int REFRESH_EVERY_FRAMES = 4; // throttled CPU cache refresh for sample_height() only -- rendering is unthrottled/automatic via the zero-copy textures
+	// CPU cache refresh for sample_height() only -- rendering is unthrottled/automatic via the zero-copy textures.
+	// Every tick: the readback lands every step anyway and the copy is a COW share, while refreshing
+	// every 4th tick froze the heights in between and then jumped them several cm (rough seas), which
+	// jolted buoyancy and anything resting on sampled water.
+	static constexpr int REFRESH_EVERY_FRAMES = 1;
 
 	void _rebuild();
 	// Footprint triangles of surface_mesh in node-local XZ (degenerates dropped).

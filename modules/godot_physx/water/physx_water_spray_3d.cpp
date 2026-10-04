@@ -77,6 +77,10 @@ void PhysXWaterSpray3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_collision_smoothing"), &PhysXWaterSpray3D::get_collision_smoothing);
 	ClassDB::bind_method(D_METHOD("set_spray_foam", "foam"), &PhysXWaterSpray3D::set_spray_foam);
 	ClassDB::bind_method(D_METHOD("get_spray_foam"), &PhysXWaterSpray3D::get_spray_foam);
+	ClassDB::bind_method(D_METHOD("set_spray_foam_density", "density"), &PhysXWaterSpray3D::set_spray_foam_density);
+	ClassDB::bind_method(D_METHOD("get_spray_foam_density"), &PhysXWaterSpray3D::get_spray_foam_density);
+	ClassDB::bind_method(D_METHOD("set_spray_foam_offset", "offset"), &PhysXWaterSpray3D::set_spray_foam_offset);
+	ClassDB::bind_method(D_METHOD("get_spray_foam_offset"), &PhysXWaterSpray3D::get_spray_foam_offset);
 
 	const String emitter_list_hint = vformat("%d/%d:%s", Variant::NODE_PATH, PROPERTY_HINT_NODE_PATH_VALID_TYPES, "GPUParticles3D");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "water_surface_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXWaterSurface3D"), "set_water_surface_path", "get_water_surface_path");
@@ -101,6 +105,8 @@ void PhysXWaterSpray3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_smoothing", PROPERTY_HINT_RANGE, "0,1,0.01,suffix:s"), "set_collision_smoothing", "get_collision_smoothing");
 	ADD_GROUP("Foam", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spray_foam", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_spray_foam", "get_spray_foam");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spray_foam_density", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_spray_foam_density", "get_spray_foam_density");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spray_foam_offset", PROPERTY_HINT_RANGE, "-2,4,0.01,suffix:m"), "set_spray_foam_offset", "get_spray_foam_offset");
 
 	ADD_SIGNAL(MethodInfo("slammed", PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::FLOAT, "speed")));
 }
@@ -272,7 +278,7 @@ void PhysXWaterSpray3D::_update_collider(const PhysXWaterSurface3D *p_water, con
 	have_collider_xform = true;
 }
 
-void PhysXWaterSpray3D::_deposit_foam(const Emitter &p_emitter, const GPUParticles3D *p_particles, const Vector3 &p_body_velocity, float p_ratio, float p_velocity_scale) {
+void PhysXWaterSpray3D::_deposit_foam(const Emitter &p_emitter, const GPUParticles3D *p_particles, const Vector3 &p_body_velocity, float p_ratio, float p_velocity_scale, double p_delta) {
 	PhysXWaterWake3D *wake = ObjectDB::get_instance<PhysXWaterWake3D>(wake_id);
 	if (wake == nullptr || spray_foam <= 0.0f || p_ratio <= 0.001f || p_emitter.launch_points.is_empty()) {
 		return;
@@ -280,40 +286,40 @@ void PhysXWaterSpray3D::_deposit_foam(const Emitter &p_emitter, const GPUParticl
 	// Each launch spot's spray, flown out: launched at the mean speed along
 	// its direction plus the share of the hull's velocity it inherits, it
 	// comes back down to the water (collision_margin below where it left)
-	// after t. Foam goes there.
+	// after t, then skids on: the material's friction takes that share of its
+	// speed off each particle step (fixed_fps, else 60/s assumed) until its
+	// lifetime runs out.
 	const Transform3D xf = p_particles->get_global_transform();
 	const float speed = 0.5f * (p_emitter.base_velocity_min + p_emitter.base_velocity_max) * p_velocity_scale;
-	// The spots travel with the hull, so the water passes under each one
-	// for only (diameter / ground speed): churn foam in fast enough that it
-	// still ends up spray_foam white. (A per-second rate that ignored this
-	// left ~0.07 at speed: invisible.)
-	const float radius = 0.45f;
-	const float ground_speed = MAX(Vector2(p_body_velocity.x, p_body_velocity.z).length(), 0.5f);
-	const float rate = spray_foam * p_ratio * ground_speed / (2.0f * radius);
-	// Landed spray skids on: the material's friction takes that share of
-	// its speed off each particle step (steps at fixed_fps, else 60/s
-	// assumed), until the particle's lifetime runs out.
 	const float step = 1.0f / (p_particles->get_fixed_fps() > 0 ? p_particles->get_fixed_fps() : 60);
 	const float slow = p_emitter.friction > 0.0f ? step / p_emitter.friction : 0.0f; // e-folding time of the skid
-	// Foam goes where spray is landing now: spray launched t ago, from where
-	// the launch point was then (the hull has moved on since by its velocity
-	// times t). Placing it where this tick's spray will land put the foam
-	// ahead of the spray, the hull catching up to it.
 	for (int i = 0; i < p_emitter.launch_points.size(); i++) {
+		// Specks, not a solid band: droplets stir the water here and there.
+		if (rng.randf() >= spray_foam_density * p_ratio) {
+			continue;
+		}
 		const Vector3 v = xf.basis.xform(p_emitter.launch_dirs[i]).normalized() * speed + p_body_velocity * p_emitter.inherit_velocity;
 		const float g = p_emitter.gravity;
 		const float t = (v.y + Math::sqrt(MAX(v.y * v.y + 2.0f * g * collision_margin, 0.0f))) / g;
-		const Vector3 launch = xf.xform(p_emitter.launch_points[i]);
-		wake->add_foam(launch + (v - p_body_velocity) * t, radius, rate);
+		// Somewhere along the landing and skid of spray landing now: launched
+		// t (+ ts into the skid) ago, from where the launch point was then --
+		// the hull has moved on since. (Placing it where this tick's spray will
+		// land put the foam ahead of the spray.)
+		const float u = rng.randf();
+		float ts = 0.0f;
+		Vector3 skid;
 		if (slow > 0.0f) {
-			// Halfway along the skid too, where most of the white is: reached
-			// after half the skid's distance, ts into it.
 			const float left = MAX((float)p_particles->get_lifetime() - t, 0.0f);
-			const float half = 0.5f * (1.0f - Math::exp(-left / slow));
-			const float ts = -slow * Math::log(1.0f - half);
-			const Vector3 skid = Vector3(v.x, 0.0f, v.z) * slow * half;
-			wake->add_foam(launch + v * t + skid - p_body_velocity * (t + ts), radius, rate);
+			const float reach = u * (1.0f - Math::exp(-left / slow));
+			ts = -slow * Math::log(1.0f - reach);
+			skid = Vector3(v.x, 0.0f, v.z) * slow * reach;
 		}
+		Vector3 out(v.x, 0.0f, v.z);
+		out = out.length_squared() > 1e-6f ? out.normalized() : Vector3();
+		const Vector3 across(out.z, 0.0f, -out.x);
+		const Vector3 at = xf.xform(p_emitter.launch_points[i]) + v * t + skid - p_body_velocity * (t + ts) + out * (spray_foam_offset + rng.random(-0.15f, 0.15f)) + across * rng.random(-0.25f, 0.25f);
+		// A one-off speck: its whole amount this step.
+		wake->add_foam(at, rng.random(0.12f, 0.25f), spray_foam / (float)p_delta);
 	}
 }
 
@@ -385,12 +391,12 @@ void PhysXWaterSpray3D::_physics_step(double p_delta) {
 			case ROLE_BOW: {
 				particles->set_amount_ratio(e.base_ratio * wet * bow_rate);
 				velocity_scale = bow_velocity;
-				_deposit_foam(e, particles, lin, e.base_ratio * wet * bow_rate, velocity_scale);
+				_deposit_foam(e, particles, lin, e.base_ratio * wet * bow_rate, velocity_scale, p_delta);
 			} break;
 			case ROLE_STERN: {
 				particles->set_amount_ratio(e.base_ratio * wet * churn);
 				velocity_scale = stern_velocity;
-				_deposit_foam(e, particles, lin, e.base_ratio * wet * churn, velocity_scale);
+				_deposit_foam(e, particles, lin, e.base_ratio * wet * churn, velocity_scale, p_delta);
 			} break;
 			case ROLE_SLAM: {
 				// Dropped back onto the water: the hull point was clear of it

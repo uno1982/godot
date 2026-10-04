@@ -31,6 +31,7 @@
 
 #pragma once
 
+#include "core/math/random_pcg.h"
 #include "scene/3d/node_3d.h"
 
 class GPUParticles3D;
@@ -62,9 +63,9 @@ class RigidBody3D;
 // water's heights update.
 // With spray_foam, the spray leaves foam where it lands: each tick the
 // landing spots are worked out from the emitters' launch points, speeds and
-// gravity, and foam is added there to the sibling PhysXWaterWake3D, enough
-// that the water the spots pass over ends up spray_foam white (a slam
-// leaves a patch of it).
+// gravity, and specks of foam are scattered along where the spray lands and
+// skids (spray_foam_offset further out), on the sibling PhysXWaterWake3D --
+// water stirred by droplets, not churned solid (a slam leaves a patch).
 class PhysXWaterSpray3D : public Node3D {
 	GDCLASS(PhysXWaterSpray3D, Node3D);
 
@@ -113,7 +114,9 @@ private:
 	float collision_fit_radius = 3.0f;
 	float collision_margin = 0.08f;
 	float collision_smoothing = 0.1f;
-	float spray_foam = 0.35f; // foam left where the spray lands (1 = fully white), at full spray
+	float spray_foam = 0.6f; // how white each speck of landed-spray foam starts
+	float spray_foam_density = 0.3f; // chance per launch spot per tick of a speck, at full spray
+	float spray_foam_offset = 0.4f; // m further out than the spray lands
 
 	Vector<Emitter> emitters;
 	GPUParticlesCollisionBox3D *collider = nullptr; // internal child
@@ -137,7 +140,8 @@ private:
 	void _physics_step(double p_delta);
 	void _add_emitters(const TypedArray<NodePath> &p_paths, Role p_role);
 	void _update_collider(const PhysXWaterSurface3D *p_water, const Vector3 &p_center, const Basis &p_level, double p_delta);
-	void _deposit_foam(const Emitter &p_emitter, const GPUParticles3D *p_particles, const Vector3 &p_body_velocity, float p_ratio, float p_velocity_scale);
+	void _deposit_foam(const Emitter &p_emitter, const GPUParticles3D *p_particles, const Vector3 &p_body_velocity, float p_ratio, float p_velocity_scale, double p_delta);
+	RandomPCG rng;
 
 protected:
 	void _notification(int p_what);
@@ -181,6 +185,10 @@ public:
 	float get_collision_smoothing() const { return collision_smoothing; }
 	void set_spray_foam(float p_foam) { spray_foam = MAX(p_foam, 0.0f); }
 	float get_spray_foam() const { return spray_foam; }
+	void set_spray_foam_density(float p_density) { spray_foam_density = CLAMP(p_density, 0.0f, 1.0f); }
+	float get_spray_foam_density() const { return spray_foam_density; }
+	void set_spray_foam_offset(float p_offset) { spray_foam_offset = p_offset; }
+	float get_spray_foam_offset() const { return spray_foam_offset; }
 
 	PackedStringArray get_configuration_warnings() const override;
 };

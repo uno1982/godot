@@ -100,7 +100,7 @@ void PhysXWaterSpray3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_margin", PROPERTY_HINT_RANGE, "0,1,0.001,suffix:m"), "set_collision_margin", "get_collision_margin");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_smoothing", PROPERTY_HINT_RANGE, "0,1,0.01,suffix:s"), "set_collision_smoothing", "get_collision_smoothing");
 	ADD_GROUP("Foam", "");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spray_foam", PROPERTY_HINT_RANGE, "0,20,0.01,or_greater"), "set_spray_foam", "get_spray_foam");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spray_foam", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_spray_foam", "get_spray_foam");
 
 	ADD_SIGNAL(MethodInfo("slammed", PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::FLOAT, "speed")));
 }
@@ -143,6 +143,7 @@ void PhysXWaterSpray3D::_add_emitters(const TypedArray<NodePath> &p_paths, Role 
 			e.base_velocity_max = material->get_param_max(ParticleProcessMaterial::PARAM_INITIAL_LINEAR_VELOCITY);
 			e.inherit_velocity = material->get_inherit_velocity_ratio();
 			e.gravity = MAX(-material->get_gravity().y, 0.1f);
+			e.friction = material->get_collision_mode() == ParticleProcessMaterial::COLLISION_RIGID ? material->get_collision_friction() : 0.0f;
 			// Where it launches from: a few spots along its emission points
 			// (averaged in groups), or the emitter itself.
 			const Ref<Texture2D> points_tex = material->get_emission_point_texture();
@@ -282,12 +283,37 @@ void PhysXWaterSpray3D::_deposit_foam(const Emitter &p_emitter, const GPUParticl
 	// after t. Foam goes there.
 	const Transform3D xf = p_particles->get_global_transform();
 	const float speed = 0.5f * (p_emitter.base_velocity_min + p_emitter.base_velocity_max) * p_velocity_scale;
-	const float rate = spray_foam * p_ratio / p_emitter.launch_points.size();
+	// The spots travel with the hull, so the water passes under each one
+	// for only (diameter / ground speed): churn foam in fast enough that it
+	// still ends up spray_foam white. (A per-second rate that ignored this
+	// left ~0.07 at speed: invisible.)
+	const float radius = 0.45f;
+	const float ground_speed = MAX(Vector2(p_body_velocity.x, p_body_velocity.z).length(), 0.5f);
+	const float rate = spray_foam * p_ratio * ground_speed / (2.0f * radius);
+	// Landed spray skids on: the material's friction takes that share of
+	// its speed off each particle step (steps at fixed_fps, else 60/s
+	// assumed), until the particle's lifetime runs out.
+	const float step = 1.0f / (p_particles->get_fixed_fps() > 0 ? p_particles->get_fixed_fps() : 60);
+	const float slow = p_emitter.friction > 0.0f ? step / p_emitter.friction : 0.0f; // e-folding time of the skid
+	// Foam goes where spray is landing now: spray launched t ago, from where
+	// the launch point was then (the hull has moved on since by its velocity
+	// times t). Placing it where this tick's spray will land put the foam
+	// ahead of the spray, the hull catching up to it.
 	for (int i = 0; i < p_emitter.launch_points.size(); i++) {
 		const Vector3 v = xf.basis.xform(p_emitter.launch_dirs[i]).normalized() * speed + p_body_velocity * p_emitter.inherit_velocity;
 		const float g = p_emitter.gravity;
 		const float t = (v.y + Math::sqrt(MAX(v.y * v.y + 2.0f * g * collision_margin, 0.0f))) / g;
-		wake->add_foam(xf.xform(p_emitter.launch_points[i]) + v * t, 0.45f, rate);
+		const Vector3 launch = xf.xform(p_emitter.launch_points[i]);
+		wake->add_foam(launch + (v - p_body_velocity) * t, radius, rate);
+		if (slow > 0.0f) {
+			// Halfway along the skid too, where most of the white is: reached
+			// after half the skid's distance, ts into it.
+			const float left = MAX((float)p_particles->get_lifetime() - t, 0.0f);
+			const float half = 0.5f * (1.0f - Math::exp(-left / slow));
+			const float ts = -slow * Math::log(1.0f - half);
+			const Vector3 skid = Vector3(v.x, 0.0f, v.z) * slow * half;
+			wake->add_foam(launch + v * t + skid - p_body_velocity * (t + ts), radius, rate);
+		}
 	}
 }
 

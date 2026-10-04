@@ -62,7 +62,8 @@ class RigidBody3D;
 // water's heights update.
 // With spray_foam, the spray leaves foam where it lands: each tick the
 // landing spots are worked out from the emitters' launch points, speeds and
-// gravity, and foam is added there to the sibling PhysXWaterWake3D (a slam
+// gravity, and foam is added there to the sibling PhysXWaterWake3D, enough
+// that the water the spots pass over ends up spray_foam white (a slam
 // leaves a patch of it).
 class PhysXWaterSpray3D : public Node3D {
 	GDCLASS(PhysXWaterSpray3D, Node3D);
@@ -93,6 +94,7 @@ private:
 		Vector<Vector3> launch_dirs;
 		float inherit_velocity = 0.0f;
 		float gravity = 9.8f;
+		float friction = 0.0f; // its collision friction: how far landed spray skids
 	};
 
 	NodePath water_surface_path; // empty = the sibling PhysXBuoyancy3D's
@@ -111,7 +113,7 @@ private:
 	float collision_fit_radius = 3.0f;
 	float collision_margin = 0.08f;
 	float collision_smoothing = 0.1f;
-	float spray_foam = 3.0f;
+	float spray_foam = 0.35f; // foam left where the spray lands (1 = fully white), at full spray
 
 	Vector<Emitter> emitters;
 	GPUParticlesCollisionBox3D *collider = nullptr; // internal child

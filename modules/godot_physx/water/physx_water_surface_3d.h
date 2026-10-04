@@ -223,7 +223,8 @@ public:
 	static constexpr int MAX_WAKES = 4;
 	int register_wake(ObjectID p_wake);
 	void unregister_wake(int p_slot);
-	// The wake's height texture and its rect (xy world xz corner, zw size).
+	// The wake's height texture and its rect (xy world xz corner, z side, w
+	// shore-grid fade 0..1).
 	void set_wake_slot(int p_slot, const Ref<Texture2D> &p_height, const Vector4 &p_rect);
 	// False outside the surface_mesh footprint (always true without one).
 	bool is_wet(Vector3 p_world_pos) const;
@@ -295,6 +296,8 @@ private:
 	bool seabed_pending = false;
 	Ref<ShaderMaterial> water_material;
 	ObjectID wakes[MAX_WAKES];
+	Vector2 mesh_offset; // see _update_mesh_offset()
+	void _update_mesh_offset();
 	Ref<Texture2DRD> ripple_height_tex;
 	Ref<Texture2DRD> ocean_height_tex;
 	Ref<Texture2DRD> ocean_fade_tex;

@@ -48,8 +48,9 @@ class Texture2DRD;
 // water as it slides along, so the wake stays where it was made and fades
 // out behind; waves reaching the grid's edge are absorbed. Drawn by the
 // surface's material and included in its sample_height(), so other floating
-// bodies ride it. Over the simulated square the body's PhysXBuoyancy3D
-// disturbs that grid instead and the wake fades out.
+// bodies ride it -- everywhere there's water, the shore ripple grid
+// included; shore_grid_fade fades it out over that grid instead, for water
+// where the body's PhysXBuoyancy3D ripples (disturb_water) drive it.
 class PhysXWaterWake3D : public Node3D {
 	GDCLASS(PhysXWaterWake3D, Node3D);
 
@@ -65,6 +66,7 @@ class PhysXWaterWake3D : public Node3D {
 	float rest_depth = 0.02f;
 	float wake_depth = 0.18f;
 	float reference_speed = 6.0f;
+	float shore_grid_fade = 0.0f;
 
 	WaterWakeSolver *solver = nullptr;
 	Ref<Texture2DRD> height_texture;
@@ -110,6 +112,8 @@ public:
 	float get_wake_depth() const { return wake_depth; }
 	void set_reference_speed(float p_speed) { reference_speed = MAX(p_speed, 0.01f); }
 	float get_reference_speed() const { return reference_speed; }
+	void set_shore_grid_fade(float p_fade) { shore_grid_fade = CLAMP(p_fade, 0.0f, 1.0f); }
+	float get_shore_grid_fade() const { return shore_grid_fade; }
 
 	// Wake height (m) at a world position, from the last readback; 0 outside
 	// the grid.

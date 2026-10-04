@@ -67,8 +67,7 @@ public:
 
 	void rt_compile(Ref<WaterWakeSolverGPU> p_self);
 	void rt_build(Ref<WaterWakeSolverGPU> p_self, int p_n);
-	// p_params: 12 floats/ints packed as the shader's Params; p_sources: 4
-	// floats per source.
+	// p_params: packed as the shader's Params; p_sources: 8 floats per source.
 	void rt_step(Ref<WaterWakeSolverGPU> p_self, PackedByteArray p_params, PackedFloat32Array p_sources, Vector2 p_origin, bool p_readback);
 	void rt_on_readback(const PackedByteArray &p_data, Ref<WaterWakeSolverGPU> p_self, Vector2 p_origin);
 	void rt_free(Ref<WaterWakeSolverGPU> p_self);
@@ -92,6 +91,7 @@ public:
 		Vector2 world_xz;
 		float radius = 0.5f;
 		float depth = 0.1f;
+		float foam = 0.0f; // foam churned in per second at the centre (1 = fully white)
 	};
 
 	bool is_available() const { return gpu.is_valid() && gpu->rd != nullptr; }
@@ -99,7 +99,12 @@ public:
 
 	void build(int p_cells, float p_size);
 	// p_wave_speed m/s, p_damping and p_border_damping per second.
-	void step(double p_delta, const Vector2 &p_center, const Vector<Source> &p_sources, float p_wave_speed, float p_damping, float p_border_damping, float p_border_width);
+	// p_foam_persistence: seconds foam takes to fade (to 1/e); p_foam_slope: wave
+	// slope past which wake waves foam, p_foam_slope_gain how much per second;
+	// foam is pushed out from the bow-stern line at p_foam_spread m/s, fading
+	// over p_foam_spread_falloff m. The hull churns p_hull_foam per
+	// second (at the bow) into a band just outside p_hull_half_beam.
+	void step(double p_delta, const Vector2 &p_center, const Vector<Source> &p_sources, float p_wave_speed, float p_damping, float p_border_damping, float p_border_width, float p_foam_persistence, float p_foam_slope, float p_foam_slope_gain, const Vector2 &p_bow, const Vector2 &p_stern, float p_foam_spread, float p_foam_spread_falloff, float p_hull_half_beam, float p_hull_foam);
 
 	int get_cells() const { return n; }
 	float get_size() const { return size; }

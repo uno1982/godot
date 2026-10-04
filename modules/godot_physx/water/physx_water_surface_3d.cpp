@@ -185,30 +185,40 @@ varying float v_foam;
 varying vec2 v_rest_xz;
 
 // Offset of the surface point that rests at world_xz: (dx, height, dz).
-// One wake grid's height at world_xz, faded out toward its edges.
-float wake_one(sampler2D tex, vec4 rect, vec2 world_xz) {
+// One wake grid's height (x) and foam (y) at world_xz, faded out toward its edges.
+vec2 wake_one(sampler2D tex, vec4 rect, vec2 world_xz) {
 	if (rect.z <= 0.0) {
-		return 0.0;
+		return vec2(0.0);
 	}
 	vec2 uv = (world_xz - rect.xy) / rect.z;
 	float edge = min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y));
 	if (edge <= 0.0) {
-		return 0.0;
+		return vec2(0.0);
 	}
 	// Optionally fade out over the shore ripple grid (where a floater's own
 	// ripples can take over).
 	vec2 from_center = abs((world_xz - grid_center) / ripple_domain_size);
 	float outside = smoothstep(0.46, 0.5, max(from_center.x, from_center.y));
-	return texture(tex, uv).r * smoothstep(0.0, 0.1, edge) * mix(1.0, outside, rect.w);
+	vec4 t = texture(tex, uv); // height, hull foam, propeller foam
+	return vec2(t.r, t.g + t.b) * smoothstep(0.0, 0.1, edge) * mix(1.0, outside, rect.w);
 }
 
 // All wakes at world_xz, everywhere (inside the shore ripple grid too).
-float wake_height(vec2 world_xz) {
-	float w = wake_one(wake_height_0, wake_rect_0, world_xz) + wake_one(wake_height_1, wake_rect_1, world_xz)
+vec2 wake_sample(vec2 world_xz) {
+	vec2 w = wake_one(wake_height_0, wake_rect_0, world_xz) + wake_one(wake_height_1, wake_rect_1, world_xz)
 			+ wake_one(wake_height_2, wake_rect_2, world_xz) + wake_one(wake_height_3, wake_rect_3, world_xz);
 	// Not over dry sand: the wake dies out over the last 30 cm of depth.
 	vec2 cuv_r = clamp((world_xz - grid_center) / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	return w * smoothstep(0.0, 0.3, texture(shore_depth_tex, cuv_r).r);
+}
+
+float wake_height(vec2 world_xz) {
+	return wake_sample(world_xz).x;
+}
+
+// Foam the wakes churned in (bow wave, propeller wash, breaking wake waves).
+float wake_foam(vec2 world_xz) {
+	return min(wake_sample(world_xz).y, 1.0);
 }
 
 vec3 surface_offset(vec2 world_xz) {
@@ -284,6 +294,7 @@ float foam_at(vec2 world_xz) {
 	vec2 cuv_r = clamp(rel / ripple_domain_size + 0.5, vec2(0.0), vec2(1.0));
 	vec2 cuv_o = rel / ocean_domain_size + 0.5; // wraps: the FFT ocean is periodic
 	float amount = texture(ocean_foam_tex, cuv_o).r * texture(ocean_fade_tex, cuv_r).r;
+	amount = max(amount, wake_foam(world_xz));
 	vec2 p = world_xz * foam_detail_scale;
 	float n = 0.5 * foam_value_noise(p) + 0.3 * foam_value_noise(p * 2.7 + 17.0) + 0.2 * foam_value_noise(p * 7.3 - 5.0);
 	// Gentle ramp: fresh foam is solid, thinning foam turns translucent and

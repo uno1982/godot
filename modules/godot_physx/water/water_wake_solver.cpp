@@ -40,7 +40,7 @@
 #include "servers/rendering/rendering_server.h"
 
 namespace {
-constexpr int PARAMS_BYTES = 48; // ivec4 grid, vec4 wave, vec4 cell (std140)
+constexpr int PARAMS_BYTES = 96; // ivec4 grid, vec4 wave, cell, foam, track, spread (std140)
 constexpr int READBACK_EVERY = 3; // physics ticks between height readbacks
 
 RID storage(RenderingDevice *p_rd, int p_bytes) {
@@ -107,17 +107,17 @@ void WaterWakeSolverGPU::rt_build(Ref<WaterWakeSolverGPU> p_self, int p_n) {
 	rt_free_buffers();
 	n = p_n;
 	buf_params = rd->uniform_buffer_create(PARAMS_BYTES);
-	buf_state_a = storage(rd, n * n * 8);
-	buf_state_b = storage(rd, n * n * 8);
-	buf_sources = storage(rd, MAX_SOURCES * 16);
+	buf_state_a = storage(rd, n * n * 16);
+	buf_state_b = storage(rd, n * n * 16);
+	buf_sources = storage(rd, MAX_SOURCES * 32);
 
 	RD::TextureFormat tf;
-	tf.format = RD::DATA_FORMAT_R32_SFLOAT;
+	tf.format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT;
 	tf.width = n;
 	tf.height = n;
 	tf.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_UPDATE_BIT;
 	Vector<uint8_t> zeros;
-	zeros.resize(n * n * 4);
+	zeros.resize(n * n * 16);
 	memset(zeros.ptrw(), 0, zeros.size());
 	Vector<Vector<uint8_t>> data;
 	data.push_back(zeros);
@@ -161,7 +161,7 @@ void WaterWakeSolverGPU::rt_step(Ref<WaterWakeSolverGPU> p_self, PackedByteArray
 	}
 	rd->buffer_update(buf_params, 0, PARAMS_BYTES, p_params.ptr());
 	if (!p_sources.is_empty()) {
-		rd->buffer_update(buf_sources, 0, MIN(p_sources.size(), MAX_SOURCES * 4) * 4, p_sources.ptr());
+		rd->buffer_update(buf_sources, 0, MIN(p_sources.size(), MAX_SOURCES * 8) * 4, p_sources.ptr());
 	}
 	const RID set = a_is_current ? uset_atob : uset_btoa;
 	RD::ComputeListID cl = rd->compute_list_begin();
@@ -173,7 +173,7 @@ void WaterWakeSolverGPU::rt_step(Ref<WaterWakeSolverGPU> p_self, PackedByteArray
 	a_is_current = !a_is_current;
 	if (p_readback) {
 		const RID current = a_is_current ? buf_state_a : buf_state_b;
-		rd->buffer_get_data_async(current, callable_mp(this, &WaterWakeSolverGPU::rt_on_readback).bind(p_self, p_origin), 0, n * n * 8);
+		rd->buffer_get_data_async(current, callable_mp(this, &WaterWakeSolverGPU::rt_on_readback).bind(p_self, p_origin), 0, n * n * 16);
 	}
 	if (local) {
 		rd->submit();
@@ -182,13 +182,13 @@ void WaterWakeSolverGPU::rt_step(Ref<WaterWakeSolverGPU> p_self, PackedByteArray
 }
 
 void WaterWakeSolverGPU::rt_on_readback(const PackedByteArray &p_data, Ref<WaterWakeSolverGPU> p_self, Vector2 p_origin) {
-	const int count = p_data.size() / 8;
+	const int count = p_data.size() / 16;
 	Vector<float> h;
 	h.resize(count);
 	const float *src = (const float *)p_data.ptr();
 	float *dst = h.ptrw();
 	for (int i = 0; i < count; i++) {
-		dst[i] = src[i * 2];
+		dst[i] = src[i * 4];
 	}
 	MutexLock lock(cache_mtx);
 	height_cache = h;
@@ -256,7 +256,7 @@ void WaterWakeSolver::build(int p_cells, float p_size) {
 	}
 }
 
-void WaterWakeSolver::step(double p_delta, const Vector2 &p_center, const Vector<Source> &p_sources, float p_wave_speed, float p_damping, float p_border_damping, float p_border_width) {
+void WaterWakeSolver::step(double p_delta, const Vector2 &p_center, const Vector<Source> &p_sources, float p_wave_speed, float p_damping, float p_border_damping, float p_border_width, float p_foam_persistence, float p_foam_slope, float p_foam_slope_gain, const Vector2 &p_bow, const Vector2 &p_stern, float p_foam_spread, float p_foam_spread_falloff, float p_hull_half_beam, float p_hull_foam) {
 	if (!is_built()) {
 		return;
 	}
@@ -274,7 +274,7 @@ void WaterWakeSolver::step(double p_delta, const Vector2 &p_center, const Vector
 	have_origin = true;
 
 	PackedByteArray params;
-	params.resize(48);
+	params.resize(PARAMS_BYTES);
 	uint8_t *w = params.ptrw();
 	const int32_t grid[4] = { n, MIN(p_sources.size(), WaterWakeSolverGPU::MAX_SOURCES), shift.x, shift.y };
 	// The explicit scheme is stable up to 0.5; wave speed is capped to keep it there.
@@ -285,15 +285,23 @@ void WaterWakeSolver::step(double p_delta, const Vector2 &p_center, const Vector
 	memcpy(w, grid, 16);
 	memcpy(w + 16, wave, 16);
 	memcpy(w + 32, cell, 16);
+	const float foam[4] = { Math::exp(-dt / MAX(p_foam_persistence, 0.01f)), dt, p_foam_slope, p_foam_slope_gain };
+	memcpy(w + 48, foam, 16);
+	const float track[4] = { p_bow.x, p_bow.y, p_stern.x, p_stern.y };
+	memcpy(w + 64, track, 16);
+	const float spread[4] = { p_foam_spread, p_foam_spread_falloff, p_hull_half_beam, p_hull_foam };
+	memcpy(w + 80, spread, 16);
 
 	PackedFloat32Array src;
-	src.resize(MIN(p_sources.size(), WaterWakeSolverGPU::MAX_SOURCES) * 4);
+	src.resize(MIN(p_sources.size(), WaterWakeSolverGPU::MAX_SOURCES) * 8);
 	float *sw = src.ptrw();
-	for (int i = 0; i < src.size() / 4; i++) {
-		sw[i * 4 + 0] = p_sources[i].world_xz.x;
-		sw[i * 4 + 1] = p_sources[i].world_xz.y;
-		sw[i * 4 + 2] = p_sources[i].radius;
-		sw[i * 4 + 3] = p_sources[i].depth;
+	memset(sw, 0, src.size() * sizeof(float));
+	for (int i = 0; i < src.size() / 8; i++) {
+		sw[i * 8 + 0] = p_sources[i].world_xz.x;
+		sw[i * 8 + 1] = p_sources[i].world_xz.y;
+		sw[i * 8 + 2] = p_sources[i].radius;
+		sw[i * 8 + 3] = p_sources[i].depth;
+		sw[i * 8 + 4] = p_sources[i].foam;
 	}
 	const bool readback = (ticks++ % READBACK_EVERY) == 0;
 	_dispatch(callable_mp(gpu.ptr(), &WaterWakeSolverGPU::rt_step).bind(gpu, params, src, origin, readback));

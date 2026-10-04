@@ -67,6 +67,12 @@ class PhysXWaterWake3D : public Node3D {
 	float wake_depth = 0.18f;
 	float reference_speed = 6.0f;
 	float shore_grid_fade = 0.0f;
+	float bow_foam = 8.0f; // foam churned in per second along the hull's sides at the bow, at reference_speed
+	float propeller_foam = 1.0f; // per second at full throttle (needs a sibling PhysXBoat3D)
+	float foam_persistence = 4.0f;
+	float foam_slope = 0.08f;
+	float foam_slope_gain = 4.0f;
+	float foam_spread = 1.0f; // m/s foam is pushed out from the hull's line
 
 	WaterWakeSolver *solver = nullptr;
 	Ref<Texture2DRD> height_texture;
@@ -104,7 +110,7 @@ public:
 	float get_hull_length() const { return hull_length; }
 	void set_hull_beam(float p_beam) { hull_beam = MAX(p_beam, 0.0f); }
 	float get_hull_beam() const { return hull_beam; }
-	void set_source_count(int p_count) { source_count = CLAMP(p_count, 1, WaterWakeSolverGPU::MAX_SOURCES); }
+	void set_source_count(int p_count) { source_count = CLAMP(p_count, 1, WaterWakeSolverGPU::MAX_SOURCES - 1); } // one kept for the propeller
 	int get_source_count() const { return source_count; }
 	void set_rest_depth(float p_depth) { rest_depth = MAX(p_depth, 0.0f); }
 	float get_rest_depth() const { return rest_depth; }
@@ -112,6 +118,18 @@ public:
 	float get_wake_depth() const { return wake_depth; }
 	void set_reference_speed(float p_speed) { reference_speed = MAX(p_speed, 0.01f); }
 	float get_reference_speed() const { return reference_speed; }
+	void set_bow_foam(float p_foam) { bow_foam = MAX(p_foam, 0.0f); }
+	float get_bow_foam() const { return bow_foam; }
+	void set_propeller_foam(float p_foam) { propeller_foam = MAX(p_foam, 0.0f); }
+	float get_propeller_foam() const { return propeller_foam; }
+	void set_foam_persistence(float p_seconds) { foam_persistence = MAX(p_seconds, 0.05f); }
+	float get_foam_persistence() const { return foam_persistence; }
+	void set_foam_slope(float p_slope) { foam_slope = MAX(p_slope, 0.0f); }
+	float get_foam_slope() const { return foam_slope; }
+	void set_foam_slope_gain(float p_gain) { foam_slope_gain = MAX(p_gain, 0.0f); }
+	float get_foam_slope_gain() const { return foam_slope_gain; }
+	void set_foam_spread(float p_speed) { foam_spread = MAX(p_speed, 0.0f); }
+	float get_foam_spread() const { return foam_spread; }
 	void set_shore_grid_fade(float p_fade) { shore_grid_fade = CLAMP(p_fade, 0.0f, 1.0f); }
 	float get_shore_grid_fade() const { return shore_grid_fade; }
 

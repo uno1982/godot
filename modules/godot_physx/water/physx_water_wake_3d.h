@@ -137,9 +137,11 @@ public:
 
 	// Foam churned into the wake's water around a world position until the
 	// next physics step: amount_per_second at the centre (1 = fully white),
-	// fading out over radius. Call it every tick for a steady source (spray
-	// landing), or once with amount / delta for a one-off patch.
-	void add_foam(const Vector3 &p_world_pos, float p_radius, float p_amount_per_second);
+	// fading out over radius. Call it every tick for a steady source, or once
+	// with amount / delta for a one-off patch. With drift it is pushed out
+	// from the hull's line as the hull's own foam is (foam_spread), heading
+	// out into the wake; without, it stays where it was put.
+	void add_foam(const Vector3 &p_world_pos, float p_radius, float p_amount_per_second, bool p_drift = true);
 
 	// Wake height (m) at a world position, from the last readback; 0 outside
 	// the grid.

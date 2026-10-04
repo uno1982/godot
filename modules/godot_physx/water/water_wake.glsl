@@ -31,7 +31,7 @@ layout(set = 0, binding = 1, std430) restrict readonly buffer StateIn {
 layout(set = 0, binding = 2, std430) restrict writeonly buffer StateOut {
 	vec4 state_out[];
 };
-// Two vec4 per source: (world x, world z, radius, depth m), (foam per second, unused...).
+// Two vec4 per source: (world x, world z, radius, depth m), (foam per second, drifts (1) or stays put (0), unused...).
 layout(set = 0, binding = 3, std430) restrict readonly buffer Sources {
 	vec4 sources[];
 };
@@ -125,8 +125,15 @@ void main() {
 				target = min(target, -s.w * w);
 				weight = max(weight, w);
 			} else {
-				// Foam-only (a propeller): churned in across a disk, no dip.
-				pf += sources[i * 2 + 1].x * w * foam.y;
+				// Foam-only (a propeller, landed spray): churned in across a
+				// disk, no dip -- either drifting out with the hull's foam or
+				// staying put.
+				vec4 sf = sources[i * 2 + 1];
+				if (sf.y > 0.5) {
+					f += sf.x * w * foam.y;
+				} else {
+					pf += sf.x * w * foam.y;
+				}
 			}
 		}
 	}

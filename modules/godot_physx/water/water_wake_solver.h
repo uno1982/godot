@@ -92,6 +92,7 @@ public:
 		float radius = 0.5f;
 		float depth = 0.1f;
 		float foam = 0.0f; // foam churned in per second at the centre (1 = fully white)
+		bool drift = false; // foam-only: pushed out from the hull's line with the hull's foam, else stays put
 	};
 
 	bool is_available() const { return gpu.is_valid() && gpu->rd != nullptr; }

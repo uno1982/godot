@@ -78,7 +78,7 @@ void PhysXWaterWake3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_foam_slope_gain"), &PhysXWaterWake3D::get_foam_slope_gain);
 	ClassDB::bind_method(D_METHOD("set_foam_spread", "speed"), &PhysXWaterWake3D::set_foam_spread);
 	ClassDB::bind_method(D_METHOD("get_foam_spread"), &PhysXWaterWake3D::get_foam_spread);
-	ClassDB::bind_method(D_METHOD("add_foam", "world_position", "radius", "amount_per_second"), &PhysXWaterWake3D::add_foam);
+	ClassDB::bind_method(D_METHOD("add_foam", "world_position", "radius", "amount_per_second", "drift"), &PhysXWaterWake3D::add_foam, DEFVAL(true));
 	ClassDB::bind_method(D_METHOD("sample_height", "world_pos"), &PhysXWaterWake3D::sample_height);
 	ClassDB::bind_method(D_METHOD("get_grid_origin"), &PhysXWaterWake3D::get_grid_origin);
 	ClassDB::bind_method(D_METHOD("get_height_texture"), &PhysXWaterWake3D::get_height_texture);
@@ -277,7 +277,7 @@ void PhysXWaterWake3D::_notification(int p_what) {
 	}
 }
 
-void PhysXWaterWake3D::add_foam(const Vector3 &p_world_pos, float p_radius, float p_amount_per_second) {
+void PhysXWaterWake3D::add_foam(const Vector3 &p_world_pos, float p_radius, float p_amount_per_second, bool p_drift) {
 	if (p_amount_per_second <= 0.0f || pending_foam.size() >= WaterWakeSolverGPU::MAX_SOURCES) {
 		return;
 	}
@@ -286,6 +286,7 @@ void PhysXWaterWake3D::add_foam(const Vector3 &p_world_pos, float p_radius, floa
 	s.radius = MAX(p_radius, 0.05f);
 	s.depth = 0.0f; // foam only, no dip
 	s.foam = p_amount_per_second;
+	s.drift = p_drift;
 	pending_foam.push_back(s);
 }
 

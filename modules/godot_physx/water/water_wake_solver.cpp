@@ -302,6 +302,7 @@ void WaterWakeSolver::step(double p_delta, const Vector2 &p_center, const Vector
 		sw[i * 8 + 2] = p_sources[i].radius;
 		sw[i * 8 + 3] = p_sources[i].depth;
 		sw[i * 8 + 4] = p_sources[i].foam;
+		sw[i * 8 + 5] = p_sources[i].drift ? 1.0f : 0.0f;
 	}
 	const bool readback = (ticks++ % READBACK_EVERY) == 0;
 	_dispatch(callable_mp(gpu.ptr(), &WaterWakeSolverGPU::rt_step).bind(gpu, params, src, origin, readback));

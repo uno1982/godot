@@ -109,7 +109,7 @@ private:
 	float slam_speed = 1.5f;
 	float slam_full_speed = 4.0f;
 	float slam_cooldown = 0.3f;
-	bool water_collision = true;
+	bool water_collision = false; // opt-in: a collider for spray with collision on to land on
 	float collision_size = 12.0f;
 	float collision_fit_radius = 3.0f;
 	float collision_margin = 0.08f;

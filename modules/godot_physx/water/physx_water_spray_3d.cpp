@@ -264,7 +264,10 @@ void PhysXWaterSpray3D::_update_collider(const PhysXWaterSurface3D *p_water, con
 	const Vector3 x = (lx - normal * lx.dot(normal)).normalized();
 	const Vector3 z = x.cross(normal).normalized();
 	const float depth = 2.0f;
-	collider->set_size(Vector3(collision_size, depth, collision_size));
+	const Vector3 box_size(collision_size, depth, collision_size);
+	if (!collider->get_size().is_equal_approx(box_size)) {
+		collider->set_size(box_size); // only on a change: each set reaches the renderer
+	}
 	// The box's top face on the plane.
 	plane_point = Vector3(p_center.x, smooth_height, p_center.z);
 	plane_normal = normal;

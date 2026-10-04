@@ -34,6 +34,7 @@
 #include "scene/3d/node_3d.h"
 
 class GPUParticles3D;
+class GPUParticlesCollisionBox3D;
 class ParticleProcessMaterial;
 class PhysXWaterSurface3D;
 class RigidBody3D;
@@ -51,6 +52,12 @@ class RigidBody3D;
 // Every tick the emitters are moved to the water surface under where they
 // were placed on the hull, level and turned with the hull's heading, so the
 // spray leaves the water there whatever the hull's pitch and roll.
+// With water_collision, a GPUParticlesCollisionBox3D follows the hull with
+// its top on the water around it (a plane fitted to the surface there, wave
+// slope included), so spray with collision on lands on the water and skids
+// along it instead of falling through. The emitters are then lifted
+// collision_margin clear of it: a particle born touching a collider loses
+// its speed off the surface at once.
 class PhysXWaterSpray3D : public Node3D {
 	GDCLASS(PhysXWaterSpray3D, Node3D);
 
@@ -87,8 +94,16 @@ private:
 	float slam_speed = 1.5f;
 	float slam_full_speed = 4.0f;
 	float slam_cooldown = 0.3f;
+	bool water_collision = true;
+	float collision_size = 12.0f;
+	float collision_fit_radius = 3.0f;
+	float collision_margin = 0.08f;
 
 	Vector<Emitter> emitters;
+	GPUParticlesCollisionBox3D *collider = nullptr; // internal child
+	bool have_plane = false; // the collider's top, as last placed
+	Vector3 plane_point;
+	Vector3 plane_normal;
 	ObjectID water_id;
 	ObjectID wake_id; // the sibling PhysXWaterWake3D: the hull's own wake isn't water it clears
 	bool built = false;
@@ -97,6 +112,7 @@ private:
 	void _clear();
 	void _physics_step(double p_delta);
 	void _add_emitters(const TypedArray<NodePath> &p_paths, Role p_role);
+	void _update_collider(const PhysXWaterSurface3D *p_water, const Vector3 &p_center, const Basis &p_level);
 
 protected:
 	void _notification(int p_what);
@@ -128,6 +144,14 @@ public:
 	float get_slam_full_speed() const { return slam_full_speed; }
 	void set_slam_cooldown(float p_seconds) { slam_cooldown = MAX(p_seconds, 0.0f); }
 	float get_slam_cooldown() const { return slam_cooldown; }
+	void set_water_collision(bool p_enabled);
+	bool get_water_collision() const { return water_collision; }
+	void set_collision_size(float p_size) { collision_size = MAX(p_size, 0.5f); }
+	float get_collision_size() const { return collision_size; }
+	void set_collision_fit_radius(float p_radius) { collision_fit_radius = MAX(p_radius, 0.1f); }
+	float get_collision_fit_radius() const { return collision_fit_radius; }
+	void set_collision_margin(float p_margin) { collision_margin = MAX(p_margin, 0.0f); }
+	float get_collision_margin() const { return collision_margin; }
 
 	PackedStringArray get_configuration_warnings() const override;
 };

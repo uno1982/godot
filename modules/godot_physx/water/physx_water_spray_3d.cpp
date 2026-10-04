@@ -38,6 +38,7 @@
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
 #include "scene/3d/gpu_particles_3d.h"
+#include "scene/3d/gpu_particles_collision_3d.h"
 #include "scene/3d/physics/rigid_body_3d.h"
 #include "scene/resources/particle_process_material.h"
 
@@ -64,6 +65,14 @@ void PhysXWaterSpray3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_slam_full_speed"), &PhysXWaterSpray3D::get_slam_full_speed);
 	ClassDB::bind_method(D_METHOD("set_slam_cooldown", "seconds"), &PhysXWaterSpray3D::set_slam_cooldown);
 	ClassDB::bind_method(D_METHOD("get_slam_cooldown"), &PhysXWaterSpray3D::get_slam_cooldown);
+	ClassDB::bind_method(D_METHOD("set_water_collision", "enabled"), &PhysXWaterSpray3D::set_water_collision);
+	ClassDB::bind_method(D_METHOD("get_water_collision"), &PhysXWaterSpray3D::get_water_collision);
+	ClassDB::bind_method(D_METHOD("set_collision_size", "size"), &PhysXWaterSpray3D::set_collision_size);
+	ClassDB::bind_method(D_METHOD("get_collision_size"), &PhysXWaterSpray3D::get_collision_size);
+	ClassDB::bind_method(D_METHOD("set_collision_fit_radius", "radius"), &PhysXWaterSpray3D::set_collision_fit_radius);
+	ClassDB::bind_method(D_METHOD("get_collision_fit_radius"), &PhysXWaterSpray3D::get_collision_fit_radius);
+	ClassDB::bind_method(D_METHOD("set_collision_margin", "margin"), &PhysXWaterSpray3D::set_collision_margin);
+	ClassDB::bind_method(D_METHOD("get_collision_margin"), &PhysXWaterSpray3D::get_collision_margin);
 
 	const String emitter_list_hint = vformat("%d/%d:%s", Variant::NODE_PATH, PROPERTY_HINT_NODE_PATH_VALID_TYPES, "GPUParticles3D");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "water_surface_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "PhysXWaterSurface3D"), "set_water_surface_path", "get_water_surface_path");
@@ -80,6 +89,11 @@ void PhysXWaterSpray3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "slam_speed", PROPERTY_HINT_RANGE, "0,20,0.01,suffix:m/s"), "set_slam_speed", "get_slam_speed");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "slam_full_speed", PROPERTY_HINT_RANGE, "0.1,30,0.01,suffix:m/s"), "set_slam_full_speed", "get_slam_full_speed");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "slam_cooldown", PROPERTY_HINT_RANGE, "0,5,0.01,suffix:s"), "set_slam_cooldown", "get_slam_cooldown");
+	ADD_GROUP("Water Collision", "");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "water_collision"), "set_water_collision", "get_water_collision");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_size", PROPERTY_HINT_RANGE, "0.5,100,0.1,or_greater,suffix:m"), "set_collision_size", "get_collision_size");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_fit_radius", PROPERTY_HINT_RANGE, "0.1,20,0.01,suffix:m"), "set_collision_fit_radius", "get_collision_fit_radius");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_margin", PROPERTY_HINT_RANGE, "0,1,0.001,suffix:m"), "set_collision_margin", "get_collision_margin");
 
 	ADD_SIGNAL(MethodInfo("slammed", PropertyInfo(Variant::VECTOR3, "position"), PropertyInfo(Variant::FLOAT, "speed")));
 }
@@ -159,6 +173,41 @@ void PhysXWaterSpray3D::_build() {
 	_add_emitters(slam_emitters, ROLE_SLAM);
 }
 
+void PhysXWaterSpray3D::_update_collider(const PhysXWaterSurface3D *p_water, const Vector3 &p_center, const Basis &p_level) {
+	have_plane = false;
+	if (collider == nullptr || !water_collision) {
+		return;
+	}
+	// A plane fitted to the water around the hull: its height under the
+	// hull and its slope across collision_fit_radius each way (the waves,
+	// without the hull's own wake).
+	const Vector3 ax = p_level.get_column(0) * collision_fit_radius;
+	const Vector3 az = p_level.get_column(2) * collision_fit_radius;
+	const float h = p_water->sample_height_excluding_wake(p_center, wake_id);
+	const float hxp = p_water->sample_height_excluding_wake(p_center + ax, wake_id);
+	const float hxn = p_water->sample_height_excluding_wake(p_center - ax, wake_id);
+	const float hzp = p_water->sample_height_excluding_wake(p_center + az, wake_id);
+	const float hzn = p_water->sample_height_excluding_wake(p_center - az, wake_id);
+	if (!Math::is_finite(h) || !Math::is_finite(hxp) || !Math::is_finite(hxn) || !Math::is_finite(hzp) || !Math::is_finite(hzn)) {
+		// Near dry land: no plane to fit.
+		collider->set_visible(false);
+		return;
+	}
+	collider->set_visible(true);
+	const Vector3 up(0, 1, 0);
+	const Vector3 tx = (p_level.get_column(0) + up * ((hxp - hxn) / (2.0f * collision_fit_radius))).normalized();
+	const Vector3 tz = p_level.get_column(2) + up * ((hzp - hzn) / (2.0f * collision_fit_radius));
+	const Vector3 normal = tz.cross(tx).normalized();
+	const Vector3 z = tx.cross(normal).normalized();
+	const float depth = 2.0f;
+	collider->set_size(Vector3(collision_size, depth, collision_size));
+	// The box's top face on the plane.
+	plane_point = Vector3(p_center.x, h, p_center.z);
+	plane_normal = normal;
+	have_plane = true;
+	collider->set_global_transform(Transform3D(Basis(normal.cross(z), normal, z), plane_point - normal * (depth * 0.5f)));
+}
+
 void PhysXWaterSpray3D::_physics_step(double p_delta) {
 	RigidBody3D *body = get_body();
 	PhysXWaterSurface3D *water = get_water_surface();
@@ -178,6 +227,7 @@ void PhysXWaterSpray3D::_physics_step(double p_delta) {
 	const float forward_speed = MAX(lin.dot(fwd), 0.0f);
 	const float bow_rate = Math::smoothstep(start_speed, reference_speed, forward_speed);
 	const float bow_velocity = Math::lerp(slow_velocity_scale, 1.0f, MIN(forward_speed / reference_speed, 1.0f));
+	_update_collider(water, xf.origin, level);
 
 	// Propeller churn, from a sibling PhysXBoat3D.
 	float churn = 0.0f;
@@ -212,7 +262,14 @@ void PhysXWaterSpray3D::_physics_step(double p_delta) {
 		const float surface = water->sample_height(hull);
 		const float gap = hull.y - water_level;
 		const float wet = CLAMP(1.0f - gap / submerge_depth, 0.0f, 1.0f);
-		particles->set_global_transform(Transform3D(level * e.rest.basis, Vector3(hull.x, surface, hull.z)));
+		float spawn_y = surface;
+		if (have_plane && plane_normal.y > 0.1f) {
+			// Clear of the collider's top, which can sit above the drawn
+			// surface in the hull's own wake.
+			const float plane_y = plane_point.y - (plane_normal.x * (hull.x - plane_point.x) + plane_normal.z * (hull.z - plane_point.z)) / plane_normal.y;
+			spawn_y = MAX(surface, plane_y) + collision_margin;
+		}
+		particles->set_global_transform(Transform3D(level * e.rest.basis, Vector3(hull.x, spawn_y, hull.z)));
 
 		float velocity_scale = 1.0f;
 		switch (e.role) {
@@ -264,6 +321,11 @@ void PhysXWaterSpray3D::_notification(int p_what) {
 		case NOTIFICATION_READY: {
 			if (!Engine::get_singleton()->is_editor_hint()) {
 				set_physics_process_internal(true);
+				// The water for the spray to land on; placed every tick.
+				collider = memnew(GPUParticlesCollisionBox3D);
+				collider->set_as_top_level(true);
+				collider->set_visible(false);
+				add_child(collider, false, INTERNAL_MODE_BACK);
 			}
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
@@ -283,6 +345,13 @@ void PhysXWaterSpray3D::set_water_surface_path(const NodePath &p_path) {
 	water_surface_path = p_path;
 	built = false;
 	update_configuration_warnings();
+}
+
+void PhysXWaterSpray3D::set_water_collision(bool p_enabled) {
+	water_collision = p_enabled;
+	if (collider != nullptr && !water_collision) {
+		collider->set_visible(false);
+	}
 }
 
 void PhysXWaterSpray3D::set_bow_emitters(const TypedArray<NodePath> &p_paths) {

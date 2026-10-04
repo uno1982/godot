@@ -100,8 +100,8 @@ uniform vec2 ripple_domain_size = vec2(20.0, 20.0);
 uniform vec2 ocean_domain_size = vec2(40.0, 40.0);
 // World XZ both height fields are centred on (set by PhysXWaterSurface3D).
 uniform vec2 grid_center = vec2(0.0);
-// World xz the whole open-water mesh is moved by (whole ocean tiles), so its
-// dense core stays under the camera; set by the node.
+// World xz the whole open-water mesh is moved by, so its dense core stays
+// under the camera; set by the node every frame.
 uniform vec2 mesh_offset = vec2(0.0);
 // Moving wake grids (PhysXWaterWake3D), up to four: height textures and
 // their rects (xy world xz of the corner, z side length -- 0 = unused, w how
@@ -839,12 +839,19 @@ void PhysXWaterSurface3D::_notification(int p_what) {
 		case NOTIFICATION_ENTER_WORLD: {
 			_rebuild();
 			set_physics_process_internal(true);
+			set_process_internal(true);
 		} break;
 		case NOTIFICATION_EXIT_WORLD: {
 			set_physics_process_internal(false);
+			set_process_internal(false);
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
 			_update(get_physics_process_delta_time());
+		} break;
+		case NOTIFICATION_INTERNAL_PROCESS: {
+			if (!Engine::get_singleton()->is_editor_hint()) {
+				_update_mesh_offset();
+			}
 		} break;
 	}
 }
@@ -1053,8 +1060,12 @@ void PhysXWaterSurface3D::_update_mesh_offset() {
 	// with distance from its dense core, and far out they're metres apart --
 	// too coarse for the short waves, so what's drawn there missed what
 	// sample_height() (and so a boat) sees by tenths of a metre. The core
-	// follows the camera instead, in whole ocean tiles: the ocean repeats
-	// every tile, so a step changes no wave height.
+	// follows the camera instead, smoothly, every frame: near the camera the
+	// dense vertices sample the waves finely wherever they sit, and the
+	// coarse surface past it reshapes gradually (~1 cm per 5 cm moved, 20-35
+	// m out) instead of jumping. (Snapping popped: whole 40 m ocean tiles
+	// re-meshed everything past the core at once -- 15 cm jumps -- and
+	// core-spacing steps made a constant 6 cm shimmer.)
 	if (mesh_instance == nullptr || water_material.is_null() || surface_mesh.is_valid() || render_extent <= MAX(ocean_domain_size.x, ocean_domain_size.y)) {
 		return;
 	}
@@ -1065,7 +1076,7 @@ void PhysXWaterSurface3D::_update_mesh_offset() {
 	}
 	const Vector3 cp = cam->get_global_position();
 	const Vector2 rel = Vector2(cp.x, cp.z) - grid_center;
-	const Vector2 offset(Math::round(rel.x / ocean_domain_size.x) * ocean_domain_size.x, Math::round(rel.y / ocean_domain_size.y) * ocean_domain_size.y);
+	const Vector2 offset = rel;
 	if (offset == mesh_offset) {
 		return;
 	}
@@ -1087,7 +1098,6 @@ void PhysXWaterSurface3D::_update(double p_delta) {
 		// Wrapped so float precision holds up in long sessions.
 		water_material->set_shader_parameter("water_time", (float)Math::fmod(water_time, 3600.0));
 	}
-	_update_mesh_offset();
 	if (seabed_pending) {
 		seabed_pending = false;
 		_sample_seabed();

@@ -60,11 +60,11 @@ public:
 	virtual real_t get_total_angular_damp() const override;
 	virtual real_t get_total_linear_damp() const override;
 
-	virtual Vector3 get_center_of_mass() const override { return Vector3(); }
-	virtual Vector3 get_center_of_mass_local() const override { return Vector3(); }
-	virtual Basis get_principal_inertia_axes() const override { return Basis(); }
+	virtual Vector3 get_center_of_mass() const override;
+	virtual Vector3 get_center_of_mass_local() const override;
+	virtual Basis get_principal_inertia_axes() const override;
 	virtual real_t get_inverse_mass() const override;
-	virtual Vector3 get_inverse_inertia() const override { return Vector3(); }
+	virtual Vector3 get_inverse_inertia() const override;
 	virtual Basis get_inverse_inertia_tensor() const override;
 
 	virtual void set_linear_velocity(const Vector3 &p_velocity) override;
@@ -75,30 +75,30 @@ public:
 	virtual void set_transform(const Transform3D &p_transform) override;
 	virtual Transform3D get_transform() const override;
 
-	virtual Vector3 get_velocity_at_local_position(const Vector3 &p_position) const override { return get_linear_velocity(); }
+	virtual Vector3 get_velocity_at_local_position(const Vector3 &p_position) const override;
 
 	virtual void apply_central_impulse(const Vector3 &p_impulse) override;
 	virtual void apply_impulse(const Vector3 &p_impulse, const Vector3 &p_position = Vector3()) override;
 	virtual void apply_torque_impulse(const Vector3 &p_impulse) override;
 	virtual void apply_central_force(const Vector3 &p_force) override;
 	virtual void apply_force(const Vector3 &p_force, const Vector3 &p_position = Vector3()) override;
-	virtual void apply_torque(const Vector3 &p_torque) override {}
+	virtual void apply_torque(const Vector3 &p_torque) override;
 
-	virtual void add_constant_central_force(const Vector3 &p_force) override {}
-	virtual void add_constant_force(const Vector3 &p_force, const Vector3 &p_position = Vector3()) override {}
-	virtual void add_constant_torque(const Vector3 &p_torque) override {}
-	virtual void set_constant_force(const Vector3 &p_force) override {}
-	virtual Vector3 get_constant_force() const override { return Vector3(); }
-	virtual void set_constant_torque(const Vector3 &p_torque) override {}
-	virtual Vector3 get_constant_torque() const override { return Vector3(); }
+	virtual void add_constant_central_force(const Vector3 &p_force) override;
+	virtual void add_constant_force(const Vector3 &p_force, const Vector3 &p_position = Vector3()) override;
+	virtual void add_constant_torque(const Vector3 &p_torque) override;
+	virtual void set_constant_force(const Vector3 &p_force) override;
+	virtual Vector3 get_constant_force() const override;
+	virtual void set_constant_torque(const Vector3 &p_torque) override;
+	virtual Vector3 get_constant_torque() const override;
 
 	virtual void set_sleep_state(bool p_sleep) override;
 	virtual bool is_sleeping() const override;
 
-	virtual void set_collision_layer(uint32_t p_layer) override {}
-	virtual uint32_t get_collision_layer() const override { return 1; }
-	virtual void set_collision_mask(uint32_t p_mask) override {}
-	virtual uint32_t get_collision_mask() const override { return 1; }
+	virtual void set_collision_layer(uint32_t p_layer) override;
+	virtual uint32_t get_collision_layer() const override;
+	virtual void set_collision_mask(uint32_t p_mask) override;
+	virtual uint32_t get_collision_mask() const override;
 
 	virtual int get_contact_count() const override;
 	virtual Vector3 get_contact_local_position(int p_contact_idx) const override;

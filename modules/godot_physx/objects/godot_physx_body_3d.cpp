@@ -170,8 +170,7 @@ void GodotPhysXBody3D::_build_actor() {
 			// repro, to make an unstable vehicle chassis MORE chaotic, not
 			// less -- rotational dynamics with a mismatched inertia/pivot
 			// pair are wrong, not just imprecise.
-			const PxVec3 com_pose = to_px(center_of_mass);
-			PxRigidBodyExt::setMassAndUpdateInertia(*dyn, mass > 0.0 ? (PxReal)mass : 1.0f, has_custom_center_of_mass ? &com_pose : nullptr);
+			_update_mass_properties();
 			dyn->setActorFlag(PxActorFlag::eDISABLE_GRAVITY, gravity_scale == 0.0 || omit_force_integration);
 			dyn->setSleepThreshold((PxReal)space->get_sleep_energy_threshold());
 			dyn->setWakeCounter((PxReal)space->get_time_before_sleep());
@@ -215,6 +214,9 @@ void GodotPhysXBody3D::set_space(GodotPhysXSpace3D *p_space) {
 		}
 		if (omit_force_integration) {
 			space->set_body_force_integrator(this, true);
+		}
+		if (has_constant_forces()) {
+			space->set_body_constant_forces(this, true);
 		}
 		_build_actor();
 	}
@@ -327,11 +329,14 @@ void GodotPhysXBody3D::set_param(PhysicsServer3D::BodyParameter p_param, const V
 			// RigidBody3D only sends this when center_of_mass_mode is CUSTOM
 			// -- there's no separate mode param, so receiving one at all is
 			// the signal (see the header comment on has_custom_center_of_mass).
+			// Going back to AUTO arrives as body_reset_mass_properties().
 			has_custom_center_of_mass = true;
 			center_of_mass = p_value;
 			break;
+		case PhysicsServer3D::BODY_PARAM_INERTIA:
+			inertia = p_value;
+			break;
 		default:
-			// Inertia overrides (BODY_PARAM_INERTIA) not handled yet.
 			break;
 	}
 
@@ -346,18 +351,13 @@ void GodotPhysXBody3D::set_param(PhysicsServer3D::BodyParameter p_param, const V
 			_apply_damping();
 		}
 		if (PxRigidDynamic *dyn = px_actor->is<PxRigidDynamic>()) {
-			if (p_param == PhysicsServer3D::BODY_PARAM_MASS && mode != PhysicsServer3D::BODY_MODE_KINEMATIC) {
-				const PxVec3 com_pose = to_px(center_of_mass);
-				PxRigidBodyExt::setMassAndUpdateInertia(*dyn, mass > 0.0 ? (PxReal)mass : 1.0f, has_custom_center_of_mass ? &com_pose : nullptr);
+			if (p_param == PhysicsServer3D::BODY_PARAM_MASS || p_param == PhysicsServer3D::BODY_PARAM_CENTER_OF_MASS || p_param == PhysicsServer3D::BODY_PARAM_INERTIA) {
+				// Recompute mass+inertia around the (new) target -- not a bare
+				// setCMassLocalPose (see the comment in _build_actor).
+				_update_mass_properties();
 			}
 			if (p_param == PhysicsServer3D::BODY_PARAM_GRAVITY_SCALE) {
 				dyn->setActorFlag(PxActorFlag::eDISABLE_GRAVITY, gravity_scale == 0.0);
-			}
-			if (p_param == PhysicsServer3D::BODY_PARAM_CENTER_OF_MASS && mode != PhysicsServer3D::BODY_MODE_KINEMATIC) {
-				// Recompute mass+inertia around the new target, same as above --
-				// not a bare setCMassLocalPose (see the comment in _build_actor).
-				const PxVec3 com_pose = to_px(center_of_mass);
-				PxRigidBodyExt::setMassAndUpdateInertia(*dyn, mass > 0.0 ? (PxReal)mass : 1.0f, &com_pose);
 			}
 		}
 	}
@@ -381,6 +381,10 @@ Variant GodotPhysXBody3D::get_param(PhysicsServer3D::BodyParameter p_param) cons
 			return linear_damp_mode;
 		case PhysicsServer3D::BODY_PARAM_ANGULAR_DAMP_MODE:
 			return angular_damp_mode;
+		case PhysicsServer3D::BODY_PARAM_CENTER_OF_MASS:
+			return center_of_mass;
+		case PhysicsServer3D::BODY_PARAM_INERTIA:
+			return inertia;
 		default:
 			return 0.0;
 	}
@@ -755,6 +759,172 @@ void GodotPhysXBody3D::apply_torque(const Vector3 &p_torque) {
 			dyn->addTorque(to_px(p_torque), PxForceMode::eFORCE);
 		}
 	}
+}
+
+void GodotPhysXBody3D::_update_mass_properties() {
+	if (!px_actor || mode == PhysicsServer3D::BODY_MODE_KINEMATIC) {
+		return;
+	}
+	PxRigidDynamic *dyn = px_actor->is<PxRigidDynamic>();
+	if (!dyn) {
+		return;
+	}
+	const PxVec3 com_pose = to_px(center_of_mass);
+	PxRigidBodyExt::setMassAndUpdateInertia(*dyn, mass > 0.0 ? (PxReal)mass : 1.0f, has_custom_center_of_mass ? &com_pose : nullptr);
+
+	if (inertia.x <= 0.0 && inertia.y <= 0.0 && inertia.z <= 0.0) {
+		return;
+	}
+	// Custom inertia, same rule as Jolt: each axis given (> 0) replaces that
+	// axis's diagonal and clears its products of inertia; the rest stay as
+	// computed from the shapes. PhysX keeps the tensor diagonalized in a
+	// rotated mass frame, so rebuild the full tensor in the body's axes,
+	// override, and diagonalize it again.
+	const PxTransform mass_frame = dyn->getCMassLocalPose();
+	const PxMat33 rot(mass_frame.q);
+	PxMat33 tensor = rot * PxMat33::createDiagonal(dyn->getMassSpaceInertiaTensor()) * rot.getTranspose();
+	for (int i = 0; i < 3; i++) {
+		if (inertia[i] <= 0.0) {
+			continue;
+		}
+		for (int j = 0; j < 3; j++) {
+			tensor(i, j) = 0.0f;
+			tensor(j, i) = 0.0f;
+		}
+		tensor(i, i) = (PxReal)inertia[i];
+	}
+	PxQuat new_rot;
+	const PxVec3 diagonal = PxMassProperties::getMassSpaceInertia(tensor, new_rot);
+	dyn->setCMassLocalPose(PxTransform(mass_frame.p, new_rot));
+	dyn->setMassSpaceInertiaTensor(diagonal);
+}
+
+void GodotPhysXBody3D::reset_mass_properties() {
+	has_custom_center_of_mass = false;
+	center_of_mass = Vector3();
+	inertia = Vector3();
+	_update_mass_properties();
+}
+
+void GodotPhysXBody3D::_constant_forces_changed() {
+	if (space) {
+		space->set_body_constant_forces(this, has_constant_forces());
+	}
+	// Same as the other backends: a new constant force wakes the body.
+	if (px_actor && _is_dynamic() && px_actor->getScene()) {
+		if (PxRigidDynamic *dyn = px_actor->is<PxRigidDynamic>()) {
+			dyn->wakeUp();
+		}
+	}
+}
+
+void GodotPhysXBody3D::add_constant_central_force(const Vector3 &p_force) {
+	if (p_force.is_zero_approx()) {
+		return;
+	}
+	constant_force += p_force;
+	_constant_forces_changed();
+}
+
+void GodotPhysXBody3D::add_constant_force(const Vector3 &p_force, const Vector3 &p_position) {
+	if (p_force.is_zero_approx()) {
+		return;
+	}
+	// p_position is an offset from the body origin in world axes (the same
+	// convention as apply_force), so the lever arm is taken from the COM.
+	constant_force += p_force;
+	constant_torque += (p_position - get_center_of_mass_relative()).cross(p_force);
+	_constant_forces_changed();
+}
+
+void GodotPhysXBody3D::add_constant_torque(const Vector3 &p_torque) {
+	if (p_torque.is_zero_approx()) {
+		return;
+	}
+	constant_torque += p_torque;
+	_constant_forces_changed();
+}
+
+void GodotPhysXBody3D::set_constant_force(const Vector3 &p_force) {
+	if (constant_force == p_force) {
+		return;
+	}
+	constant_force = p_force;
+	_constant_forces_changed();
+}
+
+void GodotPhysXBody3D::set_constant_torque(const Vector3 &p_torque) {
+	if (constant_torque == p_torque) {
+		return;
+	}
+	constant_torque = p_torque;
+	_constant_forces_changed();
+}
+
+void GodotPhysXBody3D::apply_constant_forces() {
+	if (!px_actor || omit_force_integration || !_is_dynamic() || !px_actor->getScene()) {
+		return;
+	}
+	PxRigidDynamic *dyn = px_actor->is<PxRigidDynamic>();
+	// A sleeping body stays asleep until something wakes it, as on the other
+	// backends -- hence no autowake.
+	if (!dyn || dyn->isSleeping()) {
+		return;
+	}
+	dyn->addForce(to_px(constant_force), PxForceMode::eFORCE, false);
+	dyn->addTorque(to_px(constant_torque), PxForceMode::eFORCE, false);
+}
+
+void GodotPhysXBody3D::set_axis_velocity(const Vector3 &p_axis_velocity) {
+	const Vector3 axis = p_axis_velocity.normalized();
+	Vector3 v = get_linear_velocity();
+	v -= axis * axis.dot(v);
+	v += p_axis_velocity;
+	set_linear_velocity(v);
+}
+
+Vector3 GodotPhysXBody3D::get_center_of_mass_local() const {
+	if (px_actor) {
+		if (const PxRigidBody *rb = px_actor->is<PxRigidBody>()) {
+			return to_godot(rb->getCMassLocalPose().p);
+		}
+	}
+	return has_custom_center_of_mass ? center_of_mass : Vector3();
+}
+
+Vector3 GodotPhysXBody3D::get_center_of_mass_relative() const {
+	if (px_actor) {
+		if (const PxRigidBody *rb = px_actor->is<PxRigidBody>()) {
+			return to_godot(rb->getGlobalPose().q.rotate(rb->getCMassLocalPose().p));
+		}
+	}
+	return body_transform.basis.xform(get_center_of_mass_local());
+}
+
+Basis GodotPhysXBody3D::get_principal_inertia_axes() const {
+	if (px_actor && _is_dynamic()) {
+		if (const PxRigidBody *rb = px_actor->is<PxRigidBody>()) {
+			return Basis(to_godot(rb->getGlobalPose().q * rb->getCMassLocalPose().q));
+		}
+	}
+	return Basis();
+}
+
+Vector3 GodotPhysXBody3D::get_inverse_inertia() const {
+	if (px_actor && _is_dynamic()) {
+		if (const PxRigidBody *rb = px_actor->is<PxRigidBody>()) {
+			return to_godot(rb->getMassSpaceInvInertiaTensor());
+		}
+	}
+	return Vector3();
+}
+
+Vector3 GodotPhysXBody3D::get_velocity_at_position(const Vector3 &p_position) const {
+	// Kinematic bodies included: PhysX derives their velocity from the last
+	// kinematic target, which is what a CharacterBody3D standing on a moving
+	// platform needs.
+	const Vector3 com = body_transform.origin + get_center_of_mass_relative();
+	return get_linear_velocity() + get_angular_velocity().cross(p_position - com);
 }
 
 void GodotPhysXBody3D::pull_transform_from_px() {

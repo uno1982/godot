@@ -81,6 +81,7 @@ class GodotPhysXSpace3D {
 	HashSet<GodotPhysXSoftBody3D *> soft_bodies;
 	LocalVector<GodotPhysXBody3D *> sync_bodies; // to notify in the next call_queries()
 	HashSet<GodotPhysXBody3D *> force_integrators; // bodies driving their own _integrate_forces
+	HashSet<GodotPhysXBody3D *> constant_force_bodies; // bodies with a nonzero constant force/torque
 
 public:
 	void set_self(const RID &p_self) { self = p_self; }
@@ -112,6 +113,15 @@ public:
 		contact_reporters.erase(p_body);
 		sync_bodies.erase(p_body);
 		force_integrators.erase(p_body);
+		constant_force_bodies.erase(p_body);
+	}
+
+	void set_body_constant_forces(GodotPhysXBody3D *p_body, bool p_enabled) {
+		if (p_enabled) {
+			constant_force_bodies.insert(p_body);
+		} else {
+			constant_force_bodies.erase(p_body);
+		}
 	}
 
 	void set_body_force_integrator(GodotPhysXBody3D *p_body, bool p_enabled) {

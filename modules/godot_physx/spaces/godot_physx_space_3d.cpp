@@ -336,6 +336,9 @@ void GodotPhysXSpace3D::step(real_t p_step) {
 	for (GodotPhysXBody3D *body : force_integrators) {
 		body->call_force_integration();
 	}
+	for (GodotPhysXBody3D *body : constant_force_bodies) {
+		body->apply_constant_forces();
+	}
 
 	_apply_area_overrides();
 	_detect_area_overlaps();

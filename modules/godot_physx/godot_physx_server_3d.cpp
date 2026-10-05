@@ -606,6 +606,60 @@ void GodotPhysXServer3D::body_apply_torque(RID p_body, const Vector3 &p_torque) 
 	body->apply_torque(p_torque);
 }
 
+void GodotPhysXServer3D::body_add_constant_central_force(RID p_body, const Vector3 &p_force) {
+	GodotPhysXBody3D *body = body_owner.get_or_null(p_body);
+	ERR_FAIL_NULL(body);
+	body->add_constant_central_force(p_force);
+}
+
+void GodotPhysXServer3D::body_add_constant_force(RID p_body, const Vector3 &p_force, const Vector3 &p_position) {
+	GodotPhysXBody3D *body = body_owner.get_or_null(p_body);
+	ERR_FAIL_NULL(body);
+	body->add_constant_force(p_force, p_position);
+}
+
+void GodotPhysXServer3D::body_add_constant_torque(RID p_body, const Vector3 &p_torque) {
+	GodotPhysXBody3D *body = body_owner.get_or_null(p_body);
+	ERR_FAIL_NULL(body);
+	body->add_constant_torque(p_torque);
+}
+
+void GodotPhysXServer3D::body_set_constant_force(RID p_body, const Vector3 &p_force) {
+	GodotPhysXBody3D *body = body_owner.get_or_null(p_body);
+	ERR_FAIL_NULL(body);
+	body->set_constant_force(p_force);
+}
+
+Vector3 GodotPhysXServer3D::body_get_constant_force(RID p_body) const {
+	const GodotPhysXBody3D *body = body_owner.get_or_null(p_body);
+	ERR_FAIL_NULL_V(body, Vector3());
+	return body->get_constant_force();
+}
+
+void GodotPhysXServer3D::body_set_constant_torque(RID p_body, const Vector3 &p_torque) {
+	GodotPhysXBody3D *body = body_owner.get_or_null(p_body);
+	ERR_FAIL_NULL(body);
+	body->set_constant_torque(p_torque);
+}
+
+Vector3 GodotPhysXServer3D::body_get_constant_torque(RID p_body) const {
+	const GodotPhysXBody3D *body = body_owner.get_or_null(p_body);
+	ERR_FAIL_NULL_V(body, Vector3());
+	return body->get_constant_torque();
+}
+
+void GodotPhysXServer3D::body_set_axis_velocity(RID p_body, const Vector3 &p_axis_velocity) {
+	GodotPhysXBody3D *body = body_owner.get_or_null(p_body);
+	ERR_FAIL_NULL(body);
+	body->set_axis_velocity(p_axis_velocity);
+}
+
+void GodotPhysXServer3D::body_reset_mass_properties(RID p_body) {
+	GodotPhysXBody3D *body = body_owner.get_or_null(p_body);
+	ERR_FAIL_NULL(body);
+	body->reset_mass_properties();
+}
+
 void GodotPhysXServer3D::body_set_axis_lock(RID p_body, BodyAxis p_axis, bool p_lock) {
 	GodotPhysXBody3D *body = body_owner.get_or_null(p_body);
 	ERR_FAIL_NULL(body);

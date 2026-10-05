@@ -106,6 +106,13 @@ private:
 	// pose every time -- reapplied there too, not just in set_param().
 	bool has_custom_center_of_mass = false;
 	Vector3 center_of_mass;
+	// BODY_PARAM_INERTIA, in the body's local axes; a component <= 0 keeps the
+	// shape-computed value for that axis (same rule as Jolt).
+	Vector3 inertia;
+	// Applied every step until changed (RigidBody3D.constant_force/_torque),
+	// world axes. Skipped for custom-integrator bodies, as on Jolt.
+	Vector3 constant_force;
+	Vector3 constant_torque;
 	uint32_t collision_layer = 1;
 	uint32_t collision_mask = 1;
 	uint32_t axis_lock = 0; // PhysicsServer3D::BodyAxis bitmask
@@ -166,6 +173,8 @@ private:
 	void _collision_exceptions_changed();
 	void _apply_damping();
 	void _apply_axis_lock();
+	void _update_mass_properties();
+	void _constant_forces_changed();
 	physx::PxMaterial *_get_material();
 
 public:
@@ -260,6 +269,30 @@ public:
 	void apply_central_force(const Vector3 &p_force);
 	void apply_force(const Vector3 &p_force, const Vector3 &p_position);
 	void apply_torque(const Vector3 &p_torque);
+
+	void add_constant_central_force(const Vector3 &p_force);
+	void add_constant_force(const Vector3 &p_force, const Vector3 &p_position);
+	void add_constant_torque(const Vector3 &p_torque);
+	void set_constant_force(const Vector3 &p_force);
+	Vector3 get_constant_force() const { return constant_force; }
+	void set_constant_torque(const Vector3 &p_torque);
+	Vector3 get_constant_torque() const { return constant_torque; }
+	bool has_constant_forces() const { return !constant_force.is_zero_approx() || !constant_torque.is_zero_approx(); }
+	// Called by the space before simulate() for bodies with constant forces.
+	void apply_constant_forces();
+
+	void set_axis_velocity(const Vector3 &p_axis_velocity);
+	void reset_mass_properties();
+
+	// Center of mass: offset from the body origin in world axes / in the
+	// body's own axes. Principal inertia axes in world space; inverse inertia
+	// about those axes.
+	Vector3 get_center_of_mass_relative() const;
+	Vector3 get_center_of_mass_local() const;
+	Basis get_principal_inertia_axes() const;
+	Vector3 get_inverse_inertia() const;
+	// Velocity of the body's material at a world-space point, spin included.
+	Vector3 get_velocity_at_position(const Vector3 &p_position) const;
 
 	GodotPhysXDirectBodyState3D *get_direct_state();
 

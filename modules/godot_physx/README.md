@@ -556,9 +556,8 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   `Generic6DOFJoint3D` linear/angular spring on each link to pull it back toward
   its rest pose (PhysX 5 removed joint projection, so a spring is the closest
   substitute).
-- **Not yet implemented:** separation-ray shapes; inertia tensor overrides
-  (`RigidBody3D.center_of_mass` is honored); 6DOF angular motors; joint softness / bias / restitution
-  parameters. 6DOF linear and angular springs are supported (mapped onto PhysX
+- **Not yet implemented:** separation-ray shapes; 6DOF angular motors; joint
+  softness / bias / restitution parameters. 6DOF linear and angular springs are supported (mapped onto PhysX
   joint drives). Unsupported shapes are treated as having no collision and log
   a warning once.
 - **Area-to-area detection** (`Area3D` monitoring another `Area3D`) works, but

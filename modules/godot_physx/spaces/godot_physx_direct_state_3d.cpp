@@ -63,6 +63,22 @@ real_t GodotPhysXDirectBodyState3D::get_total_angular_damp() const {
 	return body->get_angular_damp();
 }
 
+Vector3 GodotPhysXDirectBodyState3D::get_center_of_mass() const {
+	return body->get_center_of_mass_relative();
+}
+
+Vector3 GodotPhysXDirectBodyState3D::get_center_of_mass_local() const {
+	return body->get_center_of_mass_local();
+}
+
+Basis GodotPhysXDirectBodyState3D::get_principal_inertia_axes() const {
+	return body->get_principal_inertia_axes();
+}
+
+Vector3 GodotPhysXDirectBodyState3D::get_inverse_inertia() const {
+	return body->get_inverse_inertia();
+}
+
 real_t GodotPhysXDirectBodyState3D::get_inverse_mass() const {
 	const real_t m = body->get_mass();
 	return m > 0.0 ? 1.0 / m : 0.0;
@@ -125,6 +141,13 @@ Transform3D GodotPhysXDirectBodyState3D::get_transform() const {
 	return body->get_transform();
 }
 
+Vector3 GodotPhysXDirectBodyState3D::get_velocity_at_local_position(const Vector3 &p_position) const {
+	// p_position is an offset from the body origin in world axes
+	// (CharacterBody3D passes the floor contact point minus the platform's
+	// origin).
+	return body->get_velocity_at_position(body->get_transform().origin + p_position);
+}
+
 void GodotPhysXDirectBodyState3D::apply_central_impulse(const Vector3 &p_impulse) {
 	body->apply_central_impulse(p_impulse);
 }
@@ -142,8 +165,55 @@ void GodotPhysXDirectBodyState3D::apply_central_force(const Vector3 &p_force) {
 }
 
 void GodotPhysXDirectBodyState3D::apply_force(const Vector3 &p_force, const Vector3 &p_position) {
-	// Approximated as a central force for now (ignores the torque arm).
-	body->apply_central_force(p_force);
+	body->apply_force(p_force, p_position);
+}
+
+void GodotPhysXDirectBodyState3D::apply_torque(const Vector3 &p_torque) {
+	body->apply_torque(p_torque);
+}
+
+void GodotPhysXDirectBodyState3D::add_constant_central_force(const Vector3 &p_force) {
+	body->add_constant_central_force(p_force);
+}
+
+void GodotPhysXDirectBodyState3D::add_constant_force(const Vector3 &p_force, const Vector3 &p_position) {
+	body->add_constant_force(p_force, p_position);
+}
+
+void GodotPhysXDirectBodyState3D::add_constant_torque(const Vector3 &p_torque) {
+	body->add_constant_torque(p_torque);
+}
+
+void GodotPhysXDirectBodyState3D::set_constant_force(const Vector3 &p_force) {
+	body->set_constant_force(p_force);
+}
+
+Vector3 GodotPhysXDirectBodyState3D::get_constant_force() const {
+	return body->get_constant_force();
+}
+
+void GodotPhysXDirectBodyState3D::set_constant_torque(const Vector3 &p_torque) {
+	body->set_constant_torque(p_torque);
+}
+
+Vector3 GodotPhysXDirectBodyState3D::get_constant_torque() const {
+	return body->get_constant_torque();
+}
+
+void GodotPhysXDirectBodyState3D::set_collision_layer(uint32_t p_layer) {
+	body->set_collision_layer(p_layer);
+}
+
+uint32_t GodotPhysXDirectBodyState3D::get_collision_layer() const {
+	return body->get_collision_layer();
+}
+
+void GodotPhysXDirectBodyState3D::set_collision_mask(uint32_t p_mask) {
+	body->set_collision_mask(p_mask);
+}
+
+uint32_t GodotPhysXDirectBodyState3D::get_collision_mask() const {
+	return body->get_collision_mask();
 }
 
 void GodotPhysXDirectBodyState3D::set_sleep_state(bool p_sleep) {

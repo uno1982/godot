@@ -189,6 +189,19 @@ public:
 	virtual void body_apply_force(RID p_body, const Vector3 &p_force, const Vector3 &p_position = Vector3()) override;
 	virtual void body_apply_torque(RID p_body, const Vector3 &p_torque) override;
 
+	virtual void body_add_constant_central_force(RID p_body, const Vector3 &p_force) override;
+	virtual void body_add_constant_force(RID p_body, const Vector3 &p_force, const Vector3 &p_position = Vector3()) override;
+	virtual void body_add_constant_torque(RID p_body, const Vector3 &p_torque) override;
+
+	virtual void body_set_constant_force(RID p_body, const Vector3 &p_force) override;
+	virtual Vector3 body_get_constant_force(RID p_body) const override;
+
+	virtual void body_set_constant_torque(RID p_body, const Vector3 &p_torque) override;
+	virtual Vector3 body_get_constant_torque(RID p_body) const override;
+
+	virtual void body_set_axis_velocity(RID p_body, const Vector3 &p_axis_velocity) override;
+	virtual void body_reset_mass_properties(RID p_body) override;
+
 	virtual void body_set_axis_lock(RID p_body, BodyAxis p_axis, bool p_lock) override;
 	virtual bool body_is_axis_locked(RID p_body, BodyAxis p_axis) const override;
 

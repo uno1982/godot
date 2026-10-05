@@ -720,8 +720,13 @@ void GodotPhysXServer3D::joint_make_pin(RID p_joint, RID p_body_A, const Vector3
 }
 
 void GodotPhysXServer3D::pin_joint_set_param(RID p_joint, PinJointParam p_param, real_t p_value) {
-	// Bullet-era bias / damping / impulse clamp -- unsupported here, as in Jolt.
-	WARN_PRINT_ONCE("PhysX: pin joint parameters are not supported and will be ignored.");
+	// Bullet-era bias / damping / impulse clamp -- unsupported here, as in
+	// Jolt; a warning only when set away from the default (joint nodes and
+	// PhysicalBone3D send the defaults every time).
+	const real_t def = p_param == PIN_JOINT_DAMPING ? 1.0 : (p_param == PIN_JOINT_IMPULSE_CLAMP ? 0.0 : 0.3);
+	if (!Math::is_equal_approx(p_value, def)) {
+		WARN_PRINT_ONCE("PhysX: pin joint parameters are not supported and will be ignored.");
+	}
 }
 real_t GodotPhysXServer3D::pin_joint_get_param(RID p_joint, PinJointParam p_param) const {
 	return 0.0;

@@ -396,10 +396,15 @@ void GodotPhysXJoint3D::set_hinge_param(PhysicsServer3D::HingeJointParam p_param
 		case PhysicsServer3D::HINGE_JOINT_MOTOR_MAX_IMPULSE:
 			hinge_motor_max_impulse = p_value;
 			break;
-		default:
-			// Bullet-era bias / softness / relaxation -- unsupported here, as in Jolt.
-			WARN_PRINT_ONCE("PhysX: this hinge joint parameter is not supported and will be ignored.");
-			break;
+		default: {
+			// Bullet-era bias / softness / relaxation -- unsupported here, as in
+			// Jolt. Only worth a warning when set away from its default: joint
+			// nodes and PhysicalBone3D send the defaults every time.
+			const real_t def = p_param == PhysicsServer3D::HINGE_JOINT_LIMIT_SOFTNESS ? 0.9 : (p_param == PhysicsServer3D::HINGE_JOINT_LIMIT_RELAXATION ? 1.0 : 0.3);
+			if (!Math::is_equal_approx(p_value, def)) {
+				WARN_PRINT_ONCE("PhysX: this hinge joint parameter is not supported and will be ignored.");
+			}
+		} break;
 	}
 	_apply_params();
 }
@@ -470,8 +475,12 @@ void GodotPhysXJoint3D::set_cone_twist_param(PhysicsServer3D::ConeTwistJointPara
 	} else if (p_param == PhysicsServer3D::CONE_TWIST_JOINT_TWIST_SPAN) {
 		cone_twist = CLAMP(p_value, (real_t)0.01, (real_t)Math::PI);
 	} else {
-		// Bullet-era bias / softness / relaxation -- unsupported here, as in Jolt.
-		WARN_PRINT_ONCE("PhysX: this cone-twist joint parameter is not supported and will be ignored.");
+		// Bullet-era bias / softness / relaxation -- unsupported here, as in
+		// Jolt; a warning only when set away from the default (see the hinge).
+		const real_t def = p_param == PhysicsServer3D::CONE_TWIST_JOINT_SOFTNESS ? 0.8 : (p_param == PhysicsServer3D::CONE_TWIST_JOINT_RELAXATION ? 1.0 : 0.3);
+		if (!Math::is_equal_approx(p_value, def)) {
+			WARN_PRINT_ONCE("PhysX: this cone-twist joint parameter is not supported and will be ignored.");
+		}
 	}
 	_apply_params();
 }

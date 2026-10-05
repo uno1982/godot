@@ -5,9 +5,9 @@
 	</brief_description>
 	<description>
 		Add as a child of a [RigidBody3D] that also has a [PhysXBuoyancy3D] to float it, and drive it with [member throttle] and [member steering]. Forward is [code]+Z[/code], as for [VehicleBody3D]. These are the forces the boat makes itself, on top of the buoyancy:
-		- [b]Propeller[/b] at [member propeller_position]: [member throttle] pushes from there, only while it is in the water (a wave lifting the stern clear cuts the thrust); [member steering] turns it, like an outboard motor or stern drive; reverse is weaker ([member reverse_thrust_ratio]). Pushing from below and behind the centre of mass lifts the bow under power.
+		- [b]Propeller[/b] at [member propeller_position]: [member throttle] pushes from there, only while it is in the water (a wave lifting the stern clear cuts the thrust); [member steering] turns it, like an outboard motor or stern drive; reverse is weaker ([member reverse_thrust_ratio]). Pushing from below and behind the center of mass lifts the bow under power.
 		- [b]Leg[/b]: the water flowing across the propeller's leg -- the boat moving past it, plus the propeller's wash at [member propeller_wash_speed] -- pushes it sideways ([member rudder_strength]). It steers with flow, so the boat turns well under power and little while drifting, holds the stern from sliding out, and points the boat along its course.
-		- [b]Hull[/b]: drag in the boat's own frame, low along the keel and high sideways and vertically ([member hull_drag], [member hull_linear_drag]). The sideways and vertical drag act at the bow and stern ends of the hull, so its length resists turning and pitching like a keel; [member angular_damping] adds to it. All of it scales with how much of the hull is in the water, so a boat launched off a wave isn't braked by air.
+		- [b]Hull[/b]: drag in the boat's own frame, low along the keel and high sideways and vertically ([member hull_drag], [member hull_linear_drag]). The sideways and vertical drag act at the bow and stern ends of the hull, so its length resists turning and pitching like a keel; [member angular_damping] adds to it. The vertical drag answers only the hull heaving and pitching, not its forward speed, so a bow-up hull at speed isn't lifted further by it. All of it scales with how much of the hull is in the water, so a boat launched off a wave isn't braked by air.
 		It only applies [RigidBody3D] forces, so it works with whichever physics engine is selected, not just PhysX.
 	</description>
 	<tutorials>
@@ -31,7 +31,7 @@
 			Rotational damping (N·m per rad/s) in the boat's frame: [code]x[/code] pitch, [code]y[/code] yaw, [code]z[/code] roll.
 		</member>
 		<member name="hull_drag" type="Vector3" setter="set_hull_drag" getter="get_hull_drag" default="Vector3(250, 400, 18)">
-			Quadratic hull drag (N per (m/s)²) in the boat's frame: [code]x[/code] sideways, [code]y[/code] vertical, [code]z[/code] along the keel. Keep [code]z[/code] low and [code]x[/code] high for a hull that carves turns instead of skidding; [code]z[/code] with [member max_thrust] sets the top speed.
+			Quadratic hull drag (N per (m/s)²) in the boat's frame: [code]x[/code] sideways, [code]y[/code] vertical, [code]z[/code] along the keel. Keep [code]z[/code] low and [code]x[/code] high for a hull that carves turns instead of skidding; [code]z[/code] with [member max_thrust] sets the top speed, where thrust equals [code]z * v² + hull_linear_drag.z * v[/code].
 		</member>
 		<member name="hull_linear_drag" type="Vector3" setter="set_hull_linear_drag" getter="get_hull_linear_drag" default="Vector3(60, 200, 8)">
 			Linear hull drag (N per m/s), same axes as [member hull_drag] -- settles slow drifting, where quadratic drag fades away.

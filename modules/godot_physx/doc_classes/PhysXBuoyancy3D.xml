@@ -6,7 +6,7 @@
 	<description>
 		Add as a child of a [RigidBody3D] and set [member water_surface_path]. Sample points on the hull each carry a share of the hull's footprint ([member hull_area]): the water pushes each one up by the weight of the water it displaces (density x gravity x area x depth, up to [member hull_height]), so the body settles at its real draft for its mass, pitches and rolls with the waves, and rights itself from the spread of the points. Submerged points drag against the water, and the body disturbs the water's ripple layer, more as it moves.
 		With no [member sample_points], [member hull_area] or [member hull_height] set, they come from the bounds of the body's [CollisionShape3D] children: six points on the bottom (three along the longer side, two across), three quarters of the bounding footprint, and its height.
-		It only applies [RigidBody3D] forces, so it works with whichever physics engine is selected, not just PhysX. For a powered boat, add a [PhysXBoat3D] next to it.
+		It only applies [RigidBody3D] forces, so it works with whichever physics engine is selected, not just PhysX. For a powered boat, add a [PhysXBoat3D] next to it, and a [PhysXWaterWake3D] for its wake: the body floats on the water without its own wake (other bodies ride it).
 	</description>
 	<tutorials>
 	</tutorials>

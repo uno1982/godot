@@ -8,8 +8,9 @@
 		A child [MeshInstance3D] (a subdivided [PlaneMesh], sized to [member ocean_domain_size], or the resampled [member surface_mesh] footprint) is created automatically and displaced by both layers, summed. Call [method sample_height] to query the same combined surface on the CPU -- e.g. from a buoyancy script (see [code]demo/common/buoyant_body.gd[/code] in the paired demo project) -- and [method submit_sphere] once per physics tick per floating body so it actually disturbs the ripple layer, not just receives a height back.
 		No [RenderingDevice] compute support (e.g. running headless) leaves the surface flat and [method sample_height] returning [member water_level] plus zero -- a graceful no-op, not an error, matching every other GPU solver in this module.
 		Set [member surface_mesh] to give the water any outline -- a round pool, a kidney-bean pond, a lake with an island. Waves reflect off its shoreline, and [method sample_height]/[method is_wet] report no water outside it.
-		Set [member seabed_from_floor] for water over uneven ground -- a beach, a lake bed. The still-water depth of every ripple cell is then measured from the floor: waves travel at the local shallow-water speed, so they slow and bunch up over shallows, the shoreline falls wherever the ground rises above the water, and the ocean chop fades out over the last [member shallow_fade_depth] metres. Without it, the whole surface uses the constant [member depth].
-		Both simulation grids are centred on the node's global position (plus the [member surface_mesh] footprint's centre), fixed when the node enters the tree or a property changes. The node's rotation and scale are not applied to the simulation, so keep it unrotated and unscaled.
+		Set [member seabed_from_floor] for water over uneven ground -- a beach, a lake bed. The still-water depth of every ripple cell is then measured from the floor: waves travel at the local shallow-water speed, so they slow and bunch up over shallows, the shoreline falls wherever the ground rises above the water, and the ocean chop fades out over the last [member shallow_fade_depth] meters. Without it, the whole surface uses the constant [member depth].
+		[PhysXWaterWake3D] nodes on moving bodies draw their wakes and foam on the surface (up to four), and [method sample_height] includes them.
+		Both simulation grids are centered on the node's global position (plus the [member surface_mesh] footprint's center), fixed when the node enters the tree or a property changes. The node's rotation and scale are not applied to the simulation, so keep it unrotated and unscaled.
 		Only runs in an actual running game, never in the editor -- placing or moving the node in the Inspector does not simulate.
 	</description>
 	<tutorials>
@@ -61,21 +62,21 @@
 		<method name="get_effective_fetch" qualifiers="const">
 			<return type="float" />
 			<description>
-				The fetch (metres of open water the wind blows over) the wave spectrum actually uses: [member fetch] when it's above 0, otherwise the automatic value -- the longest side of the [member surface_mesh] footprint for enclosed water, or 100 km (a fully developed open sea) for the plain square.
+				The fetch (meters of open water the wind blows over) the wave spectrum actually uses: [member fetch] when it's above 0, otherwise the automatic value -- the longest side of the [member surface_mesh] footprint for enclosed water, or 100 km (a fully developed open sea) for the plain square.
 			</description>
 		</method>
 		<method name="is_wet" qualifiers="const">
 			<return type="bool" />
 			<param index="0" name="world_pos" type="Vector3" />
 			<description>
-				Whether there is water at [code]world_pos[/code]'s XZ, at the ripple grid's resolution: inside the [member surface_mesh] footprint, and not over dry seabed ([member seabed_from_floor]). With a [member render_extent] past the simulated square, the open water out to the edge of the rendered surface counts too, carrying on the seabed at the square's edge the way the surface is drawn (the sea side stays sea, a beach stays dry). [code]world_pos.y[/code] is ignored.
+				Whether there is water at [param world_pos]'s XZ, at the ripple grid's resolution: inside the [member surface_mesh] footprint, and not over dry seabed ([member seabed_from_floor]). With a [member render_extent] past the simulated square, the open water out to the edge of the rendered surface counts too, carrying on the seabed at the square's edge the way the surface is drawn (the sea side stays sea, a beach stays dry). [code]world_pos.y[/code] is ignored.
 			</description>
 		</method>
 		<method name="sample_height" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="world_pos" type="Vector3" />
 			<description>
-				The combined surface height (ripple + ocean layers, plus [member water_level]) at [code]world_pos[/code]'s XZ, bilinearly sampled from the last periodic readback (a few frames behind the GPU simulation -- fine for buoyancy, not meant for sub-frame precision). [code]world_pos.y[/code] is ignored.
+				The combined surface height (ripple + ocean layers, plus [member water_level]) at [param world_pos]'s XZ, bilinearly sampled from the last readback (refreshed every physics tick, a few frames behind the GPU simulation -- fine for buoyancy, not meant for sub-frame precision), plus any [PhysXWaterWake3D] wakes there. [code]world_pos.y[/code] is ignored.
 				Returns [code]-INF[/code] where [method is_wet] is [code]false[/code] (outside the [member surface_mesh] footprint, or over dry seabed), so anything comparing a point's height against it -- a buoyancy script's submersion depth -- reads "not in water" there.
 				Past the simulated square (with a [member render_extent]) it is the FFT ocean, tiled, on still water -- the same surface that is drawn there, so bodies float on the open sea too.
 			</description>
@@ -86,7 +87,7 @@
 			<param index="1" name="radius" type="float" />
 			<param index="2" name="strength" type="float" />
 			<description>
-				A one-shot local disturbance (a splash) at [code]world_pos[/code]'s XZ -- consumed by the next simulation step, then cleared automatically. Call it once per event (e.g. on impact), not every tick.
+				A one-shot local disturbance (a splash) at [param world_pos]'s XZ -- consumed by the next simulation step, then cleared automatically. Call it once per event (e.g. on impact), not every tick.
 			</description>
 		</method>
 		<method name="submit_sphere">
@@ -96,7 +97,7 @@
 			<param index="2" name="radius" type="float" />
 			<param index="3" name="strength" type="float" default="1.0" />
 			<description>
-				A persistent body proxy that pushes the ripple layer's surface down near [code]world_pos[/code]'s XZ, proportional to [code]radius[/code] and [code]strength[/code]. Call once per physics tick while a body is in the water (e.g. from its own [code]_physics_process[/code]), keyed by any id stable for that body's lifetime -- [code]get_instance_id()[/code] works well. Call [method clear_sphere] with the same id when the body leaves.
+				A persistent body proxy that pushes the ripple layer's surface down near [param world_pos]'s XZ, proportional to [param radius] and [param strength]. Call once per physics tick while a body is in the water (e.g. from its own [code]_physics_process[/code]), keyed by any id stable for that body's lifetime -- [code]get_instance_id()[/code] works well. Call [method clear_sphere] with the same id when the body leaves.
 			</description>
 		</method>
 	</methods>
@@ -117,13 +118,13 @@
 			Damping (ALPHA) on the local ripple layer's wave equation -- higher settles disturbances faster.
 		</member>
 		<member name="depth" type="float" setter="set_depth" getter="get_depth" default="3.0">
-			Still-water depth in metres used everywhere unless [member seabed_from_floor] measures it per cell (then it only applies where no floor is found below the water). Sets the ripple layer's wave speed, [code]sqrt(g * depth)[/code], and the ocean layer's dispersion.
+			Still-water depth in meters used everywhere unless [member seabed_from_floor] measures it per cell (then it only applies where no floor is found below the water). Sets the ripple layer's wave speed, [code]sqrt(g * depth)[/code], and the ocean layer's dispersion.
 		</member>
 		<member name="domain_size" type="Vector2" setter="set_domain_size" getter="get_domain_size" default="Vector2(20, 20)">
 			World-space extent (X, Z) of the local ripple layer -- independent of [member ocean_domain_size], see [member ocean_grid_resolution]'s own note on why. Ignored when [member surface_mesh] is set: the ripple grid is then fitted to the footprint's bounds.
 		</member>
 		<member name="fetch" type="float" setter="set_fetch" getter="get_fetch" default="0.0">
-			How far the wind has blown over open water, in metres. The ocean layer is a fetch-limited JONSWAP spectrum, so fetch sets how tall and how long the wind waves get at a given [member wind_speed]: a few metres give tiny, short ripples, kilometres give a developed sea. [code]0[/code] (auto) uses the [member surface_mesh] footprint's longest side for enclosed water, or a fully developed open sea (100 km) without one. Only wavelengths up to [member ocean_domain_size] are represented, and waves shorter than two ocean grid cells aren't, so a small fetch at a coarse [member ocean_grid_resolution] can leave the ocean layer flat.
+			How far the wind has blown over open water, in meters. The ocean layer is a fetch-limited JONSWAP spectrum, so fetch sets how tall and how long the wind waves get at a given [member wind_speed]: a few meters give tiny, short ripples, kilometers give a developed sea. [code]0[/code] (auto) uses the [member surface_mesh] footprint's longest side for enclosed water, or a fully developed open sea (100 km) without one. Only wavelengths up to [member ocean_domain_size] are represented, and waves shorter than two ocean grid cells aren't, so a small fetch at a coarse [member ocean_grid_resolution] can leave the ocean layer flat.
 		</member>
 		<member name="foam_enabled" type="bool" setter="set_foam_enabled" getter="get_foam_enabled" default="true">
 			Whether whitecap foam forms at all. Turn it off for water that should never show foam, like a pool or a sheltered pond; turning it off also clears any foam already there. Foam only comes from the ocean waves folding (see [member foam_threshold]) -- bodies disturbing the water don't create it.
@@ -147,7 +148,7 @@
 			Cell count per side of the FFT ocean layer's grid. Rounded up to the nearest power of two if set otherwise -- the Stockham FFT passes require it. Independent of [member grid_resolution]/[member domain_size] (the ripple layer's own grid) by design: they're two different consumers of "water height" with very different resolution/precision needs, kept architecturally separate rather than forced to share one grid.
 		</member>
 		<member name="render_extent" type="float" setter="set_render_extent" getter="get_render_extent" default="0.0">
-			Side length in metres of the rendered surface, centred on the simulation, for open water that runs to the horizon. Past the simulated square the FFT ocean tiles seamlessly (it's periodic), the ripples settle to still water, and the seabed/shoreline values at the square's edge carry on outward; vertex spacing grows with distance, so a few hundred metres costs only a few hundred extra vertices per side. [code]0[/code] (or anything up to [member ocean_domain_size]) renders just the simulated square -- keep it that way for walled water. Ignored with a [member surface_mesh]. Custom materials need to sample the ocean textures with repeat to match (the built-in one does).
+			Side length in meters of the rendered surface, centered on the simulation, for open water that runs to the horizon. Past the simulated square the FFT ocean tiles seamlessly (it's periodic), the ripples settle to still water, and the seabed/shoreline values at the square's edge carry on outward; vertex spacing grows with distance, so a few hundred meters costs only a few hundred extra vertices per side. [code]0[/code] (or anything up to [member ocean_domain_size]) renders just the simulated square -- keep it that way for walled water. Ignored with a [member surface_mesh]. Custom materials need to sample the ocean textures with repeat to match (the built-in one does).
 		</member>
 		<member name="ripple_amplitude" type="float" setter="set_ripple_amplitude" getter="get_ripple_amplitude" default="1.0">
 			Multiplier on the ripple displacement driven by submitted floating-body proxies and impulses. Set lower for small splashes and wakes in a pool; this does not scale the FFT ocean waves.
@@ -159,17 +160,17 @@
 			When on, the still-water depth of each ripple cell is measured on the first physics tick by a ray straight down onto the static bodies in [member seabed_collision_mask], starting 100 m above the water. Waves then travel at the local shallow-water speed, cells where the floor is above the water are dry shore ([method sample_height] returns [code]-INF[/code] and [method is_wet] [code]false[/code] there), and the ocean chop fades out over the shallows (see [member shallow_fade_depth]). Where no floor is found the constant [member depth] applies. Combines with [member surface_mesh]: cells outside its footprint stay dry. The floor is measured once; moving it afterwards needs a property change to re-measure.
 		</member>
 		<member name="shallow_fade_depth" type="float" setter="set_shallow_fade_depth" getter="get_shallow_fade_depth" default="1.0">
-			Water shallower than this many metres fades the ocean chop out, down to none at the waterline, so the surface meets a beach calmly instead of the chop cutting through the sand. Only has an effect where the depth varies ([member seabed_from_floor] or [member surface_mesh]).
+			Water shallower than this many meters fades the ocean chop out, down to none at the waterline, so the surface meets a beach calmly instead of the chop cutting through the sand. Only has an effect where the depth varies ([member seabed_from_floor] or [member surface_mesh]).
 		</member>
 		<member name="shore_foam_band" type="float" setter="set_shore_foam_band" getter="get_shore_foam_band" default="0.5">
-			Shore foam: where the still water is shallower than this many metres, each arriving wave crest leaves a thin, lacy foam sheet at the waterline that moves with the water (see [member shore_undertow]), carries on up the swash onto the sand thinning out as it goes (see [member swash_run_up]), and fades out after it (about 1.5 x [member foam_persistence]). Needs a varying depth, so it only appears with [member seabed_from_floor] -- a pool's walls don't get it. [code]0[/code] turns it off, as does [member foam_enabled]. The default material also tints the shallows toward a milky [code]shallow_color[/code] ([code]shallow_tint[/code]) and feathers the surface where it meets the shore; [code]shore_foam_strength[/code] and [code]shore_foam_breakup[/code] tune the sheet. The visible waterline isn't the still-water depth contour: it moves with the arriving waves and slow noise, forming drifting lobes and bays, with a thin bright rim behind it ([code]shore_rim_strength[/code]). The edge is measured in real water depth, independent of [member shallow_fade_depth]: it pulls back over at most [code]swash_reach[/code] metres of depth (pushed in by crests of [code]swash_wave_height[/code]), and [code]shore_edge_softness[/code] is the depth in metres it feathers out over, so the surface only turns clear where the water really is that thin.
+			Shore foam: where the still water is shallower than this many meters, each arriving wave crest leaves a thin, lacy foam sheet at the waterline that moves with the water (see [member shore_undertow]), carries on up the swash onto the sand thinning out as it goes (see [member swash_run_up]), and fades out after it (about 1.5 x [member foam_persistence]). Needs a varying depth, so it only appears with [member seabed_from_floor] -- a pool's walls don't get it. [code]0[/code] turns it off, as does [member foam_enabled]. The default material also tints the shallows toward a milky [code]shallow_color[/code] ([code]shallow_tint[/code]) and feathers the surface where it meets the shore; [code]shore_foam_strength[/code] and [code]shore_foam_breakup[/code] tune the sheet. The visible waterline isn't the still-water depth contour: it moves with the arriving waves and slow noise, forming drifting lobes and bays, with a thin bright rim behind it ([code]shore_rim_strength[/code]). The edge is measured in real water depth, independent of [member shallow_fade_depth]: it pulls back over at most [code]swash_reach[/code] meters of depth (pushed in by crests of [code]swash_wave_height[/code]), and [code]shore_edge_softness[/code] is the depth in meters it feathers out over, so the surface only turns clear where the water really is that thin.
 		</member>
 		<member name="shore_undertow" type="float" setter="set_shore_undertow" getter="get_shore_undertow" default="0.3">
-			Steady seaward drift (m/s) of the shore foam. The foam moves with the water along the seabed slope at the shallow-water particle velocity -- pushed up the beach under each arriving crest, drawn back under each trough (with the local wave height capped by depth-limited breaking) -- and this undertow drags it back out into the water on top of that, so the sheet surges in and slides back out in streaks. [code]0[/code] leaves it rocking in place.
+			Steady seaward drift (m/s) of the shore foam. The foam moves with the water along the seabed slope at the shallow-water particle velocity -- pushed up the beach under each arriving crest, drawn back between crests (with the local wave height capped by depth-limited breaking) -- and this undertow drags it back out into the water on top of that, so the sheet surges in and slides back out in streaks. [code]0[/code] leaves it rocking in place.
 		</member>
 		<member name="surface_mesh" type="Mesh" setter="set_surface_mesh" getter="get_surface_mesh">
-			Optional water outline: any flat [Mesh] (node-local) whose up-facing triangles' X/Z footprint is the water -- e.g. a disc baked from a [CSGCylinder3D], or a shape modelled elsewhere. Its own vertices are not displaced directly; the footprint is resampled into an even grid clipped to the outline, so a coarse or fan-triangulated mesh still gets vertices to animate everywhere.
-			When set, the ripple grid is fitted to the footprint's bounds ([member domain_size] is ignored) at [member grid_resolution], cells outside it are dry land the waves reflect off, caustics are cut to the water area, and [method sample_height] returns [code]-INF[/code] over dry cells. The FFT ocean layer still covers [member ocean_domain_size] around the same centre -- size it to cover the footprint. Unset, the water is the square [member domain_size] / [member ocean_domain_size] plane.
+			Optional water outline: any flat [Mesh] (node-local) whose up-facing triangles' X/Z footprint is the water -- e.g. a disc baked from a [CSGCylinder3D], or a shape modeled elsewhere. Its own vertices are not displaced directly; the footprint is resampled into an even grid clipped to the outline, so a coarse or fan-triangulated mesh still gets vertices to animate everywhere.
+			When set, the ripple grid is fitted to the footprint's bounds ([member domain_size] is ignored) at [member grid_resolution], cells outside it are dry land the waves reflect off, caustics are cut to the water area, and [method sample_height] returns [code]-INF[/code] over dry cells. The FFT ocean layer still covers [member ocean_domain_size] around the same center -- size it to cover the footprint. Unset, the water is the square [member domain_size] / [member ocean_domain_size] plane.
 		</member>
 		<member name="swash_drain_speed" type="float" setter="set_swash_drain_speed" getter="get_swash_drain_speed" default="0.12">
 			How fast (m/s, vertical) the swash slides back down the sand after a wave has run up. On a 1:14 beach the default 0.12 is a backwash of about 1.7 m/s along the sand.
@@ -184,7 +185,7 @@
 			The material driving the surface mesh's displacement/shading. A default is created automatically if left unset -- assign your own only if you need to customize the look; it must keep sampling [code]ripple_height_tex[/code]/[code]ocean_height_tex[/code] in its vertex shader the same way the default does, or the mesh will stop moving.
 		</member>
 		<member name="wave_amplitude" type="float" setter="set_wave_amplitude" getter="get_wave_amplitude" default="1.0">
-			Linear height multiplier for the FFT ocean waves. At [code]1.0[/code] they have physical heights for the JONSWAP spectrum at [member wind_speed] and [member fetch] (in metres); below 1 reduces them proportionally, 0 removes the FFT ocean waves. This does not scale local ripple disturbances.
+			Linear height multiplier for the FFT ocean waves. At [code]1.0[/code] they have physical heights for the JONSWAP spectrum at [member wind_speed] and [member fetch] (in meters); below 1 reduces them proportionally, 0 removes the FFT ocean waves. This does not scale local ripple disturbances.
 		</member>
 		<member name="wet_sand_dry_time" type="float" setter="set_wet_sand_dry_time" getter="get_wet_sand_dry_time" default="12.0">
 			Time constant (s) for sand uncovered by the swash to dry: the wet darkening fades to about a third over this long. See [member swash_run_up].

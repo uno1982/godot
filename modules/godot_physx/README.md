@@ -431,7 +431,7 @@ never in the editor.
 An animated water surface with two GPU compute layers summed into one displaced
 mesh (created automatically as a child): a Tessendorf FFT ocean with a
 fetch-limited JONSWAP wind spectrum (`wind_speed`, `wind_direction`, `fetch`,
-over `ocean_domain_size`; heights in metres at `wave_amplitude` 1) and a local
+over `ocean_domain_size`; heights in meters at `wave_amplitude` 1) and a local
 ripple layer — a damped shallow-water wave equation over `domain_size` whose
 wave speed follows `depth` — that bodies disturb.
 
@@ -442,7 +442,7 @@ reflect off the shoreline, and the rendered surface is the footprint resampled
 into an even grid, so a coarse or fan-triangulated mesh still animates
 everywhere. With `fetch` left at 0 the footprint also sets the fetch, so an
 enclosed pool only gets small, short wind ripples while an open square is a
-developed sea. The simulation is centred on the node's position; keep the node
+developed sea. The simulation is centered on the node's position; keep the node
 unrotated and unscaled.
 
 `choppiness` adds the ocean waves' horizontal displacement, so crests come
@@ -457,13 +457,13 @@ Set `seabed_from_floor` for water over uneven ground, like a beach or a lake
 bed: each ripple cell's depth is measured once from the floor (static bodies in
 `seabed_collision_mask`). Waves then travel at the local shallow-water speed,
 slowing over shallows, the shoreline falls wherever the ground rises above the
-water, and the ocean chop fades out over the last `shallow_fade_depth` metres.
+water, and the ocean chop fades out over the last `shallow_fade_depth` meters.
 Without it, the constant `depth` applies everywhere. On a beach, each arriving
 crest also leaves a thin foam sheet at the waterline (`shore_foam_band`) that
 surges in with the wave and slides back out with the backwash and undertow
 (`shore_undertow`), the shallows turn milky, and the surface feathers out onto
 the sand along a waterline that scallops with the arriving waves rather than
-following the depth contour. That edge is measured in metres of water
+following the depth contour. That edge is measured in meters of water
 (`swash_reach`, `shore_edge_softness` in the material), so it behaves the same
 whatever `shallow_fade_depth` is. The bigger waves also run up past the
 still-water line as a thin film on the sand (`swash_run_up`,
@@ -501,6 +501,43 @@ can fold its position into one tile and light a whole seabed.
 Runs on any GPU with compute support, no CUDA needed. Without compute (e.g.
 headless) the surface stays flat and `sample_height()` returns `water_level`.
 
+## Boats — `PhysXBuoyancy3D`, `PhysXBoat3D`, `PhysXWaterWake3D`, `PhysXWaterSpray3D`
+
+Four nodes, each a child of a `RigidBody3D`, that float and drive it on a
+`PhysXWaterSurface3D`. Buoyancy and the boat only apply `RigidBody3D` forces,
+so they work with whichever physics engine is selected, Jolt included.
+
+- **`PhysXBuoyancy3D`** floats the body: sample points on the hull (six from
+  its collision shapes' bounds by default) each carry a share of `hull_area`
+  and are pushed up by the water they displace, so the body settles at its
+  real draft, pitches and rolls with the waves and rights itself. It reads the
+  water with `sample_height()`, refreshed every physics tick, waves and other
+  bodies' wakes included.
+- **`PhysXBoat3D`** drives it: thrust from a propeller at `propeller_position`
+  (only while it's in the water) that `steering` turns like an outboard, the
+  water across the propeller's leg (it steers with flow and holds the stern on
+  course), and hull drag in the boat's frame — low along the keel, high
+  sideways and vertically, at the bow and stern so the hull's length resists
+  turning and pitching. `hull_drag.z` with `max_thrust` sets the top speed.
+- **`PhysXWaterWake3D`** leaves a wake: a small GPU ripple grid that slides
+  with the boat (fixed to the water, so the wake stays where it was made) and
+  that the hull pushes down, plus foam — two bands peeling off the hull's
+  sides and a propeller band down the middle, fading over `foam_persistence`.
+  The water material draws it and `sample_height()` includes it, so other
+  floaters ride it. A grid big enough to hold a turning circle (`size`, with
+  `cells` for about 0.25 m cells) and a `foam_persistence` of about a lap let
+  the wake close into a ring.
+- **`PhysXWaterSpray3D`** drives ordinary `GPUParticles3D` nodes authored in
+  the editor: bow emitters with speed, stern emitters with thrust, one-shot
+  slam emitters when the hull drops back onto the water. Emitters are held at
+  the water under their place on the hull. The spray leaves foam where it
+  lands (worked out from the emitters' launch geometry, no particle collision
+  needed); `water_collision` adds a collider on the water for spray that
+  should land and skid. Save the emitters with `emitting` off — the node
+  starts them — or the editor redraws every frame for them.
+
+The demo boat is `demo/common/boat/boat.tscn`, on the beach.
+
 ## Determinism and multiplayer
 
 - **GPU dynamics is never deterministic** — GPU solver scheduling varies run to
@@ -520,7 +557,7 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   its rest pose (PhysX 5 removed joint projection, so a spring is the closest
   substitute).
 - **Not yet implemented:** separation-ray shapes; inertia tensor overrides
-  (`RigidBody3D.center_of_mass` is honoured); 6DOF angular motors; joint softness / bias / restitution
+  (`RigidBody3D.center_of_mass` is honored); 6DOF angular motors; joint softness / bias / restitution
   parameters. 6DOF linear and angular springs are supported (mapped onto PhysX
   joint drives). Unsupported shapes are treated as having no collision and log
   a warning once.
@@ -583,7 +620,7 @@ For deterministic lockstep multiplayer, use the Jolt backend.
 | `nodes/` | `PhysXParticleFluid3D`, `PhysXGranular3D`, `PhysXGas3D`, `PhysXGasEmitter3D`, `PhysXCloth3D`, `PhysXChunkEmitter3D` |
 | `particles/` | the MPM fluid/granular and gas compute solvers and their GLSL shaders |
 | `vehicle/` | `PhysXVehicle3D`, `PhysXMotorcycle3D`, `PhysXTank3D`, `PhysXVehicleWheel3D` and the `PxVehicle2` glue |
-| `water/` | `PhysXWaterSurface3D` and its ripple / FFT ocean / caustics compute and draw passes |
+| `water/` | `PhysXWaterSurface3D` and its ripple / FFT ocean / caustics compute and draw passes; `PhysXBuoyancy3D`, `PhysXBoat3D`, `PhysXWaterWake3D` (and its wake compute pass) and `PhysXWaterSpray3D` |
 | `blast/` | `PhysXDestructible3D`, `PhysXBlastAsset`, and the NvBlast fracture-authoring bridge — optional, gated on `blast_sdk=` (see Building above) |
 | `editor/` | viewport gizmos for the fluid and cloth nodes; the Blast fracture dialog and its FileSystem/Inspector plugins |
 

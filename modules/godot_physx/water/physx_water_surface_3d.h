@@ -309,6 +309,12 @@ private:
 	Ref<Texture2DRD> swash_tex;
 	Ref<Texture2DRD> caustics_texture;
 	bool textures_bound = false; // set once, after the solver's RD textures actually exist (see _update())
+	// Unhooks every Texture2DRD above from the solver's RD textures, before
+	// they're freed: the materials holding them (the water's, and caustics
+	// receivers -- often scene sub-resources, so the same objects outlive
+	// this node across a scene reload) fall back to their defaults instead
+	// of drawing with freed textures.
+	void _detach_textures();
 
 	bool caustics_enabled = true;
 	Vector3 caustics_sun_direction = Vector3(-0.35f, -1.0f, -0.25f);

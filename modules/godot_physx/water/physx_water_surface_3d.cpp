@@ -862,6 +862,9 @@ void PhysXWaterSurface3D::_notification(int p_what) {
 		case NOTIFICATION_EXIT_WORLD: {
 			set_physics_process_internal(false);
 			set_process_internal(false);
+			// The solver's textures go with this node (or are rebuilt on the
+			// way back in): let go of them first.
+			_detach_textures();
 		} break;
 		case NOTIFICATION_INTERNAL_PHYSICS_PROCESS: {
 			_update(get_physics_process_delta_time());
@@ -1058,6 +1061,10 @@ void PhysXWaterSurface3D::_configure_solver() {
 	s.wave_amplitude = wave_amplitude;
 	s.fetch = get_effective_fetch();
 	s.caustics_enabled = caustics_enabled;
+	// configure() frees the solver's textures and makes new ones: let go of
+	// the old ones first (a runtime change -- wave_amplitude, say -- drew with
+	// freed textures until the new ones were bound).
+	_detach_textures();
 	solver.configure(s);
 	solver.set_foam_settings(foam_enabled, choppiness, foam_threshold, foam_persistence, shore_foam_band, shore_undertow);
 	solver.set_swash_settings(swash_run_up, swash_drain_speed, wet_sand_dry_time);
@@ -1066,11 +1073,17 @@ void PhysXWaterSurface3D::_configure_solver() {
 		WARN_PRINT("PhysXWaterSurface3D: the water compute solver could not start (no RenderingDevice / compute support).");
 	}
 
-	textures_bound = false; // solver was just rebuilt -- its old texture RIDs (if any) are gone, rebind once available
-	if (caustics_texture.is_valid()) {
-		caustics_texture->set_texture_rd_rid(RID());
-	}
 	frames_since_refresh = REFRESH_EVERY_FRAMES; // force an immediate CPU cache refresh on the next _update()
+}
+
+void PhysXWaterSurface3D::_detach_textures() {
+	const Ref<Texture2DRD> textures[] = { ripple_height_tex, ocean_height_tex, ocean_fade_tex, shore_depth_tex, ocean_disp_tex, ocean_deriv_tex, ocean_foam_tex, shore_foam_tex, swash_tex, caustics_texture };
+	for (const Ref<Texture2DRD> &texture : textures) {
+		if (texture.is_valid()) {
+			texture->set_texture_rd_rid(RID());
+		}
+	}
+	textures_bound = false; // rebound once the solver's (new) textures exist
 }
 
 void PhysXWaterSurface3D::_update_mesh_offset() {

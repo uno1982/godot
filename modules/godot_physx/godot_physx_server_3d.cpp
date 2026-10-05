@@ -351,6 +351,12 @@ void GodotPhysXServer3D::area_set_monitorable(RID p_area, bool p_monitorable) {
 	area->set_monitorable(p_monitorable);
 }
 
+void GodotPhysXServer3D::area_set_ray_pickable(RID p_area, bool p_enable) {
+	GodotPhysXArea3D *area = area_owner.get_or_null(p_area);
+	ERR_FAIL_NULL(area);
+	area->set_ray_pickable(p_enable);
+}
+
 void GodotPhysXServer3D::area_set_monitor_callback(RID p_area, const Callable &p_callback) {
 	GodotPhysXArea3D *area = area_owner.get_or_null(p_area);
 	ERR_FAIL_NULL(area);
@@ -544,6 +550,12 @@ bool GodotPhysXServer3D::body_is_continuous_collision_detection_enabled(RID p_bo
 	GodotPhysXBody3D *body = body_owner.get_or_null(p_body);
 	ERR_FAIL_NULL_V(body, false);
 	return body->is_ccd_enabled();
+}
+
+void GodotPhysXServer3D::body_set_ray_pickable(RID p_body, bool p_enable) {
+	GodotPhysXBody3D *body = body_owner.get_or_null(p_body);
+	ERR_FAIL_NULL(body);
+	body->set_ray_pickable(p_enable);
 }
 
 void GodotPhysXServer3D::body_set_param(RID p_body, BodyParameter p_param, const Variant &p_value) {

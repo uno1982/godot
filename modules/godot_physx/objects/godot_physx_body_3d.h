@@ -117,6 +117,7 @@ private:
 	uint32_t collision_mask = 1;
 	uint32_t axis_lock = 0; // PhysicsServer3D::BodyAxis bitmask
 	bool ccd = false;
+	bool ray_pickable = true; // input_ray_pickable: hit by the viewport's picking ray
 	bool can_sleep = true;
 	bool sleeping = false;
 
@@ -220,6 +221,9 @@ public:
 
 	void set_ccd(bool p_enable);
 	bool is_ccd_enabled() const { return ccd; }
+
+	void set_ray_pickable(bool p_enable) { ray_pickable = p_enable; }
+	bool is_ray_pickable() const { return ray_pickable; }
 
 	void set_axis_lock(PhysicsServer3D::BodyAxis p_axis, bool p_lock);
 	bool is_axis_locked(PhysicsServer3D::BodyAxis p_axis) const { return axis_lock & p_axis; }

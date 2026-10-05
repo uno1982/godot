@@ -81,6 +81,7 @@ private:
 	uint32_t collision_layer = 1;
 	uint32_t collision_mask = 1;
 	bool monitorable = false;
+	bool ray_pickable = true; // input_ray_pickable: hit by the viewport's picking ray
 
 	// Space overrides applied to overlapping bodies (see apply_overrides()).
 	PhysicsServer3D::AreaSpaceOverrideMode gravity_override_mode = PhysicsServer3D::AREA_SPACE_OVERRIDE_DISABLED;
@@ -175,6 +176,9 @@ public:
 
 	void set_monitorable(bool p_monitorable) { monitorable = p_monitorable; }
 	bool is_monitorable() const { return monitorable; }
+
+	void set_ray_pickable(bool p_enable) { ray_pickable = p_enable; }
+	bool is_ray_pickable() const { return ray_pickable; }
 
 	void set_monitor_callback(const Callable &p_callback) { monitor_callback = p_callback; }
 

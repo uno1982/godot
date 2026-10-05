@@ -35,8 +35,12 @@
 // (which also incidentally blended slightly across cell boundaries via its
 // e=DX*0.5 sample offset). Standard technique for GPU marching cubes normals.
 
-layout(set = 1, binding = 0, std430) restrict buffer MeshVerts { vec4 mverts[]; };
-layout(set = 1, binding = 1, std430) restrict buffer MeshNorms { vec4 mnorms[]; };
+layout(set = 1, binding = 0, std430) restrict buffer MeshVerts {
+	vec4 mverts[];
+};
+layout(set = 1, binding = 1, std430) restrict buffer MeshNorms {
+	vec4 mnorms[];
+};
 layout(set = 1, binding = 2, std430) restrict buffer MeshCount {
 	uint tri_count;
 	uint tri_budget;
@@ -176,10 +180,18 @@ void main() {
 			int e_ac = -1, e_ad = -1, e_bc = -1, e_bd = -1;
 			for (int e = 0; e < 6; e++) {
 				int a = EA[e], b = EB[e];
-				if ((a == in0 && b == out0) || (a == out0 && b == in0)) { e_ac = e; }
-				if ((a == in0 && b == out1) || (a == out1 && b == in0)) { e_ad = e; }
-				if ((a == in1 && b == out0) || (a == out0 && b == in1)) { e_bc = e; }
-				if ((a == in1 && b == out1) || (a == out1 && b == in1)) { e_bd = e; }
+				if ((a == in0 && b == out0) || (a == out0 && b == in0)) {
+					e_ac = e;
+				}
+				if ((a == in0 && b == out1) || (a == out1 && b == in0)) {
+					e_ad = e;
+				}
+				if ((a == in1 && b == out0) || (a == out0 && b == in1)) {
+					e_bc = e;
+				}
+				if ((a == in1 && b == out1) || (a == out1 && b == in1)) {
+					e_bd = e;
+				}
 			}
 			write_tri(ev[e_ac], ev[e_ad], ev[e_bd], ef[e_ac], ef[e_ad], ef[e_bd], cv);
 			write_tri(ev[e_ac], ev[e_bd], ev[e_bc], ef[e_ac], ef[e_bd], ef[e_bc], cv);

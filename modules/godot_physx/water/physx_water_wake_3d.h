@@ -42,7 +42,7 @@ class RigidBody3D;
 class Texture2DRD;
 
 // A wake that travels with its parent RigidBody3D on a PhysXWaterSurface3D:
-// a small ripple simulation centred on the body that the hull pushes down as
+// a small ripple simulation centered on the body that the hull pushes down as
 // it moves (a row of dips along its keel, deeper with speed), out on open
 // water past the surface's simulated square. The grid stays fixed to the
 // water as it slides along, so the wake stays where it was made and fades
@@ -136,7 +136,7 @@ public:
 	float get_shore_grid_fade() const { return shore_grid_fade; }
 
 	// Foam churned into the wake's water around a world position until the
-	// next physics step: amount_per_second at the centre (1 = fully white),
+	// next physics step: amount_per_second at the center (1 = fully white),
 	// fading out over radius. Call it every tick for a steady source, or once
 	// with amount / delta for a one-off patch. With drift it is pushed out
 	// from the hull's line as the hull's own foam is (foam_spread), heading

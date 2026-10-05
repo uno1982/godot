@@ -24,7 +24,9 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 extra; // x fetch (m), y depth (m), zw unused
 };
 
-layout(set = 0, binding = 1, std430) restrict buffer H0 { vec4 h0[]; };
+layout(set = 0, binding = 1, std430) restrict buffer H0 {
+	vec4 h0[];
+};
 
 uint hash_u32(uint k) {
 	k ^= k >> 16;
@@ -50,8 +52,8 @@ vec2 gaussian_pair(ivec2 m) {
 // JONSWAP wind-sea spectrum turned into a 2D wavenumber spectrum E(k)
 // (m^4, integrating to the height variance). Fetch -- how far the wind has
 // blown over open water -- sets both the energy (alpha) and the peak
-// frequency, so a pool's metres of fetch give short, tiny ripples and an
-// open sea's kilometres give long, tall waves at the same wind speed.
+// frequency, so a pool's meters of fetch give short, tiny ripples and an
+// open sea's kilometers give long, tall waves at the same wind speed.
 // Finite-depth dispersion w = sqrt(g k tanh(k d)) converts S(w) to S(k).
 float jonswap(vec2 k, vec2 wind_dir, float wind_speed, float gravity, float fetch, float depth) {
 	float kl = length(k);
@@ -103,7 +105,7 @@ void main() {
 	// variance directly: E(k) dk^2 split between h0(k) and conj(h0(-k)), each
 	// a complex Gaussian (unit variance per component). With amplitude 1 the
 	// field's height variance is the spectrum's integral over the resolved
-	// wavenumbers -- physical metres, no empirical scale.
+	// wavenumbers -- physical meters, no empirical scale.
 	float dk2 = (6.28318530718 / domain.x) * (6.28318530718 / domain.y);
 	float p1 = jonswap(k, wind_dir, wind_speed, gravity, fetch, depth) * dk2 * 0.5 * amplitude;
 	float p2 = jonswap(-k, wind_dir, wind_speed, gravity, fetch, depth) * dk2 * 0.5 * amplitude;

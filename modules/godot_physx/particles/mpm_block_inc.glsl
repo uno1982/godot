@@ -19,7 +19,7 @@
 #define HASH_EMPTY 0xffffffffu
 #define PROBE_MAX 48u
 
-#define BLK 4     // block edge in cells
+#define BLK 4 // block edge in cells
 #define BCELLS 64 // BLK^3
 
 struct Particle {
@@ -52,17 +52,39 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 blockp; // x = hash slot count (pow2), y = block-pool capacity (MAX_BLOCKS)
 };
 
-layout(set = 0, binding = 1, std430) restrict buffer Particles { Particle particles[]; };
-layout(set = 0, binding = 2, std430) restrict buffer GridAcc { int grid_i[]; }; // 4 ints / cell: mass, mom.xyz -- indexed (blockslot*64 + celllin)
-layout(set = 0, binding = 3, std430) restrict buffer GridVel { vec4 grid_v[]; }; // xyz vel, w mass -- same index
-layout(set = 0, binding = 4, std430) restrict buffer Colliders { Collider colliders[]; };
-layout(set = 0, binding = 5, std430) restrict buffer ColliderImp { int cimp[]; };
-layout(set = 0, binding = 6, std430) restrict buffer MMData { float mm[]; };
-layout(set = 0, binding = 7, std430) restrict buffer SurfaceField { int surf_i[]; };
-layout(set = 0, binding = 8, std430) restrict buffer BHashKey { uint bhash[]; }; // block key, HASH_EMPTY = free
-layout(set = 0, binding = 9, std430) restrict buffer BHashVal { uint bhash_val[]; }; // -> block-pool slot
-layout(set = 0, binding = 10, std430) restrict buffer BKey { uint bkey[]; }; // block key per pool slot
-layout(set = 0, binding = 11, std430) restrict buffer BCounts { uint bcounts[]; }; // [0] active blocks, [1..3] indirect dispatch
+layout(set = 0, binding = 1, std430) restrict buffer Particles {
+	Particle particles[];
+};
+layout(set = 0, binding = 2, std430) restrict buffer GridAcc {
+	int grid_i[];
+}; // 4 ints / cell: mass, mom.xyz -- indexed (blockslot*64 + celllin)
+layout(set = 0, binding = 3, std430) restrict buffer GridVel {
+	vec4 grid_v[];
+}; // xyz vel, w mass -- same index
+layout(set = 0, binding = 4, std430) restrict buffer Colliders {
+	Collider colliders[];
+};
+layout(set = 0, binding = 5, std430) restrict buffer ColliderImp {
+	int cimp[];
+};
+layout(set = 0, binding = 6, std430) restrict buffer MMData {
+	float mm[];
+};
+layout(set = 0, binding = 7, std430) restrict buffer SurfaceField {
+	int surf_i[];
+};
+layout(set = 0, binding = 8, std430) restrict buffer BHashKey {
+	uint bhash[];
+}; // block key, HASH_EMPTY = free
+layout(set = 0, binding = 9, std430) restrict buffer BHashVal {
+	uint bhash_val[];
+}; // -> block-pool slot
+layout(set = 0, binding = 10, std430) restrict buffer BKey {
+	uint bkey[];
+}; // block key per pool slot
+layout(set = 0, binding = 11, std430) restrict buffer BCounts {
+	uint bcounts[];
+}; // [0] active blocks, [1..3] indirect dispatch
 
 #define DT (gravity_dt.w)
 #define GRAV (gravity_dt.xyz)

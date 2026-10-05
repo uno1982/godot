@@ -33,7 +33,7 @@
 			When [code]true[/code], [member mass] is recomputed from the intact mesh's real volume (times its node scale) every time the asset (re)loads, and shown read-only in the Inspector -- "here's what this object would actually weigh." Uncheck it for a true, freely-editable override that survives reloads; checking it again immediately recomputes fresh and discards that override.
 		</member>
 		<member name="blast_asset" type="PhysXBlastAsset" setter="set_blast_asset" getter="get_blast_asset">
-			The fractured mesh data to use, saved by the in-editor fracture dialog (or [PhysXBlastAuthoring] directly). Preferred over [member asset_path] / [member chunks_path] when set.
+			The fractured mesh data to use, saved by the in-editor fracture dialog (or [code]PhysXBlastAuthoring[/code] directly). Preferred over [member asset_path] / [member chunks_path] when set.
 		</member>
 		<member name="cast_shadow" type="int" setter="set_cast_shadow" getter="get_cast_shadow" enum="PhysXDestructible3D.ShadowCastingSetting" default="1">
 			Shadow-casting behavior for every piece's render mesh, the same four settings as [member GeometryInstance3D.cast_shadow]. Applies uniformly, intact or fractured -- changing it re-pushes to every already-existing piece immediately.
@@ -42,10 +42,10 @@
 			Legacy loading path: a [code].chunks[/code] text file (per-chunk render-mesh triangle soup), paired with [member asset_path]. See [member asset_path]'s own note.
 		</member>
 		<member name="collision_layer" type="int" setter="set_collision_layer" getter="get_collision_layer" default="1">
-			Physics layers this object (intact or fractured) occupies, same meaning as [member RigidBody3D.collision_layer]. Applies to every body this class creates -- changing this after pieces already exist immediately updates all of them, the same as a real [RigidBody3D] would.
+			Physics layers this object (intact or fractured) occupies, same meaning as [member CollisionObject3D.collision_layer]. Applies to every body this class creates -- changing this after pieces already exist immediately updates all of them, the same as a real [RigidBody3D] would.
 		</member>
 		<member name="collision_mask" type="int" setter="set_collision_mask" getter="get_collision_mask" default="1">
-			Physics layers this object (intact or fractured) collides with, same meaning as [member RigidBody3D.collision_mask]. See [member collision_layer]'s own note on when a change takes effect.
+			Physics layers this object (intact or fractured) collides with, same meaning as [member CollisionObject3D.collision_mask]. See [member collision_layer]'s own note on when a change takes effect.
 		</member>
 		<member name="dynamic" type="bool" setter="set_dynamic" getter="get_dynamic" default="false">
 			When [code]true[/code], the intact object is a real falling/colliding rigid body instead of a fixed prop, and a hard enough physical collision auto-fractures it (see [member impact_strength] / [member impact_damage_scale] / [member impact_radius]). When [code]false[/code] (the default), it stays a fixed prop that only ever breaks from an explicit [method apply_radial_damage] call -- including from an explosion or weapon script, so a static object is still fully breakable, it just can't fracture itself by physically colliding into something.

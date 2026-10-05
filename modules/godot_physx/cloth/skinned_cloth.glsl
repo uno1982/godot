@@ -72,7 +72,8 @@ layout(push_constant, std430) uniform Pass {
 	int batch_start;
 	int batch_count;
 	float frac; // substep fraction, for interpolating the animated targets
-} pass;
+}
+pass;
 
 layout(set = 0, binding = 1, std430) restrict readonly buffer Rest {
 	vec4 rest[]; // xyz bind-space position, w max distance (m)
@@ -275,7 +276,7 @@ void main() {
 		vec3 qb = pb.xyz - corr * pb.w;
 		// Edge collision (structural edges): keep the fabric between two
 		// particles out of the body capsules too, not just the particles --
-		// otherwise a round limb rolls neighbouring particles aside and
+		// otherwise a round limb rolls neighboring particles aside and
 		// passes between them.
 		if (c.w >= 0.999) {
 			for (int k = 0; k < counts2.x; k++) {
@@ -343,7 +344,7 @@ void main() {
 								vec3 d = pi.xyz - pj.xyz;
 								float l = length(d);
 								// Skip pairs that are this close in the garment
-								// itself (neighbours along the surface).
+								// itself (neighbors along the surface).
 								if (l < h && l > 1e-7 && distance(ri, rest[j].xyz) > h * 1.5) {
 									acc += d / l * ((h - l) * pi.w / (pi.w + pj.w));
 								}

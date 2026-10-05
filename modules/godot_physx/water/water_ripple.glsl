@@ -31,9 +31,9 @@ void main() {
 		// Dry (seabed above the water, or outside the surface mesh's
 		// footprint): never simulated. Its
 		// rendered height continues the adjacent water (mean of its wet 3x3
-		// neighbours, last step's values) instead of pinning to WATER_LEVEL:
+		// neighbors, last step's values) instead of pinning to WATER_LEVEL:
 		// the surface mesh's rim lies between the last wet and first dry cell
-		// centres, and a flat dry texel there turns every wave crest at the
+		// centers, and a flat dry texel there turns every wave crest at the
 		// staircase shoreline into a one-cell sawtooth. Matches the zero-
 		// gradient wall the wet cells see.
 		float sum = 0.0;
@@ -59,7 +59,7 @@ void main() {
 	// Variable-depth wave equation in flux form: each face between two wet
 	// cells carries the mean of their coefficients, so it stays symmetric
 	// (energy-conserving) as the depth changes -- waves slow and bunch up
-	// over shallows. A dry neighbour (or the clamped grid edge, which
+	// over shallows. A dry neighbor (or the clamped grid edge, which
 	// contributes h - h = 0) has no face: a reflecting wall.
 	float k_c = wave_coefficient(c);
 	ivec2 nbr[4] = ivec2[4](ivec2(xl, c.y), ivec2(xr, c.y), ivec2(c.x, yl), ivec2(c.x, yr));

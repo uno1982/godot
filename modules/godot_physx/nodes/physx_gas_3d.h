@@ -90,7 +90,7 @@ class PhysXGas3D : public Node3D {
 	float vorticity_strength = 8.0f;
 	float dissipation = 0.996f;
 	// Extra curl-noise perturbation velocity -- see GasSolver::Settings for
-	// the full explanation. 0 = off, matches pre-turbulence behaviour exactly.
+	// the full explanation. 0 = off, matches pre-turbulence behavior exactly.
 	float turbulence_strength = 0.0f;
 	float turbulence_scale = 2.5f;
 
@@ -181,7 +181,6 @@ public:
 	// node (and every other FogVolume in the scene) renders nothing, with no
 	// error. Same check FogVolume itself uses (see fog_volume.cpp).
 	PackedStringArray get_configuration_warnings() const override;
-
 
 	void set_domain_size(const Vector3 &p_size);
 	Vector3 get_domain_size() const { return domain_size; }

@@ -8,7 +8,7 @@
 // pressure5 (this iteration's "current" guess), writes pressure6 (the
 // updated guess) -- GasSolver::step alternates which physical buffer is
 // bound to which slot across a fixed number of iterations (ping-pong, same
-// pattern as Grid5/Grid6). Out-of-box or unallocated neighbours read as
+// pattern as Grid5/Grid6). Out-of-box or unallocated neighbors read as
 // p = 0 -- an open (Dirichlet) boundary, matching the existing "zero outside
 // the box" convention everywhere else in this solver; collider cells are NOT
 // special-cased (see gas_block_inc.glsl's header note).

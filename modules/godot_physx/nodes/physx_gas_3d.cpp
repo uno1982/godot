@@ -40,10 +40,11 @@
 #include "scene/3d/physics/collision_object_3d.h"
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/main/viewport.h"
-#include "scene/resources/3d/fog_material.h"
 #include "scene/resources/3d/box_shape_3d.h"
+#include "scene/resources/3d/fog_material.h"
 #include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/3d/sphere_shape_3d.h"
+#include "scene/resources/3d/world_3d.h"
 #include "scene/resources/3d/world_boundary_shape_3d.h"
 #include "scene/resources/environment.h"
 #include "scene/resources/gradient.h"
@@ -51,7 +52,6 @@
 #include "scene/resources/image_texture.h"
 #include "scene/resources/material.h"
 #include "scene/resources/shader.h"
-#include "scene/resources/3d/world_3d.h"
 #include "servers/rendering/rendering_server.h"
 
 namespace {

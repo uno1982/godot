@@ -38,8 +38,8 @@
 #include "blast/physx_blast_authoring.h"
 #include "blast/physx_destructible_3d.h"
 #endif
-#include "nodes/physx_chunk_emitter_3d.h"
 #include "cloth/physx_skinned_cloth_3d.h"
+#include "nodes/physx_chunk_emitter_3d.h"
 #include "nodes/physx_cloth_3d.h"
 #include "nodes/physx_gas_3d.h"
 #include "nodes/physx_gas_emitter_3d.h"
@@ -54,8 +54,8 @@
 #include "vehicle/physx_vehicle_wheel_3d.h"
 #include "water/physx_boat_3d.h"
 #include "water/physx_buoyancy_3d.h"
-#include "water/physx_water_surface_3d.h"
 #include "water/physx_water_spray_3d.h"
+#include "water/physx_water_surface_3d.h"
 #include "water/physx_water_wake_3d.h"
 #include "water/water_ripple_probe.h"
 

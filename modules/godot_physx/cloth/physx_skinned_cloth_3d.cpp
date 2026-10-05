@@ -37,10 +37,10 @@
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/3d/physics/physical_bone_3d.h"
 #include "scene/3d/physics/physical_bone_simulator_3d.h"
-#include "scene/resources/3d/capsule_shape_3d.h"
-#include "scene/resources/3d/sphere_shape_3d.h"
 #include "scene/3d/skeleton_3d.h"
+#include "scene/resources/3d/capsule_shape_3d.h"
 #include "scene/resources/3d/skin.h"
+#include "scene/resources/3d/sphere_shape_3d.h"
 #include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
 #include "scene/resources/texture_rd.h"
@@ -81,7 +81,7 @@ void fragment() {
 )";
 
 // Body capsules between consecutive bones, by humanoid-profile name or the
-// common Unreal-style name (radii at each end in metres).
+// common Unreal-style name (radii at each end in meters).
 struct CapsuleSpec {
 	const char *a[2];
 	const char *b[2];
@@ -650,7 +650,7 @@ void PhysXSkinnedCloth3D::_try_build() {
 	}
 	LocalVector<int> colour;
 	colour.resize(cons.size());
-	int colours = 0;
+	int colors = 0;
 	for (uint32_t i = 0; i < cons.size(); i++) {
 		const uint64_t taken = used[cons[i].a] | used[cons[i].b];
 		int c = 0;
@@ -660,15 +660,15 @@ void PhysXSkinnedCloth3D::_try_build() {
 		colour[i] = c;
 		used[cons[i].a] |= 1ull << c;
 		used[cons[i].b] |= 1ull << c;
-		colours = MAX(colours, c + 1);
+		colors = MAX(colors, c + 1);
 	}
 	PackedInt32Array batch_offsets;
-	batch_offsets.resize(colours + 1);
+	batch_offsets.resize(colors + 1);
 	PackedFloat32Array con_data;
 	con_data.resize(cons.size() * 4);
 	{
 		int write = 0;
-		for (int c = 0; c < colours; c++) {
+		for (int c = 0; c < colors; c++) {
 			batch_offsets.set(c, write);
 			for (uint32_t i = 0; i < cons.size(); i++) {
 				if (colour[i] != c) {
@@ -681,7 +681,7 @@ void PhysXSkinnedCloth3D::_try_build() {
 				write++;
 			}
 		}
-		batch_offsets.set(colours, write);
+		batch_offsets.set(colors, write);
 	}
 
 	// Tethers: each free particle to its nearest pinned particle.

@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  physx_water_surface_3d.h                                             */
+/*  physx_water_surface_3d.h                                              */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -106,7 +106,7 @@ public:
 	Vector2 get_wind_direction() const { return wind_direction; }
 	void set_wave_amplitude(float p_amp);
 	float get_wave_amplitude() const { return wave_amplitude; }
-	// How far the wind has blown over open water, in metres (JONSWAP): sets
+	// How far the wind has blown over open water, in meters (JONSWAP): sets
 	// how tall and long the wind waves get. 0 = auto: the surface_mesh
 	// footprint's longest side for enclosed water, a fully developed open sea
 	// otherwise.
@@ -135,7 +135,7 @@ public:
 	float get_foam_threshold() const { return foam_threshold; }
 	void set_foam_persistence(float p_seconds);
 	float get_foam_persistence() const { return foam_persistence; }
-	// Shore foam: waves arriving over water shallower than this (metres,
+	// Shore foam: waves arriving over water shallower than this (meters,
 	// from the seabed) leave a foamy sheet at the waterline. 0 = none.
 	void set_shore_foam_band(float p_depth);
 	float get_shore_foam_band() const { return shore_foam_band; }
@@ -179,7 +179,7 @@ public:
 	void set_shallow_fade_depth(float p_depth);
 	float get_shallow_fade_depth() const { return shallow_fade_depth; }
 
-	// Side length (m) of the rendered surface, centred on the simulation.
+	// Side length (m) of the rendered surface, centered on the simulation.
 	// Past the simulated square the FFT ocean tiles seamlessly (it's
 	// periodic) and the ripples settle to still water, so open water can run
 	// to the horizon; vertex spacing grows with distance. 0 = just the
@@ -273,8 +273,8 @@ private:
 	Ref<Mesh> surface_mesh;
 	Ref<Mesh> water_mesh; // what mesh_instance draws: a PlaneMesh, or the resampled surface_mesh footprint
 
-	// World XZ the simulation grids are centred on (node origin, plus the
-	// footprint's centre when surface_mesh is set), and the ripple domain
+	// World XZ the simulation grids are centered on (node origin, plus the
+	// footprint's center when surface_mesh is set), and the ripple domain
 	// actually in use -- both fixed at _rebuild().
 	Vector2 grid_center;
 	Vector2 active_domain_size;

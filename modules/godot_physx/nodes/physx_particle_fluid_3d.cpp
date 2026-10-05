@@ -490,7 +490,7 @@ void PhysXParticleFluid3D::_mpm_step(double p_delta) {
 			}
 			// array_mesh no longer draws through this node's own instance (see
 			// array_mesh_instance's header comment), so the usual automatic
-			// GeometryInstance3D::material_override behaviour doesn't reach it
+			// GeometryInstance3D::material_override behavior doesn't reach it
 			// anymore -- reapply it by hand to array_mesh_instance instead.
 			const Ref<Material> override_mat = get_material_override();
 			rs->instance_geometry_set_material_override(array_mesh_instance, override_mat.is_valid() ? override_mat->get_rid() : RID());
@@ -1080,7 +1080,7 @@ void PhysXParticleFluid3D::_update_surface_mesh() {
 			// See the MPM path's identical comment: array_mesh_instance is a
 			// raw instance now, not this node's own, so material_override has
 			// to be reapplied by hand instead of relying on the automatic
-			// GeometryInstance3D behaviour.
+			// GeometryInstance3D behavior.
 			const Ref<Material> override_mat = get_material_override();
 			RenderingServer::get_singleton()->instance_geometry_set_material_override(array_mesh_instance, override_mat.is_valid() ? override_mat->get_rid() : RID());
 			_apply_gi_mode(array_mesh_instance);

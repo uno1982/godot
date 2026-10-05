@@ -65,9 +65,12 @@ void main() {
 
 	// Boundless: implicit floor at the anchor (matches the grid BC), no walls.
 	float floor_y = ORIGIN.y + DX * 1.5;
-	if (x.y < floor_y) { x.y = floor_y; new_v.y *= -0.2; }
+	if (x.y < floor_y) {
+		x.y = floor_y;
+		new_v.y *= -0.2;
+	}
 
-	// Sanitise a diverged particle and keep it inside the packed-key range
+	// Sanitize a diverged particle and keep it inside the packed-key range
 	// (+-500 blocks = +-2000 cells) so a runaway can't wrap a key onto occupied
 	// space far away.
 	vec3 far = vec3(1950.0) * DX;

@@ -36,7 +36,7 @@
 // several) as a scene node and reference it from PhysXGas3D.emitters, the way
 // CollisionShape3D describes a shape without simulating anything itself. Its
 // own global transform gives the emitter's world position (and, for
-// EMITTER_BOX, orientation is NOT yet honoured -- v1 is axis-aligned only,
+// EMITTER_BOX, orientation is NOT yet honored -- v1 is axis-aligned only,
 // see GasSolver's header). No solver of its own; PhysXGas3D reads these
 // properties directly each step.
 //
@@ -62,7 +62,7 @@ private:
 	float density = 1.0f;
 	// Outward-radial speed (m/s) from this node's position, added on top of
 	// velocity -- an explosion/burst emitter wants every cell pushed away
-	// from centre, not all pushed the same direction (Flow's own
+	// from center, not all pushed the same direction (Flow's own
 	// "divergence" field, same name/meaning).
 	float divergence = 0.0f;
 	// Tangential speed (m/s) around world +Y through this node's position --

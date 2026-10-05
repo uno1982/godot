@@ -5,7 +5,7 @@
 
 layout(local_size_x = GROUP) in;
 
-#define SURF_H (extra.w) // isosurface SPH kernel radius, world metres
+#define SURF_H (extra.w) // isosurface SPH kernel radius, world meters
 #define SURF_BOOST (bmin.w) // per-particle mass multiplier
 
 // Per particle: poly6 SPH scatter of mass into surf_i (block-indexed, same

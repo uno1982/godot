@@ -83,10 +83,10 @@
 			Whether to derive the center of mass from the hull [CollisionShape3D] position ([code]Auto[/code]) or use [member center_of_mass] directly ([code]Custom[/code]).
 		</member>
 		<member name="collision_layer" type="int" setter="set_collision_layer" getter="get_collision_layer" default="1">
-			Same meaning as [member RigidBody3D.collision_layer]. Applies to the hull only -- the wheels do not have their own collision shapes (their ground contact is handled entirely by the suspension, not by a physical wheel shape touching the road).
+			Same meaning as [member CollisionObject3D.collision_layer]. Applies to the hull only -- the wheels do not have their own collision shapes (their ground contact is handled entirely by the suspension, not by a physical wheel shape touching the road).
 		</member>
 		<member name="collision_mask" type="int" setter="set_collision_mask" getter="get_collision_mask" default="1">
-			Same meaning as [member RigidBody3D.collision_mask]. Applies to the hull only, see [member collision_layer].
+			Same meaning as [member CollisionObject3D.collision_mask]. Applies to the hull only, see [member collision_layer].
 		</member>
 		<member name="left_ratio" type="float" setter="set_left_ratio" getter="get_left_ratio" default="0.0">
 			Drive input for the left track, [code]-1[/code] to [code]1[/code]. Scales up to [member max_engine_torque] of drive torque, split evenly across the left track's own wheels; sign is direction, not a separate reverse gear. Set every physics tick from script.

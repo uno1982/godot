@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  water_solver.cpp                                                     */
+/*  water_solver.cpp                                                      */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -37,9 +37,9 @@
 #include "water_foam.glsl.gen.h"
 #include "water_ripple.glsl.gen.h"
 #include "water_shore_foam.glsl.gen.h"
-#include "water_swash.glsl.gen.h"
 #include "water_spectrum_evolve.glsl.gen.h"
 #include "water_spectrum_init.glsl.gen.h"
+#include "water_swash.glsl.gen.h"
 
 #include "core/math/math_funcs.h"
 #include "core/object/callable_mp.h"

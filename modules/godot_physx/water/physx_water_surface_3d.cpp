@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  physx_water_surface_3d.cpp                                           */
+/*  physx_water_surface_3d.cpp                                            */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -32,15 +32,14 @@
 
 #include "physx_water_wake_3d.h"
 
-#include "scene/3d/camera_3d.h"
-#include "scene/main/viewport.h"
-
 #include "core/config/engine.h"
 #include "core/math/face3.h"
 #include "core/object/class_db.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/local_vector.h"
+#include "scene/3d/camera_3d.h"
 #include "scene/3d/mesh_instance_3d.h"
+#include "scene/main/viewport.h"
 #include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/resources/material.h"
@@ -98,7 +97,7 @@ uniform sampler2D ocean_deriv_tex : hint_default_black, filter_linear, repeat_en
 uniform bool per_pixel_normals = true;
 uniform vec2 ripple_domain_size = vec2(20.0, 20.0);
 uniform vec2 ocean_domain_size = vec2(40.0, 40.0);
-// World XZ both height fields are centred on (set by PhysXWaterSurface3D).
+// World XZ both height fields are centered on (set by PhysXWaterSurface3D).
 uniform vec2 grid_center = vec2(0.0);
 // World xz the whole open-water mesh is moved by, so its dense core stays
 // under the camera; set by the node every frame.
@@ -132,7 +131,7 @@ uniform vec4 foam_color : source_color = vec4(0.92, 0.95, 0.97, 0.95);
 // How much fading foam breaks up into lace instead of thinning evenly
 // (0 = solid sheet until it's gone).
 uniform float foam_breakup : hint_range(0.0, 1.0) = 0.6;
-// Size of that lace: noise cells per metre, fixed to the water.
+// Size of that lace: noise cells per meter, fixed to the water.
 uniform float foam_detail_scale = 1.5;
 // Shore foam (0..1) on the ripple grid: the foamy sheet where waves wash in
 // over the shallows (set by PhysXWaterSurface3D; needs a seabed).
@@ -145,7 +144,7 @@ uniform float shore_foam_breakup : hint_range(0.0, 1.0) = 0.85;
 // replaces water_color's there.
 uniform vec4 shallow_color : source_color = vec4(0.42, 0.66, 0.64, 0.55);
 uniform float shallow_tint : hint_range(0.0, 1.0) = 0.6;
-// Still-water depth in metres over the ripple domain (dry shore negative,
+// Still-water depth in meters over the ripple domain (dry shore negative,
 // pool walls deep), set by PhysXWaterSurface3D: the waterline is measured in
 // real depth, independent of shallow_fade_depth.
 uniform sampler2D shore_depth_tex : hint_default_white, filter_linear, repeat_disable;
@@ -166,7 +165,7 @@ uniform sampler2D swash_tex : hint_default_black, filter_linear, repeat_disable;
 uniform float swash_film_thickness : hint_range(0.0, 0.2, 0.005) = 0.03;
 // Fine ragged fingering of the swash edge: how much water depth (m) drifting
 // small-scale noise adds or takes away there (on a 1:14 beach, 0.035 m is
-// about half a metre of ragged edge).
+// about half a meter of ragged edge).
 uniform float swash_edge_breakup : hint_range(0.0, 0.2, 0.005) = 0.035;
 // Size of the shore's small-scale detail -- the lace on the waterline rim,
 // the fingering of the swash edge and the ragged wet-sand line, which
@@ -312,7 +311,7 @@ float foam_at(vec2 world_xz) {
 
 // Visible shore foam at world_xz: finer, heavier lace at partial strength.
 )"
-								 R"(
+							   R"(
 // Ripple-grid UV for the shore's moving patterns (swash, wet sand, shore
 // foam), mirror-repeated past the simulated square: they carry on down the
 // beach without a seam instead of stretching the edge row into straight
@@ -334,7 +333,7 @@ float shore_foam_at(vec2 world_xz) {
 
 // Water depth (m) above the moving waterline: the still-water depth minus an
 // offset in [0, swash_reach] -- small under an arriving crest (the edge
-// reaches in), large under a trough, jittered by slow noise. <= 0 is past
+// reaches in), large between crests, jittered by slow noise. <= 0 is past
 // the visible edge.
 float shore_signal(vec2 world_xz, float time) {
 	vec2 rel = world_xz - grid_center;
@@ -342,7 +341,7 @@ float shore_signal(vec2 world_xz, float time) {
 	vec2 cuv_o = rel / ocean_domain_size + 0.5; // wraps: the FFT ocean is periodic
 	float depth = texture(shore_depth_tex, cuv_r).r;
 	float eta = texture(ocean_height_tex, cuv_o).r; // unfaded: the waves arriving here
-	// Lobes a few metres across (like real swash), drifting, with the waves
+	// Lobes a few meters across (like real swash), drifting, with the waves
 	// pushing the whole edge in and out over time.
 	vec2 p = world_xz * 0.45;
 	float n = 0.65 * foam_value_noise(p + vec2(time * 0.12, time * 0.05)) + 0.35 * foam_value_noise(p * 2.4 - vec2(time * 0.07, 0.0));
@@ -373,7 +372,7 @@ void vertex() {
 	// Per pixel, fragment() computes the normal and foam instead.
 	if (!per_pixel_normals) {
 		// Per-vertex: normal from central differences of the displaced
-		// surface -- e is in world metres, small against the grids' cell
+		// surface -- e is in world meters, small against the grids' cell
 		// size.
 		const float e = 0.2;
 		vec3 px1 = vec3(e, 0.0, 0.0) + surface_offset(world_pos.xz + vec2(e, 0.0));
@@ -983,7 +982,7 @@ void PhysXWaterSurface3D::_rebuild() {
 }
 
 void PhysXWaterSurface3D::_sample_seabed() {
-	// One ray per ripple cell centre, straight down from well above the water
+	// One ray per ripple cell center, straight down from well above the water
 	// onto static bodies only: anything else it hits (a floater, a player) is
 	// excluded and the ray cast again. The seabed can rise above the water --
 	// that's dry beach, depth <= 0.
@@ -1088,9 +1087,9 @@ void PhysXWaterSurface3D::_detach_textures() {
 
 void PhysXWaterSurface3D::_update_mesh_offset() {
 	// Open water past the simulated square: the mesh's vertices spread out
-	// with distance from its dense core, and far out they're metres apart --
+	// with distance from its dense core, and far out they're meters apart --
 	// too coarse for the short waves, so what's drawn there missed what
-	// sample_height() (and so a boat) sees by tenths of a metre. The core
+	// sample_height() (and so a boat) sees by tenths of a meter. The core
 	// follows the camera instead, smoothly, every frame: near the camera the
 	// dense vertices sample the waves finely wherever they sit, and the
 	// coarse surface past it reshapes gradually (~1 cm per 5 cm moved, 20-35
@@ -1410,7 +1409,7 @@ Vector<Vector2> PhysXWaterSurface3D::_collect_footprint() const {
 }
 
 PackedByteArray PhysXWaterSurface3D::_rasterize_wet_mask(const Vector<Vector2> &p_tris, Vector2 p_center, Vector2 p_domain, int p_n) {
-	// A cell is wet when its centre lies inside any footprint triangle -- the
+	// A cell is wet when its center lies inside any footprint triangle -- the
 	// same cell-centre convention as water_ripple.glsl's xz.
 	PackedByteArray mask;
 	mask.resize(p_n * p_n);
@@ -1440,10 +1439,10 @@ PackedByteArray PhysXWaterSurface3D::_rasterize_wet_mask(const Vector<Vector2> &
 
 Ref<Mesh> PhysXWaterSurface3D::_build_extended_plane(Vector2 p_inner, int p_inner_cells, real_t p_extent) const {
 	// A regular grid of (2K+1)^2 vertices whose square rings are spread out
-	// from the centre: rings up to K0 are the simulated span at uniform
+	// from the center: rings up to K0 are the simulated span at uniform
 	// spacing, and each ring past it is 15% further out than the step before
 	// -- detail where the waves are simulated, a few hundred rings out to the
-	// horizon. Spacing grows with the ring (distance from the centre), the
+	// horizon. Spacing grows with the ring (distance from the center), the
 	// same along X and Z. (A per-axis spacing left the simulated span's fine
 	// columns/rows running out to the horizon as two strips of fine mesh
 	// along the axes, and the same waves looked different either side of
@@ -1525,10 +1524,10 @@ Ref<Mesh> PhysXWaterSurface3D::_build_footprint_mesh(const Vector<Vector2> &p_tr
 	// Resample the footprint into an even grid so the height fields have
 	// vertices to displace everywhere (a CSG disc is a fan of long slivers
 	// with no interior vertices). Cells no triangle edge passes through are
-	// whole quads, kept or dropped by their centre; cells an edge touches are
+	// whole quads, kept or dropped by their center; cells an edge touches are
 	// clipped against each overlapping triangle. A quad cell's edges are
 	// never crossed by a triangle edge, so they carry no extra vertices and
-	// meet their clipped neighbours without T-junctions.
+	// meet their clipped neighbors without T-junctions.
 	const real_t side = MAX(p_bounds.size.x, p_bounds.size.y);
 	const real_t cs = side / (real_t)MAX(p_cells, 1);
 	const int nx = MAX((int)Math::ceil(p_bounds.size.x / cs), 1);

@@ -4,7 +4,7 @@
 		Cloth on a region of a character's skinned mesh -- a robe, cape or skirt that moves with the animation and swings and drapes on its own.
 	</brief_description>
 	<description>
-		Simulates a surface of a skinned [MeshInstance3D] (set [member mesh_instance_path]) as cloth driven by the character's animation. Every vertex has a max distance it may stray from where the animation puts it: [code]0[/code] follows the animation exactly (shoulders, a waistband), larger values swing freely (a hem, the tail of a cape). The distances are painted per vertex with [member max_distances], read from the mesh's vertex colours ([member use_vertex_color]), or ramped automatically from [member pin_height] down to [member max_distance] at the lowest point of the mesh.
+		Simulates a surface of a skinned [MeshInstance3D] (set [member mesh_instance_path]) as cloth driven by the character's animation. Every vertex has a max distance it may stray from where the animation puts it: [code]0[/code] follows the animation exactly (shoulders, a waistband), larger values swing freely (a hem, the tail of a cape). The distances are painted per vertex with [member max_distances], read from the mesh's vertex colors ([member use_vertex_color]), or ramped automatically from [member pin_height] down to [member max_distance] at the lowest point of the mesh.
 		To paint them in the editor, select the node and press [b]Paint Cloth[/b] in the 3D viewport toolbar. The garment turns into a heat map of its max distances (blue follows the animation, red swings furthest). Drag with the left mouse button to paint toward [b]Value[/b], hold [kbd]Shift[/kbd] to paint toward [code]0[/code], or hold [kbd]Ctrl[/kbd] to smooth. [b]Fill[/b] sets every vertex to [b]Value[/b], and [b]Ramp[/b] starts over from the automatic ramp. Each stroke can be undone.
 		The cloth runs on the GPU with compute shaders, so it works on any GPU the renderer supports (no CUDA needed). It collides with the character's physical bones: give the skeleton a [PhysicalBoneSimulator3D] with [PhysicalBone3D]s (select the [Skeleton3D] and use [b]Skeleton3D > Create Physical Skeleton[/b] in the 3D toolbar), and every enabled capsule or sphere [CollisionShape3D] on them is a collider, exactly where the editor shows it as the animation moves the bones. Edit, add or remove those shapes to fit the body; the physical bones don't need to simulate. Without a physical skeleton, capsules are placed automatically between the hips, spine, legs and arms (humanoid-profile or common Unreal-style bone names), fitted to [member body_mesh_path] if set. Collisions are swept across the solver's substeps, so fast limbs don't jump through the cloth, and they win over the max distances: where a limb moves further than the cloth may stray, the cloth moves past its limit rather than letting the limb show through. A [member backstop] keeps the cloth from sinking into the body. Free vertices are also tethered to their nearest pinned vertex, so long garments don't stretch.
 		The source mesh is hidden while the cloth runs and drawn instead from the simulated positions, read straight from GPU textures (no CPU readback). Only the source material's albedo texture, albedo colour and roughness carry over for now.
@@ -28,7 +28,7 @@
 		<method name="get_effective_max_distances" qualifiers="const">
 			<return type="PackedFloat32Array" />
 			<description>
-				The max distances the cloth will be built with, one per vertex of [member surface]: [member max_distances] if it has one value per vertex, otherwise the vertex colours if [member use_vertex_color] is on and the mesh has them, otherwise [method compute_height_ramp]. Empty if the source mesh can't be found.
+				The max distances the cloth will be built with, one per vertex of [member surface]: [member max_distances] if it has one value per vertex, otherwise the vertex colors if [member use_vertex_color] is on and the mesh has them, otherwise [method compute_height_ramp]. Empty if the source mesh can't be found.
 			</description>
 		</method>
 		<method name="get_particle_count" qualifiers="const">
@@ -55,7 +55,7 @@
 			How strongly free cloth is pulled back toward its animated shape: the fraction of the way back per 1/60 s, [code]0..1[/code]. [code]0[/code] lets the cloth move freely within its max distances; around [code]0.1[/code]-[code]0.2[/code] keeps a long robe or skirt close to its authored shape (instead of collapsing into folds between the legs) while it still swings. [code]1[/code] follows the animation exactly.
 		</member>
 		<member name="backstop" type="float" setter="set_backstop" getter="get_backstop" default="0.02">
-			How far (metres) the cloth may sink inward past its animated position, measured along the animated surface's normal. Keeps clothing on the outside of the body even where the body capsules don't quite fit. A negative value turns it off.
+			How far (meters) the cloth may sink inward past its animated position, measured along the animated surface's normal. Keeps clothing on the outside of the body even where the body capsules don't quite fit. A negative value turns it off.
 		</member>
 		<member name="bend_stiffness" type="float" setter="set_bend_stiffness" getter="get_bend_stiffness" default="0.3">
 			Resistance to folding, [code]0..1[/code]. Low values crease and drape softly; high values keep broad, stiff folds.
@@ -73,22 +73,22 @@
 			Fraction of the cloth's motion relative to the animated garment lost per second: settles swinging and jiggle. Moving the character doesn't count, so running doesn't push the cloth back like a headwind.
 		</member>
 		<member name="max_distance" type="float" setter="set_max_distance" getter="get_max_distance" default="0.4">
-			The largest max distance (metres) of the automatic painting: the ramp's value at the mesh's lowest point (it rises linearly from [code]0[/code] at [member pin_height]), and the value a vertex colour of [code]1[/code] maps to with [member use_vertex_color].
+			The largest max distance (meters) of the automatic painting: the ramp's value at the mesh's lowest point (it rises linearly from [code]0[/code] at [member pin_height]), and the value a vertex colour of [code]1[/code] maps to with [member use_vertex_color].
 		</member>
 		<member name="max_distances" type="PackedFloat32Array" setter="set_max_distances" getter="get_max_distances" default="PackedFloat32Array()">
-			Painted max distance (metres) per vertex of [member surface], in the mesh's vertex order: how far each vertex may stray from its animated position. [code]0[/code] follows the animation exactly. Painted in the editor with [b]Paint Cloth[/b] (see the class description). Empty, or a size that doesn't match the mesh, falls back to [member use_vertex_color] or the automatic ramp ([member pin_height], [member max_distance]).
+			Painted max distance (meters) per vertex of [member surface], in the mesh's vertex order: how far each vertex may stray from its animated position. [code]0[/code] follows the animation exactly. Painted in the editor with [b]Paint Cloth[/b] (see the class description). Empty, or a size that doesn't match the mesh, falls back to [member use_vertex_color] or the automatic ramp ([member pin_height], [member max_distance]).
 		</member>
 		<member name="mesh_instance_path" type="NodePath" setter="set_mesh_instance_path" getter="get_mesh_instance_path" default="NodePath(&quot;&quot;)">
 			The skinned [MeshInstance3D] whose [member surface] is simulated. It must have a [Skin] and a [Skeleton3D].
 		</member>
 		<member name="pin_height" type="float" setter="set_pin_height" getter="get_pin_height" default="1.3">
-			Automatic painting: vertices at or above this height in the mesh's bind pose (metres) follow the animation exactly.
+			Automatic painting: vertices at or above this height in the mesh's bind pose (meters) follow the animation exactly.
 		</member>
 		<member name="self_collision" type="bool" setter="set_self_collision" getter="get_self_collision" default="false">
 			Keep the cloth from passing through itself where it folds and gathers: particles closer than [member self_collision_thickness] are pushed apart, unless they're that close in the garment itself. Off by default -- it adds four compute passes per substep.
 		</member>
 		<member name="self_collision_thickness" type="float" setter="set_self_collision_thickness" getter="get_self_collision_thickness" default="0.02">
-			How far apart (metres) the cloth keeps its own layers with [member self_collision] on. Around the spacing of the mesh's vertices; much smaller lets layers slip between particles, much larger puffs folds up.
+			How far apart (meters) the cloth keeps its own layers with [member self_collision] on. Around the spacing of the mesh's vertices; much smaller lets layers slip between particles, much larger puffs folds up.
 		</member>
 		<member name="simulating" type="bool" setter="set_simulating" getter="is_simulating" default="true">
 			Pauses the simulation when off (the cloth holds its last shape).
@@ -103,10 +103,10 @@
 			Which surface of the mesh is the cloth.
 		</member>
 		<member name="thickness" type="float" setter="set_thickness" getter="get_thickness" default="0.012">
-			Extra distance (metres) the cloth keeps from the body capsules.
+			Extra distance (meters) the cloth keeps from the body capsules.
 		</member>
 		<member name="use_vertex_color" type="bool" setter="set_use_vertex_color" getter="get_use_vertex_color" default="false">
-			When [member max_distances] isn't painted, take each vertex's max distance from the red channel of the mesh's vertex colour times [member max_distance], so distances painted in a modelling tool carry over. Ignored if the mesh has no vertex colours.
+			When [member max_distances] isn't painted, take each vertex's max distance from the red channel of the mesh's vertex colour times [member max_distance], so distances painted in a modeling tool carry over. Ignored if the mesh has no vertex colors.
 		</member>
 	</members>
 </class>

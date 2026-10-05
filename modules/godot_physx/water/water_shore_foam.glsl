@@ -10,7 +10,7 @@
 // It also moves with the water: along the seabed slope at the shallow-water
 // particle velocity u = eta * sqrt(g / d), eta capped by depth-limited
 // breaking -- shoreward under a crest,
-// seaward under a trough -- minus a steady undertow, so each wave pushes the
+// seaward between crests -- minus a steady undertow, so each wave pushes the
 // sheet up the beach and the backwash drags it back out into the water.
 // Semi-Lagrangian: each cell pulls its foam from upstream in src and writes
 // dst; a second dispatch in copy mode (res.z == 1) copies dst back to src.
@@ -51,7 +51,7 @@ float src_bilinear(vec2 p, int n) {
 }
 
 // Depth for the slope estimate (negative on dry land, which keeps the slope
-// going up the beach); a wall neighbour counts as this cell's own depth so
+// going up the beach); a wall neighbor counts as this cell's own depth so
 // the sentinel can't blow the gradient up.
 float slope_depth(ivec2 p, float fallback, int n) {
 	float d = texelFetch(cell_depth_tex, clamp(p, ivec2(0), ivec2(n - 1)), 0).r;

@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  water_solver.h                                                       */
+/*  water_solver.h                                                        */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -118,9 +118,9 @@ public:
 	float swash_drain_speed = 0.12f;
 	float wet_sand_dry_time = 12.0f;
 	RID tex_swash; // RGBA32F (run-up m, wetness 0..1, mean-square rise, 0) on the ripple grid
-	RID tex_swash_tmp; // scratch: the run-up climbs from neighbours (see water_swash.glsl)
+	RID tex_swash_tmp; // scratch: the run-up climbs from neighbors (see water_swash.glsl)
 	RID buf_swash_params, buf_swash_copy_params, uset_swash, uset_swash_copy;
-	// Still-water depth per ripple cell (R16F metres, <= 0 dry -- see
+	// Still-water depth per ripple cell (R16F meters, <= 0 dry -- see
 	// water_inc.glsl), bound to the ripple pass and the caustics pass, and
 	// the ocean chop's shallow-water fade derived from it (R8, sampled by the
 	// surface material). Both uploaded once per build.
@@ -184,7 +184,7 @@ public:
 	void rt_compile(Ref<WaterSolverGPU> p_self);
 	// Wind/amplitude only matter here -- they feed the ONE-TIME h0 spectrum
 	// generation (see rt_build()'s body), not the per-step evolution.
-	// p_cell_depth: grid_resolution^2 still-water depths in metres (<= 0 =
+	// p_cell_depth: grid_resolution^2 still-water depths in meters (<= 0 =
 	// dry), row-major by Z then X like the ripple grid; empty = p_depth
 	// everywhere.
 	void rt_build(Ref<WaterSolverGPU> p_self, int p_grid_resolution, Vector2 p_domain_size, int p_ocean_grid_resolution, Vector2 p_ocean_domain_size, float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_gravity, bool p_caustics_enabled, PackedFloat32Array p_cell_depth, float p_depth, float p_shallow_fade_depth, float p_fetch);
@@ -285,8 +285,8 @@ public:
 		Vector2 ocean_domain_size = Vector2(40, 40);
 		float wind_speed = 8.0f;
 		Vector2 wind_direction = Vector2(1, 0); // need not be normalized, normalized on upload
-		float wave_amplitude = 1.0f; // linear height multiplier on the physical spectrum (1 = JONSWAP heights in metres)
-		// Distance in metres the wind has blown over open water: sets how
+		float wave_amplitude = 1.0f; // linear height multiplier on the physical spectrum (1 = JONSWAP heights in meters)
+		// Distance in meters the wind has blown over open water: sets how
 		// tall and how long the wind waves get (JONSWAP). 100 km is a fully
 		// developed open sea; a pool's size gives tiny, short ripples.
 		float fetch = 100000.0f;
@@ -297,11 +297,11 @@ public:
 		// caustics to skip that cost entirely.
 		bool caustics_enabled = false;
 
-		// World XZ the ripple and ocean grids are centred on. Body positions
+		// World XZ the ripple and ocean grids are centered on. Body positions
 		// passed to submit_sphere()/submit_impulse() are world space and made
 		// relative to this before upload.
 		Vector2 grid_center;
-		// Optional still-water depth per ripple cell, grid_resolution^2 metres
+		// Optional still-water depth per ripple cell, grid_resolution^2 meters
 		// (<= 0 = dry land), row-major by Z then X. It sets each cell's wave
 		// speed and the shoreline. Empty = `depth` everywhere. WALL_DEPTH
 		// marks a dry cell that's a wall (outside a surface_mesh outline)

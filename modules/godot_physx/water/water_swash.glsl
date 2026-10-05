@@ -3,7 +3,7 @@
 
 // Swash and wet sand, on the ripple grid (fixed to the ground). Per cell:
 //   r  run-up level (m above still water). Set at the waterline by the
-//      arriving waves, then carried up the slope from the seaward neighbour
+//      arriving waves, then carried up the slope from the seaward neighbor
 //      at a limited uprush speed, and drained back down at a steady speed --
 //      so each big wave rushes up the sand in tongues and slides back down
 //      more slowly. Materials add it to the still-water depth: sand lower
@@ -59,7 +59,7 @@ float src_r_bilinear(vec2 p, int n) {
 	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
-// Depth for the slope estimate; a wall neighbour counts as this cell's own
+// Depth for the slope estimate; a wall neighbor counts as this cell's own
 // depth so the sentinel can't blow the gradient up.
 float slope_depth(ivec2 p, float fallback, int n) {
 	float d = texelFetch(cell_depth_tex, clamp(p, ivec2(0), ivec2(n - 1)), 0).r;
@@ -109,7 +109,7 @@ void main() {
 		float strength = clamp((rise / rms - 0.5) / 1.5, 0.0, 1.0);
 		target = min(min(cap, 2.0 * rms) * strength * (0.6 + 0.8 * nz), cap);
 	} else {
-		// Dry sand: the run-up climbs from the seaward neighbour (up the
+		// Dry sand: the run-up climbs from the seaward neighbor (up the
 		// depth gradient), so a tongue keeps its shape as it runs up.
 		vec2 grad = vec2(slope_depth(c + ivec2(1, 0), depth, n) - slope_depth(c - ivec2(1, 0), depth, n),
 				slope_depth(c + ivec2(0, 1), depth, n) - slope_depth(c - ivec2(0, 1), depth, n));

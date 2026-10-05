@@ -160,7 +160,7 @@ void PhysXBoat3D::_physics_step() {
 			// Vertically, only the hull heaving and pitching: its forward speed
 			// seen through a bow-up hull's frame read as both ends sinking, and
 			// the drag pushing them up lifted the bow (further ahead of the
-			// centre of mass than the stern is behind it) harder -- more pitch,
+			// center of mass than the stern is behind it) harder -- more pitch,
 			// more lift, until the boat climbed into a wheelie at speed.
 			const Vector3 heave = Vector3(0.0f, lin.y, 0.0f) + ang.cross(end_offset);
 			v_local.y = basis.get_column(1).dot(heave);

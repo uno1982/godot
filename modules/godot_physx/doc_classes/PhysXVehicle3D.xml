@@ -6,7 +6,7 @@
 	<description>
 		[VehicleBody3D]/[VehicleWheel3D] work on this module already (no PhysX-specific code needed) and stay the right choice for a project that wants to swap physics backends freely. [PhysXVehicle3D] exists for real PxVehicle2 capability that backend-agnostic model structurally can't offer: a real engine torque response, Ackermann steering correction (inner/outer front wheels turn by different angles in a turn), and a real slip-based tire friction curve (grip peaks at a small amount of wheel slip and falls off once the tire is fully sliding/locked, instead of one flat friction number).
 		Node structure mirrors [VehicleBody3D]/[VehicleWheel3D] on purpose: add a [CollisionShape3D] child with a [BoxShape3D] for the chassis, and exactly 4 [PhysXVehicleWheel3D] children for the wheels -- exactly 2 of them need [member PhysXVehicleWheel3D.use_as_steering] enabled (the front axle). Each wheel's own [member Node3D.position] is where it rests under static load (the same convention [VehicleWheel3D] uses), so a [MeshInstance3D] parented under a wheel tracks the real, live suspension/steering motion automatically, and already sits at the right height in the editor before Play.
-		Drive it every physics tick by setting [member throttle], [member brake], [member steer], and (once actually stopped) [member reverse] -- these use PxVehicleCommandState's own convention ([code]throttle[/code]/[code]brake[/code] in [code][0, 1][/code], [code]steer[/code] in [code][-1, 1][/code]), not [VehicleBody3D]'s raw force/angle convention.
+		Drive it every physics tick by setting [member throttle], [member brake], [member steer], and (once actually stopped) [member reverse] -- these use PxVehicleCommandState's own convention ([member throttle]/[member brake] in [code][0, 1][/code], [member steer] in [code][-1, 1][/code]), not [VehicleBody3D]'s raw force/angle convention.
 		Only runs in an actual running game, never in the editor -- placing or moving the node in the Inspector does not simulate or fall under gravity.
 	</description>
 	<tutorials>
@@ -68,10 +68,10 @@
 			Whether to derive the center of mass from the chassis [CollisionShape3D] position ([code]Auto[/code]) or use [member center_of_mass] directly ([code]Custom[/code]).
 		</member>
 		<member name="collision_layer" type="int" setter="set_collision_layer" getter="get_collision_layer" default="1">
-			Same meaning as [member RigidBody3D.collision_layer]. Applies to the chassis only -- the wheels do not have their own collision shapes (their ground contact is handled entirely by the suspension, not by a physical wheel shape touching the road).
+			Same meaning as [member CollisionObject3D.collision_layer]. Applies to the chassis only -- the wheels do not have their own collision shapes (their ground contact is handled entirely by the suspension, not by a physical wheel shape touching the road).
 		</member>
 		<member name="collision_mask" type="int" setter="set_collision_mask" getter="get_collision_mask" default="1">
-			Same meaning as [member RigidBody3D.collision_mask]. Applies to the chassis only, see [member collision_layer].
+			Same meaning as [member CollisionObject3D.collision_mask]. Applies to the chassis only, see [member collision_layer].
 		</member>
 		<member name="front_anti_roll_stiffness" type="float" setter="set_front_anti_roll_stiffness" getter="get_front_anti_roll_stiffness" default="0.0">
 			Anti-roll bar stiffness connecting the front-left and front-right wheels. A positive value is a real anti-roll bar: it resists the difference in suspension compression between the two wheels, reducing body roll during cornering. A negative value does the opposite -- it amplifies that difference, exaggerating roll instead of resisting it, which is a cheaper and more targeted way to get a more dramatic cornering lean than lowering [member PhysXVehicleWheel3D.suspension_stiffness] further (that also softens straight-line bump absorption; this only affects side-to-side compression difference). [code]0[/code] disables the bar entirely.
@@ -83,7 +83,7 @@
 			The braking torque applied to each wheel when [member brake] is [code]1[/code]. Higher values stop the wheel's own rotation faster, but do not by themselves determine whether the tire skids once locked -- see [member PhysXVehicleWheel3D.tire_friction] for that.
 		</member>
 		<member name="max_engine_torque" type="float" setter="set_max_engine_torque" getter="get_max_engine_torque" default="700.0">
-			The drive torque applied to every wheel with [member PhysXVehicleWheel3D.use_as_traction] enabled when [member throttle] is [code]1[/code] (a real direct-drive response, unlike [VehicleBody3D.engine_force] which is a raw force value with no torque curve).
+			The drive torque applied to every wheel with [member PhysXVehicleWheel3D.use_as_traction] enabled when [member throttle] is [code]1[/code] (a real direct-drive response, unlike [member VehicleBody3D.engine_force] which is a raw force value with no torque curve).
 		</member>
 		<member name="max_steer_angle" type="float" setter="set_max_steer_angle" getter="get_max_steer_angle" default="0.6">
 			The steering angle, in radians, applied to the front axle when [member steer] is [code]1[/code] or [code]-1[/code]. The default (~34°) is a realistic maximum for a real car's front wheels.

@@ -30,12 +30,11 @@
 
 #pragma once
 
+#include "core/math/vector3.h"
 #include "core/templates/rid.h"
 #include "core/templates/rid_owner.h"
 #include "core/variant/variant.h"
 #include "servers/physics_3d/physics_server_3d.h"
-
-#include "core/math/vector3.h"
 
 #include <foundation/PxTransform.h>
 #include <geometry/PxBoxGeometry.h>

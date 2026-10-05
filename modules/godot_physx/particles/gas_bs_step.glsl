@@ -151,11 +151,11 @@ void main() {
 		new_dens = max(new_dens, emitter_size_density[ei].w);
 		vec3 evel = emitter_velocity[ei].xyz;
 
-		// Divergence: outward-radial speed from the emitter centre, on top of
+		// Divergence: outward-radial speed from the emitter center, on top of
 		// the directional jet -- an explosion/burst wants every cell pushed
-		// AWAY FROM CENTRE, not all pushed the same direction (Flow's
+		// AWAY FROM CENTER, not all pushed the same direction (Flow's
 		// NvFlowEmitterSphereParams.divergence). Swirl: tangential speed
-		// around world +Y through the centre, for directly authoring rotation
+		// around world +Y through the center, for directly authoring rotation
 		// (a mushroom-cloud cap curling over needs more coherent rotation than
 		// vorticity confinement alone reliably amplifies from incidental
 		// jitter).
@@ -182,7 +182,7 @@ void main() {
 	// step. A cell just outside one still pulls its backtrace/diffusion
 	// samples FROM inside (always zero), so the field naturally thins and
 	// parts near the surface without any extra boundary-condition code --
-	// the same "missing/zero neighbour" mechanism that makes the box edges
+	// the same "missing/zero neighbor" mechanism that makes the box edges
 	// an open boundary.
 	for (int ci = 0; ci < MAX_GAS_COLLIDERS; ci++) {
 		if (collider_sdf(ci, wpos) < 0.0) {

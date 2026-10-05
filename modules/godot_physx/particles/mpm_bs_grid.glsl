@@ -5,7 +5,7 @@
 
 layout(local_size_x = BCELLS) in;
 
-// Indirect: one workgroup per active block, one thread per cell. Normalise
+// Indirect: one workgroup per active block, one thread per cell. Normalize
 // momentum, apply gravity. Boundless -- no side walls or ceiling; only an
 // implicit floor a couple of cells above the anchor keeps a floor-less scene
 // from falling forever (demos add explicit floor/wall colliders).

@@ -68,7 +68,7 @@ void main() {
 	vec4 st = read_state(c);
 	float h = st.x;
 	float hp = st.y;
-	// Neighbours; the grid edge reads still water (the absorbing band has
+	// Neighbors; the grid edge reads still water (the absorbing band has
 	// already taken the waves out by then).
 	float hr = read_state(c + ivec2(1, 0)).x;
 	float hl = read_state(c - ivec2(1, 0)).x;

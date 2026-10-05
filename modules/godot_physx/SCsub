@@ -170,7 +170,9 @@ if blast_sdk:
         # _godot_physx_copy_runtime_dll's own note above, defined earlier in
         # this file right after the PhysX GPU section.
         for _blast_lib_name in blast_libs:
-            _godot_physx_copy_runtime_dll(os.path.join(blast_lib_dir, _blast_lib_name + ".dll"), _blast_lib_name + ".dll")
+            _godot_physx_copy_runtime_dll(
+                os.path.join(blast_lib_dir, _blast_lib_name + ".dll"), _blast_lib_name + ".dll"
+            )
     elif env["platform"] == "linuxbsd":
         env.Append(LIBS=blast_libs)
 
@@ -247,7 +249,13 @@ for _glsl in _water_fft_glsl:
     env_physx.GLSL_HEADER(os.path.join("water", _glsl))
 
 # Blit-to-texture (Phase 3, shared-device rewrite) -- also self-contained.
-_water_blit_glsl = ("water_blit_ripple.glsl", "water_blit_ocean.glsl", "water_foam.glsl", "water_shore_foam.glsl", "water_swash.glsl")
+_water_blit_glsl = (
+    "water_blit_ripple.glsl",
+    "water_blit_ocean.glsl",
+    "water_foam.glsl",
+    "water_shore_foam.glsl",
+    "water_swash.glsl",
+)
 for _glsl in _water_blit_glsl:
     env_physx.GLSL_HEADER(os.path.join("water", _glsl))
 

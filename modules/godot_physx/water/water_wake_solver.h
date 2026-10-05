@@ -75,7 +75,7 @@ public:
 };
 
 // Front end: one moving wake grid. Call step() once per physics tick with the
-// world position it should be centred on.
+// world position it should be centered on.
 class WaterWakeSolver {
 	Ref<WaterWakeSolverGPU> gpu;
 	void _dispatch(const Callable &p_call) const;
@@ -91,7 +91,7 @@ public:
 		Vector2 world_xz;
 		float radius = 0.5f;
 		float depth = 0.1f;
-		float foam = 0.0f; // foam churned in per second at the centre (1 = fully white)
+		float foam = 0.0f; // foam churned in per second at the center (1 = fully white)
 		bool drift = false; // foam-only: pushed out from the hull's line with the hull's foam, else stays put
 	};
 

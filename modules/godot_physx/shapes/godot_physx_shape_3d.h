@@ -88,6 +88,12 @@ class GodotPhysXShape3D {
 	bool backface_collision = false;
 	int source_triangle_count = 0;
 
+	// SeparationRayShape3D: no PhysX geometry (is_valid() stays false, so
+	// actors and scene queries never see it). The motion test and the space's
+	// pre-step pass cast it as a ray along +Z instead.
+	real_t ray_length = 1.0;
+	bool ray_slide_on_slope = false;
+
 public:
 	~GodotPhysXShape3D();
 
@@ -106,6 +112,9 @@ public:
 	bool is_valid() const { return geom_valid; }
 	bool is_trimesh() const { return type == PhysicsServer3D::SHAPE_CONCAVE_POLYGON; }
 	bool has_backface_collision() const { return backface_collision; }
+	bool is_separation_ray() const { return type == PhysicsServer3D::SHAPE_SEPARATION_RAY; }
+	real_t get_ray_length() const { return ray_length; }
+	bool is_ray_sliding_on_slope() const { return ray_slide_on_slope; }
 	// Trimesh: Godot's face index for a triangle index PhysX reports (cooking
 	// reorders triangles). r_back is set when the hit was the flipped copy,
 	// i.e. the back of the source face. -1 if unknown.

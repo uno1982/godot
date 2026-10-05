@@ -82,6 +82,7 @@ class GodotPhysXSpace3D {
 	LocalVector<GodotPhysXBody3D *> sync_bodies; // to notify in the next call_queries()
 	HashSet<GodotPhysXBody3D *> force_integrators; // bodies driving their own _integrate_forces
 	HashSet<GodotPhysXBody3D *> constant_force_bodies; // bodies with a nonzero constant force/torque
+	HashSet<GodotPhysXBody3D *> separation_ray_bodies; // dynamic bodies with a SeparationRayShape3D
 
 public:
 	void set_self(const RID &p_self) { self = p_self; }
@@ -114,6 +115,15 @@ public:
 		sync_bodies.erase(p_body);
 		force_integrators.erase(p_body);
 		constant_force_bodies.erase(p_body);
+		separation_ray_bodies.erase(p_body);
+	}
+
+	void set_body_separation_rays(GodotPhysXBody3D *p_body, bool p_enabled) {
+		if (p_enabled) {
+			separation_ray_bodies.insert(p_body);
+		} else {
+			separation_ray_bodies.erase(p_body);
+		}
 	}
 
 	void set_body_constant_forces(GodotPhysXBody3D *p_body, bool p_enabled) {
@@ -170,6 +180,8 @@ private:
 
 	// Apply each area's gravity/damp/wind overrides to the bodies it contains.
 	void _apply_area_overrides();
+	// Push dynamic bodies standing on separation rays out of what the rays touch.
+	void _apply_separation_rays(real_t p_step);
 	// Manual area-vs-area overlap poll (PhysX reports no trigger-trigger event
 	// to drive this from instead -- see GodotPhysXArea3D's header comment).
 	void _detect_area_overlaps();

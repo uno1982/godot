@@ -350,9 +350,16 @@ void GodotPhysXShape3D::set_data(const Variant &p_data) {
 			print_verbose(vformat("PhysX: built %dx%d height field (range %.2f).", width, depth, (double)range));
 		} break;
 
+		case PhysicsServer3D::SHAPE_SEPARATION_RAY: {
+			const Dictionary d = p_data;
+			ray_length = d.get("length", 1.0);
+			ray_slide_on_slope = d.get("slide_on_slope", false);
+			// No geometry: see is_separation_ray().
+		} break;
+
 		default: {
-			// Separation ray and custom shapes aren't implemented; keep the
-			// shape valid-but-inert so RID lifecycle stays clean.
+			// Custom shapes aren't implemented; keep the shape valid-but-inert
+			// so RID lifecycle stays clean.
 			WARN_PRINT_ONCE(vformat("PhysX: shape type %d not implemented; treated as no collision.", (int)type));
 		} break;
 	}

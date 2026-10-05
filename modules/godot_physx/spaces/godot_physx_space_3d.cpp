@@ -339,6 +339,7 @@ void GodotPhysXSpace3D::step(real_t p_step) {
 	for (GodotPhysXBody3D *body : constant_force_bodies) {
 		body->apply_constant_forces();
 	}
+	_apply_separation_rays(p_step);
 
 	_apply_area_overrides();
 	_detect_area_overlaps();
@@ -635,6 +636,43 @@ bool behind_one_sided_mesh(const PxGeometry &p_geom, const PxTransform &p_pose, 
 	return true;
 }
 
+// A SeparationRayShape3D on a body: it runs along the shape's +Z from the
+// shape's origin, length scaled with the shape.
+struct SeparationRay {
+	PxVec3 origin;
+	PxVec3 dir;
+	PxReal length = 0.0f;
+	bool slide_on_slope = false;
+};
+
+SeparationRay separation_ray(const GodotPhysXShape3D *p_shape, const PxTransform &p_body_pose, const Transform3D &p_shape_xform, const Vector3 &p_body_scale) {
+	const PxTransform pose = p_body_pose * to_px(p_shape_xform);
+	SeparationRay ray;
+	ray.origin = pose.p;
+	ray.dir = pose.q.rotate(PxVec3(0.0f, 0.0f, 1.0f));
+	ray.length = (PxReal)(p_shape->get_ray_length() * (p_body_scale * p_shape_xform.basis.get_scale()).z);
+	ray.slide_on_slope = p_shape->is_ray_sliding_on_slope();
+	return ray;
+}
+
+// How far a separation ray's tip is past what it hit, and which way that
+// pushes the body: back along the ray, or (slide_on_slope) out along the
+// surface normal. False if the tip isn't in anything.
+bool separation_ray_push(const SeparationRay &p_ray, const PxRaycastHit &p_hit, PxVec3 &r_dir, PxReal &r_amount) {
+	const PxReal depth = p_ray.length - p_hit.distance;
+	if (depth <= 0.0f) {
+		return false;
+	}
+	if (p_ray.slide_on_slope) {
+		r_dir = p_hit.normal;
+		r_amount = depth * p_hit.normal.dot(-p_ray.dir);
+	} else {
+		r_dir = -p_ray.dir;
+		r_amount = depth;
+	}
+	return r_amount > 0.0f;
+}
+
 // Whether to ignore an initial overlap of a motion test's shape with a mesh.
 // p_depth < 0: depth unknown, always check.
 bool skip_one_sided_overlap(const PxRigidActor *p_actor, const PxShape *p_shape, PxReal p_depth, const PxVec3 &p_push_dir, const PxVec3 &p_motion_dir,
@@ -696,6 +734,28 @@ bool GodotPhysXSpace3D::test_body_motion(GodotPhysXBody3D *p_body, const Physics
 		bool any = false;
 		for (int i = 0; i < shape_count; i++) {
 			const GodotPhysXBody3D::ShapeRef *sr = p_body->get_shape_ref(i);
+			if (sr && !sr->disabled && sr->shape && sr->shape->is_separation_ray()) {
+				// Push the body back until the ray's tip sits on what it hit --
+				// the character stands on the ray (and steps up onto ledges
+				// lower than it reaches).
+				const SeparationRay ray = separation_ray(sr->shape, PxTransform(recover) * to_px(p_params.from), sr->xform, motion_scale);
+				PxRaycastBuffer rh;
+				PxVec3 push_dir;
+				PxReal amount;
+				if (px_scene->raycast(ray.origin, ray.dir, ray.length, rh, PxHitFlag::ePOSITION | PxHitFlag::eNORMAL, fd, &filter) &&
+						rh.hasBlock && separation_ray_push(ray, rh.block, push_dir, amount)) {
+					iter_recover += push_dir * amount;
+					any = true;
+					if (iter == 0 && amount > rec_depth) {
+						rec_depth = amount;
+						rec_normal = push_dir;
+						rec_point = rh.block.position;
+						rec_actor = rh.block.actor;
+						rec_shape = rh.block.shape;
+					}
+				}
+				continue;
+			}
 			if (!sr || !sr->shape || !sr->shape->is_valid()) {
 				continue;
 			}
@@ -750,6 +810,32 @@ bool GodotPhysXSpace3D::test_body_motion(GodotPhysXBody3D *p_body, const Physics
 		const PxVec3 unit_dir = to_px(p_params.motion / motion_len);
 		for (int i = 0; i < shape_count; i++) {
 			const GodotPhysXBody3D::ShapeRef *sr = p_body->get_shape_ref(i);
+			if (sr && !sr->disabled && sr->shape && sr->shape->is_separation_ray()) {
+				// Rays only take part in the motion when snapping to the floor
+				// (collide_separation_ray), or acting as a regular shape with
+				// slide_on_slope -- as on Godot Physics and Jolt. The tip moves
+				// with the body; cast it along the motion.
+				if (!p_params.collide_separation_ray && !sr->shape->is_ray_sliding_on_slope()) {
+					continue;
+				}
+				const SeparationRay ray = separation_ray(sr->shape, recovered_from, sr->xform, motion_scale);
+				PxRaycastBuffer rh;
+				if (px_scene->raycast(ray.origin + ray.dir * ray.length, unit_dir, (PxReal)motion_len, rh, PxHitFlag::ePOSITION | PxHitFlag::eNORMAL, fd, &filter) &&
+						rh.hasBlock && rh.block.normal.dot(-unit_dir) >= 0.001f) {
+					const real_t frac = CLAMP((real_t)rh.block.distance / motion_len, (real_t)0.0, (real_t)1.0);
+					if (frac < safe_fraction) {
+						safe_fraction = frac;
+						best_hit.actor = rh.block.actor;
+						best_hit.shape = rh.block.shape;
+						best_hit.position = rh.block.position;
+						best_hit.normal = rh.block.normal;
+						best_hit.distance = rh.block.distance;
+						best_hit.faceIndex = rh.block.faceIndex;
+						has_hit = true;
+					}
+				}
+				continue;
+			}
 			if (!sr || !sr->shape || !sr->shape->is_valid()) {
 				continue;
 			}
@@ -861,4 +947,97 @@ bool GodotPhysXSpace3D::test_body_motion(GodotPhysXBody3D *p_body, const Physics
 	}
 
 	return has_hit || (p_params.recovery_as_collision && rec_depth > (PxReal)CMP_EPSILON);
+}
+
+void GodotPhysXSpace3D::_apply_separation_rays(real_t p_step) {
+	if (separation_ray_bodies.is_empty() || p_step <= 0.0) {
+		return;
+	}
+	// Each ray whose tip is in something gets an impulse at the contact, like
+	// an inelastic solver contact along the ray (or the surface normal with
+	// slide_on_slope), with friction: it stops the tip sinking further,
+	// and lifts out only the depth past a small slop, a fraction per step
+	// (Baumgarte). Lifting it out in one step kicks a body hard enough to flip
+	// it when one ray meets a bump, and a bigger lift than that keeps pumping
+	// energy in -- a sled on four rays rocked over a bump forever. Friction
+	// (the two materials' coefficients combined as on Jolt, sqrt(a * b)) then
+	// stops the contact sliding, up to mu times that push. Whatever it stands
+	// on gets the opposite impulse if it's dynamic.
+	constexpr PxReal SLOP = 0.02f; // m, as Jolt's penetration slop
+	constexpr PxReal BAUMGARTE = 0.2f;
+	constexpr PxReal MAX_SEPARATION_SPEED = 4.0f; // m/s
+	for (GodotPhysXBody3D *body : separation_ray_bodies) {
+		PxRigidDynamic *dyn = body->get_px_actor() ? body->get_px_actor()->is<PxRigidDynamic>() : nullptr;
+		if (!dyn || !dyn->getScene() || dyn->isSleeping()) {
+			continue;
+		}
+		MotionFilter filter;
+		filter.self_actor = dyn;
+		filter.self_body = body;
+		filter.self_layer = body->get_collision_layer();
+		filter.self_mask = body->get_collision_mask();
+		const PxQueryFilterData fd(PxQueryFlag::eSTATIC | PxQueryFlag::eDYNAMIC | PxQueryFlag::ePREFILTER);
+
+		const PxTransform pose = dyn->getGlobalPose();
+		const PxVec3 com = pose.transform(dyn->getCMassLocalPose().p);
+		const Vector3 scale = body->get_transform().basis.get_scale();
+		for (int i = 0; i < body->get_shape_count(); i++) {
+			const GodotPhysXBody3D::ShapeRef *sr = body->get_shape_ref(i);
+			if (!sr || sr->disabled || !sr->shape || !sr->shape->is_separation_ray()) {
+				continue;
+			}
+			const SeparationRay ray = separation_ray(sr->shape, pose, sr->xform, scale);
+			PxRaycastBuffer rh;
+			PxVec3 n;
+			PxReal amount;
+			if (!px_scene->raycast(ray.origin, ray.dir, ray.length, rh, PxHitFlag::ePOSITION | PxHitFlag::eNORMAL, fd, &filter) ||
+					!rh.hasBlock || !separation_ray_push(ray, rh.block, n, amount)) {
+				continue;
+			}
+			const PxVec3 contact = rh.block.position;
+			const PxVec3 r = contact - com;
+			// Velocity change at the contact, along n, per unit impulse.
+			PxVec3 dl, da;
+			PxRigidBodyExt::computeVelocityDeltaFromImpulse(*dyn, n, r.cross(n), dl, da);
+			const PxReal k = dl.dot(n) + da.cross(r).dot(n);
+			if (k <= 0.0f) {
+				continue;
+			}
+			const PxReal vn = (dyn->getLinearVelocity() + dyn->getAngularVelocity().cross(r)).dot(n);
+			const PxReal target = MIN(MAX(amount - SLOP, 0.0f) * BAUMGARTE / (PxReal)p_step, MAX_SEPARATION_SPEED);
+			if (vn >= target) {
+				continue;
+			}
+			const PxReal jn = (target - vn) / k;
+			PxVec3 total = n * jn;
+
+			// Friction: cancel the contact's sliding velocity (as it will be
+			// after the push), at most mu * jn.
+			PxReal mu = (PxReal)(real_t)body->get_param(PhysicsServer3D::BODY_PARAM_FRICTION);
+			PxMaterial *other_material = nullptr;
+			if (rh.block.shape && rh.block.shape->getNbMaterials() > 0) {
+				rh.block.shape->getMaterials(&other_material, 1);
+			}
+			mu = other_material ? PxSqrt(MAX(mu, 0.0f) * MAX(other_material->getDynamicFriction(), 0.0f)) : MAX(mu, 0.0f);
+			const PxVec3 v_after = dyn->getLinearVelocity() + dl * jn + (dyn->getAngularVelocity() + da * jn).cross(r);
+			PxVec3 vt = v_after - n * v_after.dot(n);
+			const PxReal vt_len = vt.magnitude();
+			if (mu > 0.0f && vt_len > 1e-4f) {
+				const PxVec3 t = vt / vt_len;
+				PxVec3 tl, ta;
+				PxRigidBodyExt::computeVelocityDeltaFromImpulse(*dyn, t, r.cross(t), tl, ta);
+				const PxReal kt = tl.dot(t) + ta.cross(r).dot(t);
+				if (kt > 0.0f) {
+					total -= t * MIN(vt_len / kt, mu * jn);
+				}
+			}
+
+			PxRigidBodyExt::addForceAtPos(*dyn, total, contact, PxForceMode::eIMPULSE, false);
+			if (PxRigidDynamic *other = rh.block.actor ? rh.block.actor->is<PxRigidDynamic>() : nullptr) {
+				if (!(other->getRigidBodyFlags() & PxRigidBodyFlag::eKINEMATIC)) {
+					PxRigidBodyExt::addForceAtPos(*other, -total, contact, PxForceMode::eIMPULSE, true);
+				}
+			}
+		}
+	}
 }

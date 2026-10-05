@@ -128,8 +128,13 @@ void GodotPhysXBody3D::_build_actor() {
 	// shape's geometry here (combined with any per-shape transform scale).
 	built_scale = body_transform.basis.get_scale();
 
+	// Separation rays have no PhysX shape; the space casts them each step.
+	bool has_separation_ray = false;
 	for (uint32_t shape_idx = 0; shape_idx < shapes.size(); shape_idx++) {
 		const ShapeRef &sr = shapes[shape_idx];
+		if (!sr.disabled && sr.shape && sr.shape->is_separation_ray()) {
+			has_separation_ray = true;
+		}
 		if (sr.disabled || !sr.shape || !sr.shape->is_valid()) {
 			continue;
 		}
@@ -151,6 +156,7 @@ void GodotPhysXBody3D::_build_actor() {
 	}
 
 	_apply_filter_data();
+	space->set_body_separation_rays(this, has_separation_ray && non_kinematic_dynamic);
 
 	if (PxRigidDynamic *dyn = px_actor->is<PxRigidDynamic>()) {
 		if (mode != PhysicsServer3D::BODY_MODE_KINEMATIC) {

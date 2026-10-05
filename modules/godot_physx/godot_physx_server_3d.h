@@ -294,6 +294,10 @@ public:
 	virtual uint32_t soft_body_get_collision_layer(RID p_body) const override;
 	virtual void soft_body_set_collision_mask(RID p_body, uint32_t p_mask) override;
 	virtual uint32_t soft_body_get_collision_mask(RID p_body) const override;
+	virtual void body_add_collision_exception(RID p_body, RID p_body_b) override;
+	virtual void body_remove_collision_exception(RID p_body, RID p_body_b) override;
+	virtual void body_get_collision_exceptions(RID p_body, List<RID> *p_exceptions) override;
+
 	virtual void soft_body_add_collision_exception(RID p_body, RID p_body_b) override;
 	virtual void soft_body_remove_collision_exception(RID p_body, RID p_body_b) override;
 	virtual void soft_body_get_collision_exceptions(RID p_body, List<RID> *p_exceptions) override;

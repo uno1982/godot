@@ -83,14 +83,40 @@ PxFilterFlags godot_physx_filter_shader(
 	}
 
 	pair_flags = PxPairFlag::eCONTACT_DEFAULT;
-	if ((filter_data0.word2 | filter_data1.word2) & 1u) {
+	if ((filter_data0.word2 | filter_data1.word2) & GodotPhysXBody3D::FILTER_REPORTS_CONTACTS) {
 		pair_flags |= PxPairFlag::eNOTIFY_TOUCH_FOUND |
 				PxPairFlag::eNOTIFY_TOUCH_PERSISTS |
 				PxPairFlag::eNOTIFY_TOUCH_LOST |
 				PxPairFlag::eNOTIFY_CONTACT_POINTS;
 	}
+	// A body with collision exceptions: the (stateless) shader can't look
+	// them up, so its pairs go to g_filter_callback to decide.
+	if ((filter_data0.word2 | filter_data1.word2) & GodotPhysXBody3D::FILTER_HAS_EXCEPTIONS) {
+		return PxFilterFlag::eCALLBACK;
+	}
 	return PxFilterFlag::eDEFAULT;
 }
+
+// Collision exceptions (add_collision_exception_with()): a pair where either
+// body excepts the other never collides. Only pairs the shader flags reach it.
+class ExceptionFilterCallback : public PxSimulationFilterCallback {
+	static const GodotPhysXBody3D *_body(const PxActor *p_actor, const PxFilterData &p_data) {
+		return p_actor && p_data.word3 == GodotPhysXBody3D::FILTER_BODY_MARKER ? static_cast<const GodotPhysXBody3D *>(p_actor->userData) : nullptr;
+	}
+
+public:
+	virtual PxFilterFlags pairFound(PxU64, PxFilterObjectAttributes, PxFilterData p_data0, const PxActor *p_a0, const PxShape *,
+			PxFilterObjectAttributes, PxFilterData p_data1, const PxActor *p_a1, const PxShape *, PxPairFlags &) override {
+		const GodotPhysXBody3D *b0 = _body(p_a0, p_data0);
+		const GodotPhysXBody3D *b1 = _body(p_a1, p_data1);
+		if (b0 && b1 && (b0->has_collision_exception(b1->get_self()) || b1->has_collision_exception(b0->get_self()))) {
+			return PxFilterFlag::eSUPPRESS;
+		}
+		return PxFilterFlag::eDEFAULT;
+	}
+	virtual void pairLost(PxU64, PxFilterObjectAttributes, PxFilterData, PxFilterObjectAttributes, PxFilterData, bool) override {}
+	virtual bool statusChange(PxU64 &, PxPairFlags &, PxFilterFlags &) override { return false; }
+};
 
 // Stateless: reaches bodies through PxActor::userData, so one instance is shared
 // by every scene.
@@ -171,6 +197,7 @@ public:
 };
 
 ContactCallback g_contact_callback;
+ExceptionFilterCallback g_filter_callback;
 
 } //namespace
 
@@ -182,6 +209,7 @@ GodotPhysXSpace3D::GodotPhysXSpace3D(PxPhysics *p_physics, PxDefaultCpuDispatche
 	scene_desc.gravity = to_px(gravity);
 	scene_desc.cpuDispatcher = p_dispatcher;
 	scene_desc.filterShader = godot_physx_filter_shader;
+	scene_desc.filterCallback = &g_filter_callback;
 	scene_desc.simulationEventCallback = &g_contact_callback;
 	scene_desc.flags |= PxSceneFlag::eENABLE_ACTIVE_ACTORS;
 	if (GodotPhysXProjectSettings::stabilization) {
@@ -519,6 +547,7 @@ namespace {
 class MotionFilter : public PxQueryFilterCallback {
 public:
 	const PxRigidActor *self_actor = nullptr;
+	const GodotPhysXBody3D *self_body = nullptr;
 	const HashSet<RID> *exclude_bodies = nullptr;
 	const HashSet<ObjectID> *exclude_objects = nullptr;
 	uint32_t self_layer = 0;
@@ -536,6 +565,10 @@ public:
 			return PxQueryHitType::eNONE;
 		}
 		if (exclude_bodies && exclude_bodies->has(b->get_self())) {
+			return PxQueryHitType::eNONE;
+		}
+		// Collision exceptions, either way round (as Godot Physics' motion test).
+		if (self_body && (self_body->has_collision_exception(b->get_self()) || b->has_collision_exception(self_body->get_self()))) {
 			return PxQueryHitType::eNONE;
 		}
 		if (exclude_objects && exclude_objects->has(b->get_instance_id())) {
@@ -579,6 +612,7 @@ bool GodotPhysXSpace3D::test_body_motion(GodotPhysXBody3D *p_body, const Physics
 
 	MotionFilter filter;
 	filter.self_actor = p_body->get_px_actor();
+	filter.self_body = p_body;
 	filter.exclude_bodies = &p_params.exclude_bodies;
 	filter.exclude_objects = &p_params.exclude_objects;
 	filter.self_layer = p_body->get_collision_layer();

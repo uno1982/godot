@@ -460,13 +460,14 @@ void GodotPhysXBody3D::_apply_filter_data() {
 	if (!px_actor) {
 		return;
 	}
-	// word0/word1: Godot collision layer/mask. word2 bit 0: this body wants
-	// contact reports, read by the scene filter shader.
+	// word0/word1: Godot collision layer/mask. word2: flags read by the scene
+	// filter shader -- this body wants contact reports, or has collision
+	// exceptions (its pairs go to the filter callback). word3 marks a body.
 	PxFilterData fd;
 	fd.word0 = collision_layer;
 	fd.word1 = collision_mask;
-	fd.word2 = reports_contacts() ? 1u : 0u;
-	fd.word3 = 0;
+	fd.word2 = (reports_contacts() ? FILTER_REPORTS_CONTACTS : 0u) | (collision_exceptions.is_empty() ? 0u : FILTER_HAS_EXCEPTIONS);
+	fd.word3 = FILTER_BODY_MARKER;
 
 	const PxU32 nb = px_actor->getNbShapes();
 	LocalVector<PxShape *> px_shapes;
@@ -563,6 +564,28 @@ void GodotPhysXBody3D::set_collision_layer(uint32_t p_layer) {
 void GodotPhysXBody3D::set_collision_mask(uint32_t p_mask) {
 	collision_mask = p_mask;
 	_apply_filter_data();
+}
+
+void GodotPhysXBody3D::add_collision_exception(RID p_body) {
+	if (p_body == self || collision_exceptions.has(p_body)) {
+		return;
+	}
+	collision_exceptions.insert(p_body);
+	_collision_exceptions_changed();
+}
+
+void GodotPhysXBody3D::remove_collision_exception(RID p_body) {
+	if (collision_exceptions.erase(p_body)) {
+		_collision_exceptions_changed();
+	}
+}
+
+void GodotPhysXBody3D::_collision_exceptions_changed() {
+	_apply_filter_data();
+	// Pairs already touching keep their old filter result until re-filtered.
+	if (px_actor && px_actor->getScene()) {
+		px_actor->getScene()->resetFiltering(*px_actor);
+	}
 }
 
 void GodotPhysXBody3D::set_max_contacts_reported(int p_amount) {

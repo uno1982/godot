@@ -1136,6 +1136,26 @@ uint32_t GodotPhysXServer3D::soft_body_get_collision_mask(RID p_body) const {
 	return soft_body->get_collision_mask();
 }
 
+void GodotPhysXServer3D::body_add_collision_exception(RID p_body, RID p_body_b) {
+	GodotPhysXBody3D *body = body_owner.get_or_null(p_body);
+	ERR_FAIL_NULL(body);
+	body->add_collision_exception(p_body_b);
+}
+
+void GodotPhysXServer3D::body_remove_collision_exception(RID p_body, RID p_body_b) {
+	GodotPhysXBody3D *body = body_owner.get_or_null(p_body);
+	ERR_FAIL_NULL(body);
+	body->remove_collision_exception(p_body_b);
+}
+
+void GodotPhysXServer3D::body_get_collision_exceptions(RID p_body, List<RID> *p_exceptions) {
+	GodotPhysXBody3D *body = body_owner.get_or_null(p_body);
+	ERR_FAIL_NULL(body);
+	for (const RID &e : body->get_collision_exceptions()) {
+		p_exceptions->push_back(e);
+	}
+}
+
 void GodotPhysXServer3D::soft_body_add_collision_exception(RID p_body, RID p_body_b) {
 	GET_SOFT_BODY_V();
 	soft_body->add_collision_exception(p_body_b);

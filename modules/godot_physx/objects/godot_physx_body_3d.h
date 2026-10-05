@@ -67,9 +67,18 @@ public:
 		Vector3 collider_velocity;
 	};
 
+	// PxFilterData word3 on a body's shapes, so the scene filter callback can
+	// tell a body's actor from anything else's.
+	static constexpr uint32_t FILTER_BODY_MARKER = 0x47504231; // "GPB1"
+	// PxFilterData word2 bits, read by the scene filter shader.
+	static constexpr uint32_t FILTER_REPORTS_CONTACTS = 1u << 0;
+	static constexpr uint32_t FILTER_HAS_EXCEPTIONS = 1u << 1;
+
 private:
 	RID self;
 	ObjectID instance_id;
+	// Bodies this one never collides with (add_collision_exception_with()).
+	HashSet<RID> collision_exceptions;
 
 	PhysicsServer3D::BodyMode mode = PhysicsServer3D::BODY_MODE_RIGID;
 	GodotPhysXSpace3D *space = nullptr;
@@ -154,6 +163,7 @@ private:
 	void _apply_solver_iterations();
 	void _build_actor();
 	void _apply_filter_data();
+	void _collision_exceptions_changed();
 	void _apply_damping();
 	void _apply_axis_lock();
 	physx::PxMaterial *_get_material();
@@ -161,6 +171,11 @@ private:
 public:
 	void set_self(const RID &p_self) { self = p_self; }
 	RID get_self() const { return self; }
+
+	void add_collision_exception(RID p_body);
+	void remove_collision_exception(RID p_body);
+	const HashSet<RID> &get_collision_exceptions() const { return collision_exceptions; }
+	bool has_collision_exception(RID p_body) const { return collision_exceptions.has(p_body); }
 
 	void set_instance_id(ObjectID p_id) { instance_id = p_id; }
 	ObjectID get_instance_id() const { return instance_id; }

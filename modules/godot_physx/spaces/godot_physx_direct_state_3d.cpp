@@ -331,6 +331,53 @@ public:
 	}
 };
 
+const GodotPhysXShape3D *godot_shape_of(const PxRigidActor *p_actor, const PxShape *p_shape) {
+	const GodotPhysXBody3D *body = body_of(p_actor);
+	if (!body || !p_shape) {
+		return nullptr;
+	}
+	const GodotPhysXBody3D::ShapeRef *sr = body->get_shape_ref(shape_index_of(p_shape));
+	return sr ? sr->shape : nullptr;
+}
+
+// Ray queries: a trimesh back face only counts when the shape has
+// backface_collision on AND the query asks for back faces (Jolt's rule).
+// eMESH_BOTH_SIDES (needed for hit_back_faces on height fields) would let a
+// ray hit any mesh from behind, and a back-face mesh's flipped copies would
+// let any ray hit it from behind -- this sorts those hits out.
+class RayQueryFilter : public QueryFilter {
+public:
+	PxVec3 ray_dir;
+	bool hit_back_faces = true;
+
+	virtual PxQueryHitType::Enum postFilter(const PxFilterData &, const PxQueryHit &p_hit, const PxShape *p_shape, const PxRigidActor *p_actor) override {
+		if (!p_shape || !p_actor || p_hit.faceIndex == 0xFFFFFFFF || p_shape->getGeometry().getType() != PxGeometryType::eTRIANGLEMESH) {
+			return PxQueryHitType::eBLOCK;
+		}
+		const GodotPhysXShape3D *shape = godot_shape_of(p_actor, p_shape);
+		if (!shape) {
+			return PxQueryHitType::eBLOCK;
+		}
+		if (shape->has_backface_collision()) {
+			if (hit_back_faces) {
+				return PxQueryHitType::eBLOCK;
+			}
+			bool back = false;
+			shape->source_face_index(p_hit.faceIndex, back);
+			return back ? PxQueryHitType::eNONE : PxQueryHitType::eBLOCK;
+		}
+		if (!hit_back_faces) {
+			return PxQueryHitType::eBLOCK; // one-sided query: PhysX only reported front hits
+		}
+		PxTriangle tri;
+		PxMeshQuery::getTriangle(static_cast<const PxTriangleMeshGeometry &>(p_shape->getGeometry()),
+				p_actor->getGlobalPose() * p_shape->getLocalPose(), p_hit.faceIndex, tri);
+		PxVec3 face_n;
+		tri.normal(face_n);
+		return face_n.dot(ray_dir) > 0.0f ? PxQueryHitType::eNONE : PxQueryHitType::eBLOCK;
+	}
+};
+
 GodotPhysXShape3D *query_shape(RID p_shape_rid) {
 	GodotPhysXServer3D *server = GodotPhysXServer3D::get_singleton();
 	if (!server) {
@@ -355,11 +402,13 @@ bool GodotPhysXDirectSpaceState3D::intersect_ray(const RayParameters &p_paramete
 		return false;
 	}
 
-	QueryFilter filter;
+	RayQueryFilter filter;
 	filter.exclude = &p_parameters.exclude;
 	filter.collision_mask = p_parameters.collision_mask;
+	filter.ray_dir = to_px(delta / dist);
+	filter.hit_back_faces = p_parameters.hit_back_faces;
 
-	PxQueryFilterData fd(PxQueryFlag::eSTATIC | PxQueryFlag::eDYNAMIC | PxQueryFlag::ePREFILTER);
+	PxQueryFilterData fd(PxQueryFlag::eSTATIC | PxQueryFlag::eDYNAMIC | PxQueryFlag::ePREFILTER | PxQueryFlag::ePOSTFILTER);
 	PxHitFlags hit_flags = PxHitFlag::ePOSITION | PxHitFlag::eNORMAL | PxHitFlag::eFACE_INDEX;
 	if (p_parameters.hit_back_faces) {
 		hit_flags |= PxHitFlag::eMESH_BOTH_SIDES;
@@ -380,6 +429,13 @@ bool GodotPhysXDirectSpaceState3D::intersect_ray(const RayParameters &p_paramete
 	r_result.collider = r_result.collider_id.is_valid() ? ObjectDB::get_instance(r_result.collider_id) : nullptr;
 	r_result.shape = shape_index_of(b.shape);
 	r_result.face_index = (b.faceIndex == 0xFFFFFFFF) ? -1 : (int)b.faceIndex;
+	if (r_result.face_index >= 0 && b.shape && b.shape->getGeometry().getType() == PxGeometryType::eTRIANGLEMESH) {
+		// Godot's face order, not the cooked one.
+		if (const GodotPhysXShape3D *shape = godot_shape_of(b.actor, b.shape)) {
+			bool back = false;
+			r_result.face_index = shape->source_face_index(b.faceIndex, back);
+		}
+	}
 	return true;
 }
 

@@ -596,7 +596,12 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   on any backend.
 - **Cylinder shapes** are approximated by a 16-sided convex prism.
 - **Concave (trimesh) shapes** are supported on static and kinematic bodies
-  only, as in most engines.
+  only, as in most engines. They collide on their front faces only unless
+  `backface_collision` is on, as on Jolt; with it on, the mesh is cooked with a
+  flipped copy of every triangle (PhysX has no two-sided contact option), so
+  it takes twice the memory and triangle tests. One difference from Jolt:
+  overlap queries (`intersect_shape`, `collide_shape`, `get_rest_info`) see a
+  one-sided mesh from behind too.
 - **Cloth self-collision** is disabled; a cloth can pass through itself. Cloth
   tearing is not implemented. `PhysXCloth3D` pins follow a single shared
   `anchor_path`, so there is no per-vertex bone attachment yet.

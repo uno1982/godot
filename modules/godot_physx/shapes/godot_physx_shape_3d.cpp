@@ -86,10 +86,26 @@ void GodotPhysXShape3D::_release_meshes() {
 	}
 }
 
+int GodotPhysXShape3D::source_face_index(uint32_t p_cooked_index, bool &r_back) const {
+	r_back = false;
+	if (!triangle_mesh || source_triangle_count <= 0 || p_cooked_index >= triangle_mesh->getNbTriangles()) {
+		return -1;
+	}
+	const PxU32 *remap = triangle_mesh->getTrianglesRemap();
+	uint32_t source = remap ? remap[p_cooked_index] : p_cooked_index;
+	if (source >= (uint32_t)source_triangle_count) {
+		r_back = true;
+		source -= (uint32_t)source_triangle_count;
+	}
+	return (int)source;
+}
+
 void GodotPhysXShape3D::set_data(const Variant &p_data) {
 	data = p_data;
 	geom_valid = false;
 	geom = GodotPhysXShapeGeometry();
+	backface_collision = false;
+	source_triangle_count = 0;
 
 	switch (type) {
 		case PhysicsServer3D::SHAPE_SPHERE: {
@@ -169,7 +185,9 @@ void GodotPhysXShape3D::set_data(const Variant &p_data) {
 		case PhysicsServer3D::SHAPE_CONCAVE_POLYGON: {
 			Vector<Vector3> faces;
 			if (p_data.get_type() == Variant::DICTIONARY) {
-				faces = ((Dictionary)p_data).get("faces", Vector<Vector3>());
+				const Dictionary d = p_data;
+				faces = d.get("faces", Vector<Vector3>());
+				backface_collision = d.get("backface_collision", false);
 			} else {
 				faces = p_data;
 			}
@@ -178,10 +196,13 @@ void GodotPhysXShape3D::set_data(const Variant &p_data) {
 			ERR_FAIL_NULL(physics);
 
 			const int tri_count = faces.size() / 3;
+			// Back faces on: a flipped copy of every triangle after the
+			// originals (see source_face_index()).
+			const int cooked_tri_count = backface_collision ? tri_count * 2 : tri_count;
 			LocalVector<PxVec3> verts;
 			LocalVector<PxU32> indices;
 			verts.resize(faces.size());
-			indices.resize(faces.size());
+			indices.resize(cooked_tri_count * 3);
 			for (int i = 0; i < faces.size(); i++) {
 				verts[i] = to_px(faces[i]);
 			}
@@ -192,12 +213,19 @@ void GodotPhysXShape3D::set_data(const Variant &p_data) {
 				indices[t * 3 + 1] = t * 3 + 2;
 				indices[t * 3 + 2] = t * 3 + 1;
 			}
+			for (int t = tri_count; t < cooked_tri_count; t++) {
+				const int s = t - tri_count;
+				indices[t * 3 + 0] = s * 3 + 0;
+				indices[t * 3 + 1] = s * 3 + 1;
+				indices[t * 3 + 2] = s * 3 + 2;
+			}
+			source_triangle_count = tri_count;
 
 			PxTriangleMeshDesc desc;
 			desc.points.count = verts.size();
 			desc.points.stride = sizeof(PxVec3);
 			desc.points.data = verts.ptr();
-			desc.triangles.count = tri_count;
+			desc.triangles.count = cooked_tri_count;
 			desc.triangles.stride = 3 * sizeof(PxU32);
 			desc.triangles.data = indices.ptr();
 

@@ -81,6 +81,13 @@ class GodotPhysXShape3D {
 	physx::PxHeightField *height_field = nullptr;
 	void _release_meshes();
 
+	// Trimesh: ConcavePolygonShape3D.backface_collision. PhysX contacts only
+	// ever meet a mesh triangle from its front, so a mesh with back faces on
+	// is cooked with every triangle twice -- the second copy flipped -- and
+	// source_triangle_count tells the copies apart.
+	bool backface_collision = false;
+	int source_triangle_count = 0;
+
 public:
 	~GodotPhysXShape3D();
 
@@ -98,6 +105,11 @@ public:
 
 	bool is_valid() const { return geom_valid; }
 	bool is_trimesh() const { return type == PhysicsServer3D::SHAPE_CONCAVE_POLYGON; }
+	bool has_backface_collision() const { return backface_collision; }
+	// Trimesh: Godot's face index for a triangle index PhysX reports (cooking
+	// reorders triangles). r_back is set when the hit was the flipped copy,
+	// i.e. the back of the source face. -1 if unknown.
+	int source_face_index(uint32_t p_cooked_index, bool &r_back) const;
 	// Trimesh and height field: PhysX only allows these on static/kinematic actors.
 	bool is_static_only() const { return type == PhysicsServer3D::SHAPE_CONCAVE_POLYGON || type == PhysicsServer3D::SHAPE_HEIGHTMAP; }
 	const GodotPhysXShapeGeometry &get_geometry() const { return geom; }

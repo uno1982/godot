@@ -590,6 +590,64 @@ public:
 	}
 };
 
+// One-sided trimeshes (backface_collision off) in the motion test. PhysX's
+// overlap and penetration queries treat every mesh triangle as two-sided, so
+// a body deep in a one-sided mesh from behind -- jumping up through a one-way
+// platform -- got pushed out of its front and reported as standing on it.
+// Jolt skips a triangle whose plane has the shape's center behind it; the same
+// check runs here, but only for deep overlaps: a body resting on or walking
+// over a mesh overlaps it by about the margin and never pays for it. (A
+// sweep's initial-overlap MTD can report a deep overlap as ~0 deep, so that
+// path always checks -- it only runs when a sweep starts inside a mesh.)
+// And a body already moving out the way it would be pushed is left to its own
+// motion -- pushing it there would land it on the surface mid-jump.
+constexpr PxReal ONE_SIDED_DEEP_PENETRATION = 0.05f;
+constexpr PxReal ONE_SIDED_MOVING_OUT = 0.5f; // cos of the angle between motion and push-out
+constexpr PxU32 ONE_SIDED_MAX_TRIANGLES = 64;
+
+bool is_one_sided_trimesh(const PxRigidActor *p_actor, const PxShape *p_shape) {
+	if (!p_actor || !p_shape || p_shape->getGeometry().getType() != PxGeometryType::eTRIANGLEMESH) {
+		return false;
+	}
+	const GodotPhysXBody3D *body = static_cast<const GodotPhysXBody3D *>(p_actor->userData);
+	const GodotPhysXBody3D::ShapeRef *sr = body ? body->get_shape_ref((int)reinterpret_cast<uintptr_t>(p_shape->userData)) : nullptr;
+	return sr && sr->shape && !sr->shape->has_backface_collision();
+}
+
+// True when the shape's center is behind every mesh triangle it overlaps.
+bool behind_one_sided_mesh(const PxGeometry &p_geom, const PxTransform &p_pose, const PxShape *p_mesh_shape, const PxTransform &p_mesh_pose) {
+	const PxTriangleMeshGeometry &mesh = static_cast<const PxTriangleMeshGeometry &>(p_mesh_shape->getGeometry());
+	PxU32 tris[ONE_SIDED_MAX_TRIANGLES];
+	bool overflow = false;
+	const PxU32 count = PxMeshQuery::findOverlapTriangleMesh(p_geom, p_pose, mesh, p_mesh_pose, tris, ONE_SIDED_MAX_TRIANGLES, 0, overflow);
+	if (count == 0 || overflow) {
+		return false;
+	}
+	for (PxU32 i = 0; i < count; i++) {
+		PxTriangle tri;
+		PxMeshQuery::getTriangle(mesh, p_mesh_pose, tris[i], tri);
+		PxVec3 normal;
+		tri.normal(normal);
+		if (normal.dot(p_pose.p - tri.verts[0]) >= 0.0f) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// Whether to ignore an initial overlap of a motion test's shape with a mesh.
+// p_depth < 0: depth unknown, always check.
+bool skip_one_sided_overlap(const PxRigidActor *p_actor, const PxShape *p_shape, PxReal p_depth, const PxVec3 &p_push_dir, const PxVec3 &p_motion_dir,
+		const PxGeometry &p_geom, const PxTransform &p_pose) {
+	if (!is_one_sided_trimesh(p_actor, p_shape)) {
+		return false;
+	}
+	if (p_motion_dir.dot(p_push_dir) > ONE_SIDED_MOVING_OUT) {
+		return true;
+	}
+	return (p_depth < 0.0f || p_depth > ONE_SIDED_DEEP_PENETRATION) && behind_one_sided_mesh(p_geom, p_pose, p_shape, p_actor->getGlobalPose() * p_shape->getLocalPose());
+}
+
 } //namespace
 
 bool GodotPhysXSpace3D::test_body_motion(GodotPhysXBody3D *p_body, const PhysicsServer3D::MotionParameters &p_params, PhysicsServer3D::MotionResult *r_result) {
@@ -621,6 +679,7 @@ bool GodotPhysXSpace3D::test_body_motion(GodotPhysXBody3D *p_body, const Physics
 	filter.self_layer = p_body->get_collision_layer();
 	filter.self_mask = p_body->get_collision_mask();
 	PxQueryFilterData fd(PxQueryFlag::eSTATIC | PxQueryFlag::eDYNAMIC | PxQueryFlag::ePREFILTER);
+	const PxVec3 motion_dir = p_params.motion.length() > CMP_EPSILON ? to_px(p_params.motion.normalized()) : PxVec3(0.0f);
 
 	// --- Depenetration recovery -------------------------------------------------
 	PxVec3 recover(0.0f);
@@ -653,6 +712,9 @@ bool GodotPhysXSpace3D::test_body_motion(GodotPhysXBody3D *p_body, const Physics
 				PxF32 depth;
 				const PxTransform other_pose = h.actor->getGlobalPose() * h.shape->getLocalPose();
 				if (PxGeometryQuery::computePenetration(dir, depth, sg.geom.any(), pose, h.shape->getGeometry(), other_pose)) {
+					if (skip_one_sided_overlap(h.actor, h.shape, depth, dir, motion_dir, sg.geom.any(), pose)) {
+						continue;
+					}
 					iter_recover += dir * (depth + margin);
 					any = true;
 					if (iter == 0 && depth > rec_depth) {
@@ -726,6 +788,9 @@ bool GodotPhysXSpace3D::test_body_motion(GodotPhysXBody3D *p_body, const Physics
 				// height-field terrain (computePenetration() rejects those).
 				if (hit.block.distance <= 0.0f) {
 					const PxF32 pen = -hit.block.distance;
+					if (skip_one_sided_overlap(hit.block.actor, hit.block.shape, -1.0f, hit.block.normal, motion_dir, sg.geom.any(), pose)) {
+						continue;
+					}
 					mtd_recover += hit.block.normal * (pen + margin);
 					// Only report a floor-like overlap so move_and_slide keeps a
 					// character grounded. Near-horizontal push-outs here are

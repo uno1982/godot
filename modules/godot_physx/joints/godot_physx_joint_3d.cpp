@@ -152,11 +152,15 @@ void GodotPhysXJoint3D::_apply_params() {
 			PxRevoluteJoint *j = static_cast<PxRevoluteJoint *>(px_joint);
 			j->setRevoluteJointFlag(PxRevoluteJointFlag::eLIMIT_ENABLED, hinge_use_limit);
 			if (hinge_use_limit) {
-				j->setLimit(PxJointAngularLimitPair((PxReal)hinge_lower, (PxReal)hinge_upper));
+				// Godot's hinge angle runs the other way round to PhysX's
+				// (body B's counter-clockwise turn about the axis relative to
+				// A): [lower, upper] is [-upper, -lower] here, as Jolt maps it.
+				// Passed straight through, a ragdoll's knees bent backwards.
+				j->setLimit(PxJointAngularLimitPair((PxReal)-hinge_upper, (PxReal)-hinge_lower));
 			}
 			j->setRevoluteJointFlag(PxRevoluteJointFlag::eDRIVE_ENABLED, hinge_motor);
 			if (hinge_motor) {
-				j->setDriveVelocity((PxReal)hinge_motor_velocity);
+				j->setDriveVelocity((PxReal)-hinge_motor_velocity); // the other way round too (see the limits)
 				j->setDriveForceLimit((PxReal)(hinge_motor_max_impulse > 0.0 ? hinge_motor_max_impulse : PX_MAX_F32));
 			}
 		} break;

@@ -215,6 +215,8 @@ void GodotPhysXBody3D::set_space(GodotPhysXSpace3D *p_space) {
 	space = p_space;
 	if (space) {
 		space->register_body(this);
+		area_linear_damp = space->get_default_linear_damp();
+		area_angular_damp = space->get_default_angular_damp();
 		if (reports_contacts()) {
 			space->set_body_contact_reporting(this, true);
 		}
@@ -327,9 +329,11 @@ void GodotPhysXBody3D::set_param(PhysicsServer3D::BodyParameter p_param, const V
 			break;
 		case PhysicsServer3D::BODY_PARAM_LINEAR_DAMP_MODE:
 			linear_damp_mode = (PhysicsServer3D::BodyDampMode)(int)p_value;
+			_apply_damping();
 			break;
 		case PhysicsServer3D::BODY_PARAM_ANGULAR_DAMP_MODE:
 			angular_damp_mode = (PhysicsServer3D::BodyDampMode)(int)p_value;
+			_apply_damping();
 			break;
 		case PhysicsServer3D::BODY_PARAM_CENTER_OF_MASS:
 			// RigidBody3D only sends this when center_of_mass_mode is CUSTOM
@@ -489,15 +493,40 @@ void GodotPhysXBody3D::_apply_filter_data() {
 	}
 }
 
+real_t GodotPhysXBody3D::get_total_linear_damp() const {
+	if (omit_force_integration) {
+		return 0.0;
+	}
+	const real_t total = linear_damp_mode == PhysicsServer3D::BODY_DAMP_MODE_REPLACE ? linear_damp : area_linear_damp + linear_damp;
+	return MAX(total, (real_t)0.0);
+}
+
+real_t GodotPhysXBody3D::get_total_angular_damp() const {
+	if (omit_force_integration) {
+		return 0.0;
+	}
+	const real_t total = angular_damp_mode == PhysicsServer3D::BODY_DAMP_MODE_REPLACE ? angular_damp : area_angular_damp + angular_damp;
+	return MAX(total, (real_t)0.0);
+}
+
+void GodotPhysXBody3D::set_area_damping(real_t p_linear, real_t p_angular) {
+	if (p_linear == area_linear_damp && p_angular == area_angular_damp) {
+		return;
+	}
+	area_linear_damp = p_linear;
+	area_angular_damp = p_angular;
+	_apply_damping();
+}
+
 void GodotPhysXBody3D::_apply_damping() {
 	if (!px_actor) {
 		return;
 	}
 	if (PxRigidBody *rb = px_actor->is<PxRigidBody>()) {
-		// A body integrating its own forces must not also be damped by the solver.
-		const bool omit = omit_force_integration;
-		rb->setLinearDamping((PxReal)(omit ? 0.0 : MAX(linear_damp, 0.0)));
-		rb->setAngularDamping((PxReal)(omit ? 0.0 : MAX(angular_damp, 0.0)));
+		// A body integrating its own forces must not also be damped by the
+		// solver (get_total_*_damp() are 0 then).
+		rb->setLinearDamping((PxReal)get_total_linear_damp());
+		rb->setAngularDamping((PxReal)get_total_angular_damp());
 	}
 }
 

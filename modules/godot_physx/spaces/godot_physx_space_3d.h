@@ -83,6 +83,12 @@ class GodotPhysXSpace3D {
 	HashSet<GodotPhysXBody3D *> force_integrators; // bodies driving their own _integrate_forces
 	HashSet<GodotPhysXBody3D *> constant_force_bodies; // bodies with a nonzero constant force/torque
 	HashSet<GodotPhysXBody3D *> separation_ray_bodies; // dynamic bodies with a SeparationRayShape3D
+	// physics/3d/default_linear_damp / default_angular_damp, which the scene
+	// tree sends to the space RID (the space's default area), and the bodies
+	// an Area3D currently overrides that area-level damping for.
+	real_t default_linear_damp = 0.0;
+	real_t default_angular_damp = 0.0;
+	HashSet<GodotPhysXBody3D *> area_damped_bodies;
 
 public:
 	void set_self(const RID &p_self) { self = p_self; }
@@ -116,7 +122,12 @@ public:
 		force_integrators.erase(p_body);
 		constant_force_bodies.erase(p_body);
 		separation_ray_bodies.erase(p_body);
+		area_damped_bodies.erase(p_body);
 	}
+
+	real_t get_default_linear_damp() const { return default_linear_damp; }
+	real_t get_default_angular_damp() const { return default_angular_damp; }
+	void set_default_damping(real_t p_linear, real_t p_angular);
 
 	void set_body_separation_rays(GodotPhysXBody3D *p_body, bool p_enabled) {
 		if (p_enabled) {

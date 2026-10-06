@@ -378,6 +378,10 @@ void GodotPhysXServer3D::area_set_param(RID p_area, AreaParameter p_param, const
 			space->set_gravity_magnitude(p_value);
 		} else if (p_param == AREA_PARAM_GRAVITY_VECTOR) {
 			space->set_gravity_direction(p_value);
+		} else if (p_param == AREA_PARAM_LINEAR_DAMP) {
+			space->set_default_damping(p_value, space->get_default_angular_damp());
+		} else if (p_param == AREA_PARAM_ANGULAR_DAMP) {
+			space->set_default_damping(space->get_default_linear_damp(), p_value);
 		}
 		return;
 	}
@@ -393,6 +397,10 @@ Variant GodotPhysXServer3D::area_get_param(RID p_area, AreaParameter p_param) co
 			return space->get_gravity().length();
 		} else if (p_param == AREA_PARAM_GRAVITY_VECTOR) {
 			return space->get_gravity().normalized();
+		} else if (p_param == AREA_PARAM_LINEAR_DAMP) {
+			return space->get_default_linear_damp();
+		} else if (p_param == AREA_PARAM_ANGULAR_DAMP) {
+			return space->get_default_angular_damp();
 		}
 		return Variant();
 	}

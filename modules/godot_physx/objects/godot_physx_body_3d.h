@@ -133,11 +133,14 @@ private:
 	Callable fi_callback;
 	Variant fi_userdata;
 
-	// PhysicsServer3D::BodyDampMode -- COMBINE adds an overriding area's damp on
-	// top of this body's own, REPLACE overrides it. Stored so the value round
-	// trips; only consulted by the area-override path.
+	// PhysicsServer3D::BodyDampMode -- COMBINE adds the area-level damping (the
+	// project default, physics/3d/default_*_damp, unless an Area3D overrides
+	// it) to this body's own; REPLACE uses this body's own alone.
 	PhysicsServer3D::BodyDampMode linear_damp_mode = PhysicsServer3D::BODY_DAMP_MODE_COMBINE;
 	PhysicsServer3D::BodyDampMode angular_damp_mode = PhysicsServer3D::BODY_DAMP_MODE_COMBINE;
+	// The area-level damping, set by the space.
+	real_t area_linear_damp = 0.0;
+	real_t area_angular_damp = 0.0;
 
 	int max_contacts_reported = 0;
 	LocalVector<Contact> contacts;
@@ -265,6 +268,12 @@ public:
 	real_t get_gravity_scale() const { return gravity_scale; }
 	real_t get_linear_damp() const { return linear_damp; }
 	real_t get_angular_damp() const { return angular_damp; }
+	// What the solver actually damps by: the area level and this body's own,
+	// per the damp modes (none while the body integrates its own forces).
+	real_t get_total_linear_damp() const;
+	real_t get_total_angular_damp() const;
+	// The space sets the area-level damping: its default, or an area's.
+	void set_area_damping(real_t p_linear, real_t p_angular);
 	bool is_sleeping() const;
 	void set_sleep_state(bool p_sleep);
 	void apply_impulse(const Vector3 &p_impulse, const Vector3 &p_position);

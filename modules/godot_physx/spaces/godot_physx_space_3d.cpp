@@ -438,6 +438,16 @@ void GodotPhysXSpace3D::_detect_area_overlaps() {
 	}
 }
 
+void GodotPhysXSpace3D::set_default_damping(real_t p_linear, real_t p_angular) {
+	default_linear_damp = p_linear;
+	default_angular_damp = p_angular;
+	for (GodotPhysXBody3D *body : bodies) {
+		if (!area_damped_bodies.has(body)) {
+			body->set_area_damping(default_linear_damp, default_angular_damp);
+		}
+	}
+}
+
 void GodotPhysXSpace3D::_apply_area_overrides() {
 	// Gather, per body, the areas that impose a gravity/damp/wind override.
 	HashMap<GodotPhysXBody3D *, LocalVector<GodotPhysXArea3D *>> affected;
@@ -457,6 +467,7 @@ void GodotPhysXSpace3D::_apply_area_overrides() {
 		}
 	}
 
+	HashSet<GodotPhysXBody3D *> damped_now;
 	for (KeyValue<GodotPhysXBody3D *, LocalVector<GodotPhysXArea3D *>> &E : affected) {
 		GodotPhysXBody3D *body = E.key;
 		LocalVector<GodotPhysXArea3D *> &list = E.value;
@@ -465,9 +476,10 @@ void GodotPhysXSpace3D::_apply_area_overrides() {
 		const Vector3 pos = body->get_transform().origin;
 		const real_t mass = MAX(body->get_mass(), (real_t)0.0001);
 
+		// Areas build on the space's defaults: COMBINE adds, REPLACE replaces.
 		Vector3 grav = gravity;
-		real_t lin_damp = 0.0;
-		real_t ang_damp = 0.0;
+		real_t lin_damp = default_linear_damp;
+		real_t ang_damp = default_angular_damp;
 		Vector3 wind;
 
 		for (GodotPhysXArea3D *area : list) {
@@ -511,19 +523,22 @@ void GodotPhysXSpace3D::_apply_area_overrides() {
 		}
 
 		// Gravity delta relative to the world default (bodies already get world
-		// gravity from the scene), plus wind, plus a velocity-proportional drag
-		// standing in for the area's damping contribution.
-		Vector3 force = (grav - gravity) * mass + wind;
-		force += -lin_damp * mass * body->get_linear_velocity();
-		Vector3 torque = -ang_damp * mass * body->get_angular_velocity();
-
+		// gravity from the scene), plus wind, as a force; the damping goes to
+		// the body's own solver damping, combined with its own per its modes.
+		const Vector3 force = (grav - gravity) * mass + wind;
 		if (!force.is_zero_approx()) {
 			body->apply_central_force(force);
 		}
-		if (!torque.is_zero_approx()) {
-			body->apply_torque(torque);
+		body->set_area_damping(lin_damp, ang_damp);
+		damped_now.insert(body);
+	}
+	// Bodies that left every overriding area go back to the defaults.
+	for (GodotPhysXBody3D *body : area_damped_bodies) {
+		if (!damped_now.has(body)) {
+			body->set_area_damping(default_linear_damp, default_angular_damp);
 		}
 	}
+	area_damped_bodies = damped_now;
 }
 
 void GodotPhysXSpace3D::call_queries() {

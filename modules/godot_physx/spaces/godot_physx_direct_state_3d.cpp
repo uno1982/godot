@@ -57,11 +57,11 @@ Vector3 GodotPhysXDirectBodyState3D::get_total_gravity() const {
 }
 
 real_t GodotPhysXDirectBodyState3D::get_total_linear_damp() const {
-	return body->get_linear_damp();
+	return body->get_total_linear_damp();
 }
 
 real_t GodotPhysXDirectBodyState3D::get_total_angular_damp() const {
-	return body->get_angular_damp();
+	return body->get_total_angular_damp();
 }
 
 Vector3 GodotPhysXDirectBodyState3D::get_center_of_mass() const {

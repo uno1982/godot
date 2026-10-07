@@ -382,6 +382,39 @@ with `drag` / `lift` / `wind_turbulence` shaping the response. The node has a
 viewport gizmo: the rest-grid outline with size handles, a marker on each pinned
 vertex and a wind arrow.
 
+## Character cloth — `PhysXSkinnedCloth3D`
+
+Clothing on a character: a robe, cape or skirt that moves with the animation
+and swings and drapes on its own. Point `mesh_instance_path` at the skinned
+`MeshInstance3D` (it needs a `Skin` and a `Skeleton3D`) and pick its `surface`;
+that surface becomes the cloth, and the source mesh is hidden and drawn from
+the simulated positions instead, straight from GPU textures.
+
+Each vertex has a **max distance** it may stray from where the animation puts
+it: `0` follows the animation exactly (shoulders, a waistband), larger values
+swing freely (a hem, the tail of a cape). Paint them in the viewport — select
+the node and press **Paint Cloth**: the garment shows as a heat map, left drag
+paints toward the brush value, `Shift` toward `0`, `Ctrl` smooths, with
+**Fill** and **Ramp** buttons and undo per stroke. Or take them from the mesh's
+vertex colors (`use_vertex_color`, painted in a modeling tool), or let
+`pin_height` / `max_distance` ramp them automatically from the waist down.
+
+It collides with the character's physical bones: run **Skeleton3D > Create
+Physical Skeleton** and every enabled capsule or sphere shape on the
+`PhysicalBone3D`s is a collider (the bones don't need to simulate). Without a
+physical skeleton, capsules are placed automatically between the hips, spine,
+legs and arms, fitted to `body_mesh_path` if set. Collisions are swept across
+substeps so fast limbs don't jump through, and they win over the max
+distances; `backstop` keeps the cloth from sinking into the body, and free
+vertices are tethered to their nearest pinned one so long garments don't
+stretch. `animation_drive` pulls the cloth back toward its authored shape
+(useful for long robes), and `self_collision` is available, off by default.
+
+It runs on compute shaders (no CUDA, any GPU the renderer supports), only in a
+running game, and after the animation each frame (`process_priority` 100).
+Only the source material's albedo texture, albedo colour and roughness carry
+over for now.
+
 ## Soft bodies — stock `SoftBody3D`
 
 The stock `SoftBody3D` node works on this backend (the `soft_body_*`
@@ -681,8 +714,9 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   it takes twice the memory and triangle tests. One difference from Jolt:
   overlap queries (`intersect_shape`, `collide_shape`, `get_rest_info`) see a
   one-sided mesh from behind too.
-- **Cloth self-collision** is disabled; a cloth can pass through itself. Cloth
-  tearing is not implemented. `PhysXCloth3D` pins follow a single shared
+- **`PhysXCloth3D` self-collision** is disabled; that cloth can pass through
+  itself (`PhysXSkinnedCloth3D` has opt-in `self_collision`). Cloth tearing is
+  not implemented. `PhysXCloth3D` pins follow a single shared
   `anchor_path`; for cloth driven by a skeleton (a cape or robe on a
   character), use `PhysXSkinnedCloth3D`, or stock `SoftBody3D` with
   per-vertex pins.
@@ -720,7 +754,7 @@ For deterministic lockstep multiplayer, use the Jolt backend.
 | `shapes/` | collision shape wrappers and mesh cooking |
 | `spaces/` | the `PxScene` wrapper, direct space/body state, area-override application |
 | `joints/` | all `Joint3D` types |
-| `cloth/` | the CPU (XPBD) cloth solver — no PhysX dependency |
+| `cloth/` | the CPU (XPBD) cloth solver, and `PhysXSkinnedCloth3D` with its compute-shader solver — no PhysX dependency |
 | `nodes/` | `PhysXParticleFluid3D`, `PhysXGranular3D`, `PhysXGas3D`, `PhysXGasEmitter3D`, `PhysXCloth3D`, `PhysXChunkEmitter3D` |
 | `particles/` | the MPM fluid/granular and gas compute solvers and their GLSL shaders |
 | `vehicle/` | `PhysXVehicle3D`, `PhysXMotorcycle3D`, `PhysXTank3D`, `PhysXVehicleWheel3D` and the `PxVehicle2` glue |

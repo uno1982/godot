@@ -40,7 +40,8 @@ has not been run yet: whether Linux links `libPhysXGpu_64.so` like the Windows
 import lib, needs an rpath/`LD_LIBRARY_PATH` entry instead, or nothing at link
 time at all (pure `dlopen`) hasn't been checked, and `SCsub` doesn't copy the
 `.so` next to the binary. The same applies to the Blast `.so` files
-(`blast_sdk=`). The bundled `misc/physx_patches/` apply on Linux too; the two
+(`blast_sdk=`) and Flow's (`flow_sdk=`): Flow builds on Linux x86-64 and
+aarch64, but `SCsub` only copies its Windows DLLs so far. The bundled `misc/physx_patches/` apply on Linux too; the two
 GPU ones (heightfield GPU boundary crash, Turing `sm_75` SASS) are
 platform-generic, but their effect is untested there for the same reason.
 
@@ -125,6 +126,33 @@ To build the SDK by hand instead: point scons at the Blast install directory
 To confirm a Blast-less build still works, build with `physx_sdk=` set but no
 `blast_sdk=` — `PhysXDestructible3D` and the fracture dialog simply won't be
 registered.
+
+### Optional — NVIDIA Flow (`PhysXFlow3D`)
+
+Smoke, fire and dust (`PhysXFlow3D`, `PhysXFlowEmitter3D`) need NVIDIA Flow,
+the `flow/` subdirectory of the same PhysX monorepo. Like Blast it is entirely
+optional: without `flow_sdk=` the Flow nodes simply aren't registered, and
+scenes that use them open with placeholders.
+
+Build it with Flow's own script, from the `flow` directory (MSVC 14.44 needs
+warning C4756 silenced):
+
+```
+cd <PhysX checkout>/flow
+set CL=/wd4756
+build.bat
+```
+
+then point scons at that directory:
+
+```
+scons platform=windows target=editor physx_sdk=<path> flow_sdk=<PhysX checkout>/flow
+```
+
+Nothing is linked: Flow's loader opens `nvflow.dll` and `nvflowext.dll` at run
+time, and `SCsub` copies both next to the built binary. Without them the Flow
+nodes show a configuration warning and stay inert. `build_physx.py` doesn't
+build Flow yet.
 
 ## Selecting the backend
 
@@ -258,7 +286,52 @@ also means it runs on any GPU, no CUDA needed. Pick `PBD (CUDA)` explicitly only
 for a pour or cascade that never has to hold a shape. Granular uses the dense
 box grid, so unlike the fluid it *is* confined to `mpm_domain_size`.
 
+## Smoke, fire and dust — `PhysXFlow3D` (NVIDIA Flow)
+
+`PhysXFlow3D` runs NVIDIA Flow: a sparse, unbounded grid that grows wherever
+the gas goes, with pressure projection, vorticity confinement and combustion
+(fuel, temperature, burn). It runs on Godot's own `RenderingDevice` (Vulkan or
+Direct3D 12), not CUDA, so it works on any GPU the Forward+ or Mobile renderer
+does. Nothing goes through the CPU unless `cpu_readback` is on (for
+`sample_smoke()`).
+
+Gas comes from `PhysXFlowEmitter3D` nodes: a sphere or box with `velocity`,
+`temperature`, `fuel`, `burn`, `smoke`, `divergence` and `couple_rate`. An
+emitter feeds the flow its `flow` path names, or with it empty, the scene's
+only flow — so emitters can live inside other scenes (a vehicle's wheels, a
+weapon's nozzle). With `collision` on, an emitter is a solid instead. Physics
+bodies within `collision_range` of the emitters are solids already (box,
+sphere, capsule and cylinder shapes), and moving bodies push the gas.
+
+`PhysXFlowRenderEffect` draws every flow with Flow's own ray marcher after
+transparent geometry, self-shadowed by the scene's first `DirectionalLight3D`,
+back to front. It installs itself: with no `Compositor` in the world it puts
+one on the `World3D`, and a user's own `Compositor` gets the effect at the
+rendering-server level only — its effects array is never modified — and all
+of it is undone when the last flow leaves. The look is per flow:
+`smoke_density`, `smoke_color` / `smoke_ramp`, `heat_ramp`,
+`temperature_range`, `emission_strength`, `shadow_steps`.
+
+Things worth knowing:
+- `max_blocks` is a GPU memory budget: Flow reserves textures for all of it
+  when the grid starts (about 0.45 MB a block; the default 1024 is about
+  0.5 GB). A small plume uses a few hundred; `get_stats()` reports
+  `active_blocks`, and gas that needs more is cut off with a warning.
+- Nozzle-like emitters need a high `couple_rate` (~100-250): the default 2
+  only nudges the gas toward the emitter's velocity.
+- Burning fuel adds a lot of heat, so a fuel jet rises fast at the default
+  `buoyancy`; lower it for flame throwers. Negative `divergence` keeps a jet
+  tight.
+- A grid can't resolve a crisp blowtorch or rocket cone (the flame front is
+  far thinner than a cell); pair Flow with a glowing mesh for the sharp core
+  — an opaque one, since Flow composites around depth.
+- Shaders compile the first time each is used and are kept in Godot's shader
+  cache folder; the editor's flows pause while the project runs from the
+  editor.
+
 ## Smoke and gas — `PhysXGas3D`
+
+A library-free alternative to Flow, for builds without `flow_sdk=`.
 
 A volumetric smoke/gas solver: a persistent velocity + density field on a
 block-sparse grid, advected semi-Lagrangian, driven by `buoyancy` and vorticity
@@ -631,6 +704,7 @@ For deterministic lockstep multiplayer, use the Jolt backend.
 | `particles/` | the MPM fluid/granular and gas compute solvers and their GLSL shaders |
 | `vehicle/` | `PhysXVehicle3D`, `PhysXMotorcycle3D`, `PhysXTank3D`, `PhysXVehicleWheel3D` and the `PxVehicle2` glue |
 | `water/` | `PhysXWaterSurface3D` and its ripple / FFT ocean / caustics compute and draw passes; `PhysXBuoyancy3D`, `PhysXBoat3D`, `PhysXWaterWake3D` (and its wake compute pass) and `PhysXWaterSpray3D` |
+| `flow/` | `PhysXFlow3D`, `PhysXFlowEmitter3D`, `PhysXFlowRenderEffect`, and Flow's context on Godot's `RenderingDevice` — optional, gated on `flow_sdk=` (see Building above) |
 | `blast/` | `PhysXDestructible3D`, `PhysXBlastAsset`, and the NvBlast fracture-authoring bridge — optional, gated on `blast_sdk=` (see Building above) |
 | `editor/` | viewport gizmos for the fluid and cloth nodes; the Blast fracture dialog and its FileSystem/Inspector plugins |
 
@@ -660,3 +734,8 @@ BSD-3-Clause license in `PHYSX-LICENSE.md` covers it too. Unlike PhysX's
 static libraries, Blast ships as DLLs (`NvBlast`, `NvBlastGlobals`,
 `NvBlastExtAuthoring`, `NvBlastExtShaders`) that must ship next to the Godot
 binary — see Building above.
+
+With `flow_sdk=` set, the build loads **NVIDIA Flow**
+(<https://github.com/NVIDIA-Omniverse/PhysX/tree/main/flow>) at run time —
+again the same repository and BSD-3-Clause license. `nvflow.dll` and
+`nvflowext.dll` must ship next to the Godot binary.

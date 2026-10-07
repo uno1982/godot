@@ -630,15 +630,15 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   its rest pose (PhysX 5 removed joint projection, so a spring is the closest
   substitute).
 - **Not yet implemented:** 6DOF angular motors; joint softness / bias /
-  restitution parameters.
+  restitution parameters. (6DOF linear and angular springs are supported,
+  mapped onto PhysX joint drives.) Unsupported shapes are treated as having
+  no collision and log a warning once.
 - **`SeparationRayShape3D`** has no PhysX geometry: it's cast as a ray. In
   `move_and_slide` it lifts a character until its tip sits on what it hits
   (stairs), as on Godot Physics and Jolt. On a rigid body it's applied before
   each step as a frictional contact at the tip, not inside the PhysX solver,
   so a body on rays settles a little differently from Jolt (it loses more
-  energy crossing bumps). 6DOF linear and angular springs are supported (mapped onto PhysX
-  joint drives). Unsupported shapes are treated as having no collision and log
-  a warning once.
+  energy crossing bumps).
 - **Area-to-area detection** (`Area3D` monitoring another `Area3D`) works, but
   unlike every other collision pair in this module it costs real per-step
   work: PhysX never reports trigger-trigger pairs (only trigger-vs-rigid), so
@@ -683,7 +683,28 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   one-sided mesh from behind too.
 - **Cloth self-collision** is disabled; a cloth can pass through itself. Cloth
   tearing is not implemented. `PhysXCloth3D` pins follow a single shared
-  `anchor_path`, so there is no per-vertex bone attachment yet.
+  `anchor_path`; for cloth driven by a skeleton (a cape or robe on a
+  character), use `PhysXSkinnedCloth3D`, or stock `SoftBody3D` with
+  per-vertex pins.
+- **Exports don't copy the module's DLLs yet.** `SCsub` puts them next to the
+  editor binary only, so an exported game needs them copied by hand:
+  `NvBlast*.dll` (`blast_sdk=`; linked at startup, so the game is
+  expected not to start without them), `PhysXGpu_64.dll` (`physx_gpu=yes`; without it PhysX silently falls
+  back to the CPU), and `nvflow.dll` / `nvflowext.dll` (`flow_sdk=`; without
+  them the Flow nodes stay inert). The export template must be built with
+  the same options.
+- **NVIDIA Flow** (`PhysXFlow3D`):
+  - only box, sphere, capsule and cylinder shapes are solids for the gas;
+    convex, concave and height-field shapes aren't yet;
+  - it needs the Forward+ or Mobile renderer (not Compatibility, not
+    headless);
+  - each flow is its own grid, drawn back to front by distance: flows that
+    share the same space can still sort wrongly;
+  - it draws after transparent geometry, so an additive mesh inside the gas
+    is painted over — use an opaque glowing mesh for a flame core;
+  - NanoVDB (volume) emitters aren't supported;
+  - `SCsub` only copies Flow's Windows DLLs; Flow itself builds on Linux,
+    not on macOS.
 - Windows and Linux x86-64 are the only platforms built and tested, and on
   Linux only the CPU build — see [Building](#building) for what's unverified
   about a Linux GPU build.

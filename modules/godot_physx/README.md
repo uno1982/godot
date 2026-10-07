@@ -134,8 +134,21 @@ the `flow/` subdirectory of the same PhysX monorepo. Like Blast it is entirely
 optional: without `flow_sdk=` the Flow nodes simply aren't registered, and
 scenes that use them open with placeholders.
 
-Build it with Flow's own script, from the `flow` directory (MSVC 14.44 needs
-warning C4756 silenced):
+```
+python modules/godot_physx/misc/build_physx.py --flow                  # + CPU-only PhysX
+python modules/godot_physx/misc/build_physx.py --gpu --blast --flow    # everything
+```
+
+This runs Flow's own `build.bat`/`build.sh` after PhysX (and Blast), and ends
+with one `scons` command for everything built, e.g.:
+
+```
+scons platform=windows target=editor physx_sdk=<path> physx_gpu=yes blast_sdk=<path> flow_sdk=<PhysX checkout>/flow
+```
+
+`flow_sdk=` is the checkout's `flow/` directory itself. To build Flow by hand,
+run its script from that directory; MSVC 14.44 needs warning C4756 silenced
+(the script does this for you):
 
 ```
 cd <PhysX checkout>/flow
@@ -143,16 +156,9 @@ set CL=/wd4756
 build.bat
 ```
 
-then point scons at that directory:
-
-```
-scons platform=windows target=editor physx_sdk=<path> flow_sdk=<PhysX checkout>/flow
-```
-
 Nothing is linked: Flow's loader opens `nvflow.dll` and `nvflowext.dll` at run
 time, and `SCsub` copies both next to the built binary. Without them the Flow
-nodes show a configuration warning and stay inert. `build_physx.py` doesn't
-build Flow yet.
+nodes show a configuration warning and stay inert.
 
 ## Selecting the backend
 

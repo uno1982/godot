@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXFlow3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		NVIDIA Flow smoke, fire and dust, provided by the PhysX module.
+	</brief_description>
+	<description>
+		Simulates gas with NVIDIA Flow: a sparse, unbounded grid (it grows wherever the gas goes) with pressure projection, vorticity confinement and combustion. It's fed by the [PhysXFlowEmitter3D] nodes whose [member PhysXFlowEmitter3D.flow] points at it (or, with none set, by every emitter when this is the scene's only [PhysXFlow3D]); physics bodies within [member collision_range] of those emitters are solids the gas flows around, and moving bodies push it.
+		Flow runs on Godot's own [RenderingDevice] (Vulkan or Direct3D 12), and [PhysXFlowRenderEffect] draws it into the frame with Flow's own ray marcher, self-shadowed by the scene's first visible [DirectionalLight3D] -- straight from the GPU, at the simulation's full resolution. Nothing is read back to the CPU unless [member cpu_readback] is on.
+		The render effect is installed by itself, without touching anything you save: with no [Compositor] in the world one is created on the [World3D] while flows exist, and a [Compositor] of your own (on a [WorldEnvironment] or [Camera3D]) gets the effect added at the rendering-server level only -- its effects array is never modified. All of it is undone when the world's last flow leaves.
+		[b]Requirements:[/b] an engine built with [code]flow_sdk=[/code], [code]nvflow.dll[/code] and [code]nvflowext.dll[/code] next to the executable (they are loaded at run time -- without them this node shows a warning and stays inert), and the Forward+ or Mobile renderer (not Compatibility, not headless). The first run on a machine compiles Flow's shaders (up to a couple of minutes with a cold driver cache); later runs load them from Godot's shader cache folder in well under a second.
+		[b]Units:[/b] meters and m/s, like the rest of the scene; Flow's own tuned defaults are converted at the boundary.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_stats" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				Diagnostics: [code]running[/code], [code]error[/code], [code]start_ms[/code] (grid creation, including shader compiles), [code]step_ms[/code], [code]render_calls[/code], [code]render_outputs[/code], [code]readback_bytes[/code], [code]bounds[/code] (the gas, with [member cpu_readback]), [code]active_blocks[/code] (sparse blocks in use, of [member max_blocks]), and Flow's pipeline / pass / resource counts.
+			</description>
+		</method>
+		<method name="is_running" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether Flow is running for this node (see the configuration warnings if not).
+			</description>
+		</method>
+		<method name="sample_smoke" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="position" type="Vector3" />
+			<description>
+				The smoke at [param position] (world space), from the last CPU readback. Needs [member cpu_readback]; returns [code]-1.0[/code] without it. The readback lags a few frames behind the simulation.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="buoyancy" type="float" setter="set_buoyancy" getter="get_buoyancy" default="2.0">
+			Upward acceleration per unit of temperature: hot gas rises, cool gas hangs. "Up" is opposite the project's default gravity.
+		</member>
+		<member name="cell_size" type="float" setter="set_cell_size" getter="get_cell_size" default="0.05">
+			Simulation cell size in meters. Smaller is finer detail and more GPU cost.
+		</member>
+		<member name="collide_with_bodies" type="bool" setter="set_collide_with_bodies" getter="is_collide_with_bodies" default="true">
+			Physics bodies near the gas become solids for it. Box, sphere, capsule and cylinder shapes are supported; convex, concave and heightmap shapes are not yet.
+		</member>
+		<member name="collision_mask" type="int" setter="set_collision_mask" getter="get_collision_mask" default="1">
+			The physics layers whose bodies the gas collides with.
+		</member>
+		<member name="collision_range" type="float" setter="set_collision_range" getter="get_collision_range" default="10.0">
+			How far from this flow's emitters (in meters) bodies are looked for. With [member cpu_readback] on, the area the gas has spread to is searched as well.
+		</member>
+		<member name="combustion" type="bool" setter="set_combustion" getter="is_combustion" default="true">
+			Fuel burns when hotter than [member ignition_temperature], releasing heat and smoke.
+		</member>
+		<member name="cooling_rate" type="float" setter="set_cooling_rate" getter="get_cooling_rate" default="1.5">
+			How fast the gas cools (exponential, per second).
+		</member>
+		<member name="cpu_readback" type="bool" setter="set_cpu_readback" getter="is_cpu_readback" default="false">
+			Copy temperature and smoke back to the CPU every few steps, for [method sample_smoke] and the [code]bounds[/code] in [method get_stats]. Off by default: it costs a full field copy each time and isn't needed for rendering.
+		</member>
+		<member name="emission_strength" type="float" setter="set_emission_strength" getter="get_emission_strength" default="4.0">
+			How bright the [member heat_ramp] glow is. [code]0[/code] turns glowing off.
+		</member>
+		<member name="heat_ramp" type="Gradient" setter="set_heat_ramp" getter="get_heat_ramp">
+			How the gas glows by temperature, from [code]0[/code] to [member temperature_range]: each color is the glow at that temperature, its alpha how much it glows instead of showing the lit smoke. Empty uses a built-in fire ramp (transparent when cool, deep orange when warm, yellow-white when hot).
+		</member>
+		<member name="ignition_temperature" type="float" setter="set_ignition_temperature" getter="get_ignition_temperature" default="0.05">
+			The temperature above which fuel burns (see [member combustion]).
+		</member>
+		<member name="max_blocks" type="int" setter="set_max_blocks" getter="get_max_blocks" default="1024">
+			The most sparse blocks the gas may take up -- a GPU memory budget, since Flow reserves memory for all of them when the grid starts (about 0.45 MB a block: the default 1024 is roughly 0.5 GB). A small plume uses a few hundred; [method get_stats] reports [code]active_blocks[/code]. Gas that would need more is cut off, with a warning. Changing it restarts the simulation.
+		</member>
+		<member name="shadow_steps" type="int" setter="set_shadow_steps" getter="get_shadow_steps" default="48">
+			How far the self-shadowing reaches toward the light, in steps of three quarters of a cell (48 is about 1.8 m at the default [member cell_size]). Too few for the gas's width leaves it lit almost evenly. [code]0[/code] turns self-shadowing off.
+		</member>
+		<member name="smoke_color" type="Color" setter="set_smoke_color" getter="get_smoke_color" default="Color(0.8, 0.8, 0.8, 1)">
+			The smoke's color, lit by the scene's sun: white steam, gray or black smoke, brown dust, colored signal smoke. See also [member smoke_ramp].
+		</member>
+		<member name="smoke_density" type="float" setter="set_smoke_density" getter="get_smoke_density" default="4.0">
+			Opacity per meter, per unit of smoke. Burning fuel makes a lot of smoke, so fire reads dense at the default; plain smoke or dust emitters may want 2-10.
+		</member>
+		<member name="smoke_fade" type="float" setter="set_smoke_fade" getter="get_smoke_fade" default="0.65">
+			How fast smoke thins out (per second). Lower values let it climb and linger longer.
+		</member>
+		<member name="smoke_ramp" type="Gradient" setter="set_smoke_ramp" getter="get_smoke_ramp">
+			The smoke's color by temperature, from [code]0[/code] to [member temperature_range] -- e.g. black soot near a fire turning light gray as it cools. Empty uses [member smoke_color] at every temperature. Alpha is ignored (opacity comes from the smoke itself).
+		</member>
+		<member name="temperature_range" type="float" setter="set_temperature_range" getter="get_temperature_range" default="2.0">
+			The temperature at the end of [member heat_ramp].
+		</member>
+		<member name="vorticity" type="float" setter="set_vorticity" getter="get_vorticity" default="0.6">
+			Vorticity confinement: keeps small swirls alive for rolling, billowing gas.
+		</member>
+	</members>
+</class>

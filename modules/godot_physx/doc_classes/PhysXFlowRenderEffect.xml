@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXFlowRenderEffect" inherits="CompositorEffect" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Draws every [PhysXFlow3D] into the frame.
+	</brief_description>
+	<description>
+		A [CompositorEffect] that runs after transparent geometry and draws each [PhysXFlow3D] in the world with NVIDIA Flow's ray marcher, compositing the gas into the scene color and against the scene depth.
+		[PhysXFlow3D] installs it by itself, so there's normally nothing to set up (see [PhysXFlow3D]). Adding one to your own [Compositor] is also fine, for example to control its order among your effects: it is then used as is and not added a second time.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_world_compositor" qualifiers="static">
+			<return type="Compositor" />
+			<param index="0" name="world" type="World3D" />
+			<description>
+				The [Compositor] [param world] renders with, which [World3D] doesn't expose to scripts. For diagnostics and tests.
+			</description>
+		</method>
+	</methods>
+</class>

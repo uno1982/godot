@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXFlowEmitter3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A source of smoke, heat and fuel for a [PhysXFlow3D], or a solid in it.
+	</brief_description>
+	<description>
+		Feeds the [PhysXFlow3D] its [member flow] path points at; with [member flow] empty it feeds the scene's only [PhysXFlow3D] (a warning asks you to set [member flow] when there are several). So it can live anywhere -- inside a vehicle scene by its wheels, say, following the vehicle -- and a level with several flows sets [member flow] per instance.
+		With [member collision] on, it's a solid instead: the gas inside it takes on its motion and holds nothing. Physics bodies near the gas are solids already (see [member PhysXFlow3D.collide_with_bodies]); this is for shapes that aren't physics bodies.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_flow" qualifiers="const">
+			<return type="PhysXFlow3D" />
+			<description>
+				The [PhysXFlow3D] this emitter feeds right now, or [code]null[/code].
+			</description>
+		</method>
+		<method name="get_motion_velocity" qualifiers="const">
+			<return type="Vector3" />
+			<description>
+				This node's world-space velocity over the last physics step (what a solid pushes into the gas).
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="burn" type="float" setter="set_burn" getter="get_burn" default="0.0">
+			Burn amount put in (combustion that is already under way).
+		</member>
+		<member name="collision" type="bool" setter="set_collision" getter="is_collision" default="false">
+			Make this a solid the gas flows around, moving with this node, instead of a source.
+		</member>
+		<member name="couple_rate" type="float" setter="set_couple_rate" getter="get_couple_rate" default="2.0">
+			How strongly the emitter drives the gas toward its values (per second).
+		</member>
+		<member name="divergence" type="float" setter="set_divergence" getter="get_divergence" default="0.0">
+			Expansion put in: positive pushes gas outward, as from an explosion.
+		</member>
+		<member name="enabled" type="bool" setter="set_enabled" getter="is_enabled" default="true">
+			Whether the emitter is active.
+		</member>
+		<member name="flow" type="NodePath" setter="set_flow_path" getter="get_flow_path" default="NodePath(&quot;&quot;)">
+			The [PhysXFlow3D] to feed. Empty: the scene's only one.
+		</member>
+		<member name="fuel" type="float" setter="set_fuel" getter="get_fuel" default="0.0">
+			Fuel put in; it burns above the flow's [member PhysXFlow3D.ignition_temperature], making heat and smoke.
+		</member>
+		<member name="radius" type="float" setter="set_radius" getter="get_radius" default="0.5">
+			Sphere radius in meters.
+		</member>
+		<member name="shape" type="int" setter="set_shape" getter="get_shape" enum="PhysXFlowEmitter3D.Shape" default="0">
+			The emitter's shape.
+		</member>
+		<member name="size" type="Vector3" setter="set_size" getter="get_size" default="Vector3(1, 1, 1)">
+			Box size in meters.
+		</member>
+		<member name="smoke" type="float" setter="set_smoke" getter="get_smoke" default="1.0">
+			Smoke put in.
+		</member>
+		<member name="temperature" type="float" setter="set_temperature" getter="get_temperature" default="1.0">
+			Temperature put in: hot gas rises and glows (see [member PhysXFlow3D.heat_ramp]).
+		</member>
+		<member name="velocity" type="Vector3" setter="set_velocity" getter="get_velocity" default="Vector3(0, 2, 0)">
+			Velocity put in, in this node's own frame (a nozzle turns with the node), in m/s.
+		</member>
+	</members>
+	<constants>
+		<constant name="SHAPE_SPHERE" value="0" enum="Shape">
+			A sphere of [member radius].
+		</constant>
+		<constant name="SHAPE_BOX" value="1" enum="Shape">
+			A box of [member size].
+		</constant>
+	</constants>
+</class>

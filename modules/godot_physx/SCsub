@@ -176,6 +176,34 @@ if blast_sdk:
     elif env["platform"] == "linuxbsd":
         env.Append(LIBS=blast_libs)
 
+# --- NVIDIA Flow location (optional) ----------------------------------------------
+# Flow (sparse-grid smoke / fire / dust) lives in the same NVIDIA-Omniverse/PhysX
+# checkout as PhysX and Blast (its `flow/` subdirectory). Point the build at
+# that directory with `flow_sdk=<path>` or the FLOW_SDK environment variable,
+# after building it (`misc/build_physx.py --flow`); omitted entirely, nothing
+# Flow-related is compiled in.
+#
+# Unlike Blast, nothing is linked: Flow's own loader opens nvflow.dll /
+# nvflowext.dll at run time, so a build with Flow support still runs without
+# them -- the Flow nodes just warn and stay inert. The DLLs are copied next to
+# the binary here for convenience.
+flow_sdk = ARGUMENTS.get("flow_sdk", os.environ.get("FLOW_SDK", ""))
+if flow_sdk:
+    flow_inc = os.path.join(flow_sdk, "include")
+    if not os.path.isdir(os.path.join(flow_inc, "nvflowext")):
+        raise SystemExit(
+            "godot_physx: no Flow include/nvflowext directory at '%s'. Check flow_sdk= / FLOW_SDK "
+            "points at the PhysX checkout's flow/ directory (see misc/build_physx.py --flow)." % flow_inc
+        )
+    # Flow's headers include each other by flat name, plus one by path
+    # ("nvflow/nanovdb/PNanoVDB.h" from the include root).
+    env_physx.Append(CPPPATH=[flow_inc, os.path.join(flow_inc, "nvflow"), os.path.join(flow_inc, "nvflowext")])
+    env_physx.Append(CPPDEFINES=["GODOT_PHYSX_FLOW"])
+    if env["platform"] == "windows":
+        flow_bin = os.path.join(flow_sdk, "_build", "windows-x86_64", "release")
+        for _flow_dll in ("nvflow.dll", "nvflowext.dll"):
+            _godot_physx_copy_runtime_dll(os.path.join(flow_bin, _flow_dll), _flow_dll)
+
 # MLS-MPM compute-fluid shaders (cross-vendor fallback for the PhysX GPU path).
 # Every pass #include's mpm_fluid_inc.glsl, which GLSL_HEADER does not see, so
 # bind the dependency to each .gen.h target *by name* (a Glob here only catches
@@ -269,6 +297,8 @@ module_obj = []
 env_physx.add_source_files(module_obj, "*.cpp")
 if blast_sdk:
     env_physx.add_source_files(module_obj, "blast/*.cpp")
+if flow_sdk:
+    env_physx.add_source_files(module_obj, "flow/*.cpp")
 # Character cloth compute pass (any GPU) -- self-contained, no shared include.
 env_physx.GLSL_HEADER(os.path.join("cloth", "skinned_cloth.glsl"))
 env_physx.add_source_files(module_obj, "cloth/*.cpp")

@@ -39,6 +39,11 @@
 #include "blast/physx_destructible_3d.h"
 #endif
 #include "cloth/physx_skinned_cloth_3d.h"
+#ifdef GODOT_PHYSX_FLOW
+#include "flow/physx_flow_3d.h"
+#include "flow/physx_flow_emitter_3d.h"
+#include "flow/physx_flow_render_effect.h"
+#endif
 #include "nodes/physx_chunk_emitter_3d.h"
 #include "nodes/physx_cloth_3d.h"
 #include "nodes/physx_gas_3d.h"
@@ -120,6 +125,11 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(PhysXBlastAsset);
 		GDREGISTER_CLASS(PhysXBlastAuthoring);
 #endif
+#ifdef GODOT_PHYSX_FLOW
+		GDREGISTER_CLASS(PhysXFlow3D);
+		GDREGISTER_CLASS(PhysXFlowEmitter3D);
+		GDREGISTER_CLASS(PhysXFlowRenderEffect);
+#endif
 	}
 
 #ifdef TOOLS_ENABLED
@@ -131,4 +141,9 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 }
 
 void uninitialize_godot_physx_module(ModuleInitializationLevel p_level) {
+#ifdef GODOT_PHYSX_FLOW
+	if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE) {
+		PhysXFlowRenderEffect::free_shared();
+	}
+#endif
 }

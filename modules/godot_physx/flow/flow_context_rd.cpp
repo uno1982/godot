@@ -111,6 +111,14 @@ struct Sampler {
 };
 
 struct Pipeline {
+	// Built on first use: Flow registers every pipeline it might need when the
+	// grid is made, but a grid only ever runs a fraction of them -- and one
+	// it doesn't run takes about a minute to build on a cold driver cache.
+	// That one is EmitterNanoVdbCS (4.7 MB of SPIR-V), used only by NanoVDB
+	// emitters: a node that adds those should build it in the background
+	// first, or its first frame stalls that long on a new machine.
+	Vector<uint8_t> spirv;
+	bool built = false;
 	RID shader;
 	RID pipeline;
 };
@@ -664,9 +672,9 @@ void NV_FLOW_ABI destroySampler(NvFlowContext *p_context, NvFlowSampler *p_sampl
 // .godot/shader_cache, user://shader_cache in a running game; none when the
 // project disables shader caching) -- per graphics API and engine build,
 // keyed by the SPIR-V's hash.
-RID shader_from_spirv_cached(Context *c, const NvFlowBytecode &p_bytecode) {
-	const uint8_t *bytes = (const uint8_t *)p_bytecode.data;
-	const int size = (int)p_bytecode.sizeInBytes;
+RID shader_from_spirv_cached(Context *c, const Vector<uint8_t> &p_spirv) {
+	const uint8_t *bytes = p_spirv.ptr();
+	const int size = p_spirv.size();
 	const uint64_t key = ((uint64_t)hash_murmur3_buffer(bytes, size, 0x464c4f57) << 32) | hash_murmur3_buffer(bytes, size, 0x524e4456);
 	const String &cache_root = ShaderRD::get_shader_cache_user_dir();
 	// Per engine version, not per build: RenderingDevice rejects a binary
@@ -702,15 +710,8 @@ RID shader_from_spirv_cached(Context *c, const NvFlowBytecode &p_bytecode) {
 NvFlowComputePipeline *NV_FLOW_ABI createComputePipeline(NvFlowContext *p_context, const NvFlowComputePipelineDesc *p_desc) {
 	Context *c = ctx(p_context);
 	Pipeline *p = memnew(Pipeline);
-	p->shader = shader_from_spirv_cached(c, p_desc->bytecode);
-	if (p->shader.is_valid()) {
-		p->pipeline = c->rd->compute_pipeline_create(p->shader);
-	}
-	if (p->pipeline.is_valid()) {
-		c->stats.pipelines++;
-	} else {
-		c->stats.pipeline_failures++;
-	}
+	p->spirv.resize(p_desc->bytecode.sizeInBytes);
+	memcpy(p->spirv.ptrw(), p_desc->bytecode.data, p_desc->bytecode.sizeInBytes);
 	c->pipelines.push_back(p);
 	return reinterpret_cast<NvFlowComputePipeline *>(p);
 }
@@ -734,6 +735,19 @@ void NV_FLOW_ABI destroyComputePipeline(NvFlowContext *p_context, NvFlowComputeP
 void NV_FLOW_ABI addPassCompute(NvFlowContext *p_context, const NvFlowPassComputeParams *p_params) {
 	Context *c = ctx(p_context);
 	Pipeline *p = reinterpret_cast<Pipeline *>(p_params->pipeline);
+	if (p != nullptr && !p->built) {
+		p->built = true;
+		p->shader = shader_from_spirv_cached(c, p->spirv);
+		if (p->shader.is_valid()) {
+			p->pipeline = c->rd->compute_pipeline_create(p->shader);
+		}
+		if (p->pipeline.is_valid()) {
+			c->stats.pipelines++;
+			p->spirv.clear();
+		} else {
+			c->stats.pipeline_failures++;
+		}
+	}
 	if (p == nullptr || !p->pipeline.is_valid()) {
 		return;
 	}

@@ -7,7 +7,7 @@
 		Simulates gas with NVIDIA Flow: a sparse, unbounded grid (it grows wherever the gas goes) with pressure projection, vorticity confinement and combustion. It's fed by the [PhysXFlowEmitter3D] nodes whose [member PhysXFlowEmitter3D.flow] points at it (or, with none set, by every emitter when this is the scene's only [PhysXFlow3D]); physics bodies within [member collision_range] of those emitters are solids the gas flows around, and moving bodies push it.
 		Flow runs on Godot's own [RenderingDevice] (Vulkan or Direct3D 12), and [PhysXFlowRenderEffect] draws it into the frame with Flow's own ray marcher, self-shadowed by the scene's first visible [DirectionalLight3D] -- straight from the GPU, at the simulation's full resolution. Nothing is read back to the CPU unless [member cpu_readback] is on.
 		The render effect is installed by itself, without touching anything you save: with no [Compositor] in the world one is created on the [World3D] while flows exist, and a [Compositor] of your own (on a [WorldEnvironment] or [Camera3D]) gets the effect added at the rendering-server level only -- its effects array is never modified. All of it is undone when the world's last flow leaves.
-		[b]Requirements:[/b] an engine built with [code]flow_sdk=[/code], [code]nvflow.dll[/code] and [code]nvflowext.dll[/code] next to the executable (they are loaded at run time -- without them this node shows a warning and stays inert), and the Forward+ or Mobile renderer (not Compatibility, not headless). The first run on a machine compiles Flow's shaders (up to a couple of minutes with a cold driver cache); later runs load them from Godot's shader cache folder in well under a second.
+		[b]Requirements:[/b] an engine built with [code]flow_sdk=[/code], [code]nvflow.dll[/code] and [code]nvflowext.dll[/code] next to the executable (they are loaded at run time -- without them this node shows a warning and stays inert), and the Forward+ or Mobile renderer (not Compatibility, not headless). Flow's shaders are compiled the first time each is used (a fraction of a second on a first run) and kept in Godot's shader cache folder.
 		[b]Units:[/b] meters and m/s, like the rest of the scene; Flow's own tuned defaults are converted at the boundary.
 	</description>
 	<tutorials>
@@ -16,7 +16,7 @@
 		<method name="get_stats" qualifiers="const">
 			<return type="Dictionary" />
 			<description>
-				Diagnostics: [code]running[/code], [code]error[/code], [code]start_ms[/code] (grid creation, including shader compiles), [code]step_ms[/code], [code]render_calls[/code], [code]render_outputs[/code], [code]readback_bytes[/code], [code]bounds[/code] (the gas, with [member cpu_readback]), [code]active_blocks[/code] (sparse blocks in use, of [member max_blocks]), and Flow's pipeline / pass / resource counts.
+				Diagnostics: [code]running[/code], [code]error[/code], [code]start_ms[/code] (grid creation), [code]step_ms[/code], [code]render_calls[/code], [code]render_outputs[/code], [code]readback_bytes[/code], [code]bounds[/code] (the gas, with [member cpu_readback]), [code]active_blocks[/code] (sparse blocks in use, of [member max_blocks]), and Flow's pipeline / pass / resource counts.
 			</description>
 		</method>
 		<method name="is_running" qualifiers="const">

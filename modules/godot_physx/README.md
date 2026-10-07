@@ -771,8 +771,8 @@ For deterministic lockstep multiplayer, use the Jolt backend.
 
 ## License
 
-The module's own source is under the same MIT license as Godot Engine (see the
-header of each file).
+The module's own source is under the MIT License — see [`LICENSE`](LICENSE).
+Copyright (c) 2026 Wild Ox Studios.
 
 It links **NVIDIA PhysX 5** (<https://github.com/NVIDIA-Omniverse/PhysX>),
 which is distributed under the BSD-3-Clause license — a full copy is in

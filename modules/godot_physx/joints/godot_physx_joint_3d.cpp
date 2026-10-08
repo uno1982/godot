@@ -206,10 +206,17 @@ void GodotPhysXJoint3D::_apply_params() {
 					j->setMotion(ang_axes[a], PxD6Motion::eFREE);
 				}
 			}
-			j->setTwistLimit(PxJointAngularLimitPair((PxReal)axis6[0].ang_lower, (PxReal)axis6[0].ang_upper));
+			// Godot's 6DOF angles run the other way round to PhysX's D6 (as for the hinge above, and as Jolt maps
+			// them): [lower, upper] is [-upper, -lower]. Passed straight through, a ragdoll's asymmetric limits
+			// (knees, elbows) bent the wrong way. The pyramid swing must sit inside (-pi, pi), the twist inside
+			// (-2pi, 2pi): a limit at +-180 deg was silently dropped.
+			const double swing_max = Math::PI - 0.001;
+			const double twist_max = Math::TAU - 0.001;
+			j->setTwistLimit(PxJointAngularLimitPair((PxReal)CLAMP(-axis6[0].ang_upper, -twist_max, twist_max),
+					(PxReal)CLAMP(-axis6[0].ang_lower, -twist_max, twist_max)));
 			j->setPyramidSwingLimit(PxJointLimitPyramid(
-					(PxReal)axis6[1].ang_lower, (PxReal)axis6[1].ang_upper,
-					(PxReal)axis6[2].ang_lower, (PxReal)axis6[2].ang_upper));
+					(PxReal)CLAMP(-axis6[1].ang_upper, -swing_max, swing_max), (PxReal)CLAMP(-axis6[1].ang_lower, -swing_max, swing_max),
+					(PxReal)CLAMP(-axis6[2].ang_upper, -swing_max, swing_max), (PxReal)CLAMP(-axis6[2].ang_lower, -swing_max, swing_max)));
 
 			// Linear drives: a spring (stiffness toward an equilibrium point) and a
 			// velocity motor share the per-axis drive slot.
@@ -250,7 +257,7 @@ void GodotPhysXJoint3D::_apply_params() {
 					continue;
 				}
 				j->setDrive(ang_drives[a], PxD6JointDrive((PxReal)ax.ang_spring_stiffness, (PxReal)ax.ang_spring_damping, PX_MAX_F32));
-				drive_rot = drive_rot * PxQuat((PxReal)ax.ang_spring_eq, ang_drive_axis[a]);
+				drive_rot = drive_rot * PxQuat((PxReal)-ax.ang_spring_eq, ang_drive_axis[a]); // (the other way round too)
 				any_lin_drive = true;
 				if (!(ax.ang_limit && ax.ang_upper > ax.ang_lower)) {
 					j->setMotion(ang_axes[a], PxD6Motion::eFREE);

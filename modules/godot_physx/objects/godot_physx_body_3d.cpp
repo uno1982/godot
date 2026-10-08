@@ -41,6 +41,21 @@
 
 using namespace physx;
 
+// Godot's contact-material rule (Godot Physics and Jolt alike): friction = |min(a, b)| -- a `rough`
+// PhysicsMaterial arrives NEGATIVE, so it wins -- and bounce = clamp(a + b, 0, 1). PhysX instead combines per
+// material by a mode (default AVERAGE), the higher-priority mode of the two winning (AVERAGE < MIN < MULTIPLY <
+// MAX), and rejects a negative friction. So: MIN for an ordinary friction and MAX for a rough one (exact unless
+// the other side's friction is the higher), MAX for bounce (exact while one side's is 0, the usual case; two
+// bouncy bodies get the larger, not the sum; an `absorbent` one counts as 0).
+static void _apply_godot_material(PxMaterial *p_material, real_t p_friction, real_t p_bounce) {
+	const PxReal f = (PxReal)Math::abs(p_friction);
+	p_material->setStaticFriction(f);
+	p_material->setDynamicFriction(f);
+	p_material->setFrictionCombineMode(p_friction < 0.0 ? PxCombineMode::eMAX : PxCombineMode::eMIN);
+	p_material->setRestitution((PxReal)CLAMP(p_bounce, (real_t)0.0, (real_t)1.0));
+	p_material->setRestitutionCombineMode(PxCombineMode::eMAX);
+}
+
 GodotPhysXBody3D::GodotPhysXBody3D() {}
 
 GodotPhysXBody3D::~GodotPhysXBody3D() {
@@ -66,7 +81,10 @@ GodotPhysXBody3D::~GodotPhysXBody3D() {
 PxMaterial *GodotPhysXBody3D::_get_material() {
 	if (!px_material && space && space->get_px_physics()) {
 		px_material = space->get_px_physics()->createMaterial(
-				(PxReal)friction, (PxReal)friction, (PxReal)bounce);
+				(PxReal)Math::abs(friction), (PxReal)Math::abs(friction), (PxReal)CLAMP(bounce, (real_t)0.0, (real_t)1.0));
+		if (px_material) {
+			_apply_godot_material(px_material, friction, bounce);
+		}
 	}
 	return px_material ? px_material : (space ? space->get_default_material() : nullptr);
 }
@@ -351,9 +369,7 @@ void GodotPhysXBody3D::set_param(PhysicsServer3D::BodyParameter p_param, const V
 	}
 
 	if (px_material && (p_param == PhysicsServer3D::BODY_PARAM_FRICTION || p_param == PhysicsServer3D::BODY_PARAM_BOUNCE)) {
-		px_material->setStaticFriction((PxReal)friction);
-		px_material->setDynamicFriction((PxReal)friction);
-		px_material->setRestitution((PxReal)CLAMP(bounce, 0.0, 1.0));
+		_apply_godot_material(px_material, friction, bounce);
 	}
 
 	if (space && px_actor) {

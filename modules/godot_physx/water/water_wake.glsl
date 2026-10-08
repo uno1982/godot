@@ -116,8 +116,10 @@ void main() {
 	}
 	f = f * foam.x + hull_foam * foam.y;
 	float pf = st.w * foam.x; // propeller foam: not pushed
+	float dip = 0.0; // the hull's deepest dip this step (sets how high a crest may stand)
 	for (int i = 0; i < grid.y; i++) {
 		vec4 s = sources[i * 2];
+		dip = max(dip, s.w);
 		float t = length(xz - s.xy) / max(s.z, 1e-4);
 		if (t < 2.2) {
 			float w = exp(-pow(t * 1.1, 6.0));
@@ -138,6 +140,17 @@ void main() {
 		}
 	}
 	hn += (target - hn) * weight * cell.y;
+
+	// Breaking: a wave can't stand more than a few hull dips high -- past that it
+	// breaks, its height going into foam. The sim is otherwise linear, and a hull
+	// circling at speed focuses its wake onto the circle's centre lap after lap
+	// (a jetski piled a +2 m spike there).
+	float crest_limit = max(dip * 4.0, 0.3);
+	float over = abs(hn) - crest_limit;
+	if (over > 0.0) {
+		f += over;
+		hn = sign(hn) * (crest_limit + over * 0.25);
+	}
 
 	// Steep wake waves break into foam.
 	float slope = length(vec2(hr - hl, hu - hd)) / (2.0 * cell.x);

@@ -1,0 +1,69 @@
+Build Blast on Linux with a normal GCC (build.sh --no-docker) instead of
+NVIDIA's GCC 9 container. Tested with GCC 13 and 16.
+
+Newer GCC warns a lot on Blast and it builds with warnings as errors, so
+those stay warnings now. Three files were missing includes. The abi flag
+Blast uses breaks unique_ptr on GCC 13, -fnew-inheriting-ctors fixes that.
+The tests need -no-pie. And Blast casts between its vector types, which
+optimized GCC builds don't expect, so fracture authoring just hangs without
+-fno-strict-aliasing. MSVC never optimizes that way, so it's fine on Windows.
+
+diff --git a/blast/premake5.lua b/blast/premake5.lua
+index 49422db..61c346a 100644
+--- a/blast/premake5.lua
++++ b/blast/premake5.lua
+@@ -209,6 +209,9 @@ workspace (workspace_name)
+         symbols "On"
+ 
+         buildoptions { "-pthread -fvisibility=hidden -fnon-call-exceptions -D_FILE_OFFSET_BITS=64 -fabi-version=8" }
++        -- For newer GCC: warnings don't fail the build, Blast casts between its vector
++        -- types (breaks strict aliasing), and the abi flag above breaks unique_ptr on GCC 13.
++        buildoptions { "-Wno-error", "-fno-strict-aliasing", "-fnew-inheriting-ctors" }
+         -- enforces RPATH instead of RUNPATH, needed for ubuntu version > 16.04
+         linkoptions { "-pthread", 
+                       "-Wl,--no-undefined",
+@@ -594,6 +597,8 @@ group "tests"
+             -- defines { "ISOLATION_AWARE_ENABLED=1" }
+         filter { "system:linux" }
+             buildoptions { "-fPIC" }
++            -- GCC builds PIE by default now.
++            linkoptions { "-no-pie" }
+             links { "rt" }
+         filter{}
+ 
+diff --git a/blast/source/sdk/extensions/authoring/NvBlastExtAuthoringPatternGeneratorImpl.cpp b/blast/source/sdk/extensions/authoring/NvBlastExtAuthoringPatternGeneratorImpl.cpp
+index 2320bbd..9ff274b 100644
+--- a/blast/source/sdk/extensions/authoring/NvBlastExtAuthoringPatternGeneratorImpl.cpp
++++ b/blast/source/sdk/extensions/authoring/NvBlastExtAuthoringPatternGeneratorImpl.cpp
+@@ -39,6 +39,7 @@
+ #include <NvBlastNvSharedHelpers.h>
+ 
+ #include <vector>
++#include <cstdio>
+ 
+ using namespace Nv::Blast;
+ using namespace nvidia;
+diff --git a/blast/source/sdk/extensions/authoring/VHACD/inc/vhacdICHull.h b/blast/source/sdk/extensions/authoring/VHACD/inc/vhacdICHull.h
+index 132bdcf..fa9c6df 100644
+--- a/blast/source/sdk/extensions/authoring/VHACD/inc/vhacdICHull.h
++++ b/blast/source/sdk/extensions/authoring/VHACD/inc/vhacdICHull.h
+@@ -15,6 +15,7 @@
+ #pragma once
+ #ifndef VHACD_ICHULL_H
+ #define VHACD_ICHULL_H
++#include <cstdint>
+ #include "vhacdManifoldMesh.h"
+ #include "vhacdVector.h"
+ 
+diff --git a/blast/source/sdk/extensions/stress/NvBlastExtStressSolver.cpp b/blast/source/sdk/extensions/stress/NvBlastExtStressSolver.cpp
+index a8343a8..714c29d 100644
+--- a/blast/source/sdk/extensions/stress/NvBlastExtStressSolver.cpp
++++ b/blast/source/sdk/extensions/stress/NvBlastExtStressSolver.cpp
+@@ -43,6 +43,7 @@
+ #include "simd/simd_device_query.h"
+ 
+ #include <algorithm>
++#include <limits>
+ 
+ #define USE_SCALAR_IMPL 0
+ #define WARM_START 1

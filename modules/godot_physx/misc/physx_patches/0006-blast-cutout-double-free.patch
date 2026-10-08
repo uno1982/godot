@@ -1,0 +1,32 @@
+Fix a double free in Blast's cutout authoring. It calls the vector
+destructor by hand and then deletes it, so it gets freed twice. MSVC gets
+away with it, on Linux cutout fracturing crashes.
+
+diff --git a/blast/source/sdk/extensions/authoring/NvBlastExtAuthoringCutoutImpl.cpp b/blast/source/sdk/extensions/authoring/NvBlastExtAuthoringCutoutImpl.cpp
+index 832db5a..8dc4fe3 100644
+--- a/blast/source/sdk/extensions/authoring/NvBlastExtAuthoringCutoutImpl.cpp
++++ b/blast/source/sdk/extensions/authoring/NvBlastExtAuthoringCutoutImpl.cpp
+@@ -2063,7 +2063,6 @@ void Nv::Blast::createCutoutSet(Nv::Blast::CutoutSetImpl& cutoutSet, const uint8
+                     }
+                     if (trace->size() < 4)
+                     {
+-                        trace->~vector<POINT2D>();
+                         delete trace;
+                         traces.pop_back();
+                         traceStarts.pop_back();
+@@ -2178,7 +2177,6 @@ void Nv::Blast::createCutoutSet(Nv::Blast::CutoutSetImpl& cutoutSet, const uint8
+         {
+             for (uint32_t i = 0; i < cutoutCount; ++i)
+             {
+-                traces[i]->~vector<POINT2D>();
+                 delete traces[i];
+             }
+             cutoutCount = 0;
+@@ -2204,7 +2202,6 @@ void Nv::Blast::createCutoutSet(Nv::Blast::CutoutSetImpl& cutoutSet, const uint8
+     {
+         if (traces[i] != nullptr)
+         {
+-            traces[i]->~vector<POINT2D>();
+             delete traces[i];
+         }
+     }

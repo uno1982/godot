@@ -27,23 +27,25 @@ Visual Studio with the C++ workload and Windows SDK, the D3D12 Agility SDK):
   12.8. On Windows: `winget install Nvidia.CUDA --version 12.8` (installs to
   `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8` and sets
   `CUDA_PATH`; open a fresh terminal afterwards). The end-user machine only
-  needs an NVIDIA driver (`nvcuda.dll`), not the toolkit.
+  needs an NVIDIA driver (`nvcuda.dll` / `libcuda.so.1`), not the toolkit.
+  CUDA 13 works too, but needs a newer driver (R580+) and drops `sm_70`, so
+  stick with 12.8.
 
 On **Linux**, on top of a normal Godot Linux editor build: **CMake**, **git**
 and **clang** (the PhysX SDK is built with clang even when Godot itself is built
-with GCC; the two link together fine). Tested with clang 22.
+with GCC, the two link together fine). Tested with clang 18 and 22, and GCC
+13 and 16 for Blast. For GPU builds nvcc might want an older GCC, point it
+there with `NVCC_CCBIN` (Arch's `cuda` package already does).
 
-Win64 / MSVC is built and tested, CPU and GPU. Linux x86-64 is built and
-tested for the CPU build only. The Linux **GPU** build (`--gpu` /
-`physx_gpu=yes`) has a preset (`misc/physx_presets/linux64-godot-gpu.xml`) but
-has not been run yet: whether Linux links `libPhysXGpu_64.so` like the Windows
-import lib, needs an rpath/`LD_LIBRARY_PATH` entry instead, or nothing at link
-time at all (pure `dlopen`) hasn't been checked, and `SCsub` doesn't copy the
-`.so` next to the binary. The same applies to the Blast `.so` files
-(`blast_sdk=`) and Flow's (`flow_sdk=`): Flow builds on Linux x86-64 and
-aarch64, but `SCsub` only copies its Windows DLLs so far. The bundled `misc/physx_patches/` apply on Linux too; the two
-GPU ones (heightfield GPU boundary crash, Turing `sm_75` SASS) are
-platform-generic, but their effect is untested there for the same reason.
+Win64 / MSVC and Linux x86-64 are built and tested, CPU and GPU, with and
+without Blast. On Linux `SCsub` copies `libPhysXGpu_64.so` and the Blast
+`.so` files next to the binary and sets an `$ORIGIN` rpath so they're found.
+Flow builds on Linux but isn't hooked up there yet.
+
+The `.so` files need the glibc of the machine that built them (or newer), so
+build release SDKs on an older distro, not a rolling one. The
+`nvidia/cuda:12.8.1-devel-ubuntu24.04` docker image works for both the GPU
+and Blast builds.
 
 ### Step 1 — build the PhysX SDK
 
@@ -72,11 +74,13 @@ with `physx_sdk=<path>` or the `PHYSX_SDK` environment variable.
 scons platform=windows target=editor physx_sdk=<path from step 1>            # CPU
 scons platform=windows target=editor physx_sdk=<path> physx_gpu=yes          # GPU
 scons platform=linuxbsd target=editor physx_sdk=<path from step 1>           # Linux (CPU)
+scons platform=linuxbsd target=editor physx_sdk=<path> physx_gpu=yes         # Linux (GPU)
 ```
 
-For a **GPU** build, `SCsub` also copies `PhysXGpu_64.dll` next to the built
-binary automatically (a real SCons dependency, keyed on `physx_sdk=`'s own
-DLL — it only re-copies when that changes, not on every build).
+For a **GPU** build, `SCsub` also copies `PhysXGpu_64.dll` (`libPhysXGpu_64.so`
+on Linux) next to the built binary automatically (a real SCons dependency,
+keyed on `physx_sdk=`'s own library — it only re-copies when that changes,
+not on every build).
 
 At startup a GPU build logs `PhysX: CUDA context ready on device '...'`; if no
 usable CUDA device is found it warns and falls back to CPU simulation.
@@ -109,14 +113,20 @@ python modules/godot_physx/misc/build_physx.py --gpu --blast    # + GPU PhysX
 
 This builds PhysX as usual, then also runs Blast's own `build.bat`/`build.sh`
 and prints the resulting SDK path plus the exact `scons` command for step 2.
-Unlike PhysX's static libraries, Blast ships as DLLs (`NvBlast`,
-`NvBlastGlobals`, `NvBlastExtAuthoring`, `NvBlastExtShaders`) — `SCsub` copies
-all four next to the built binary automatically when `blast_sdk=` is set,
-the same way it does for `PhysXGpu_64.dll` above.
+Unlike PhysX's static libraries, Blast ships as DLLs (`.so` on Linux):
+`NvBlast`, `NvBlastGlobals`, `NvBlastExtAuthoring`, `NvBlastExtShaders`.
+`SCsub` copies all four next to the built binary when `blast_sdk=` is set,
+same as the GPU library above.
+
+On Linux Blast is built with your own GCC instead of NVIDIA's build
+container (`build.sh --no-docker`, patch 0005 makes that work). The first run
+downloads about 3 GB of deps into `~/.cache/packman`.
 
 ```
 scons platform=windows target=editor physx_sdk=<path> blast_sdk=<path from --blast>            # CPU
 scons platform=windows target=editor physx_sdk=<path> physx_gpu=yes blast_sdk=<path from --blast>  # GPU
+scons platform=linuxbsd target=editor physx_sdk=<path> blast_sdk=<path from --blast>           # Linux (CPU)
+scons platform=linuxbsd target=editor physx_sdk=<path> physx_gpu=yes blast_sdk=<path from --blast> # Linux (GPU)
 ```
 
 To build the SDK by hand instead: point scons at the Blast install directory
@@ -728,10 +738,11 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   per-vertex pins.
 - **Exports don't copy the module's DLLs yet.** `SCsub` puts them next to the
   editor binary only, so an exported game needs them copied by hand:
-  `NvBlast*.dll` (`blast_sdk=`; linked at startup, so the game is
-  expected not to start without them), `PhysXGpu_64.dll` (`physx_gpu=yes`; without it PhysX silently falls
-  back to the CPU), and `nvflow.dll` / `nvflowext.dll` (`flow_sdk=`; without
-  them the Flow nodes stay inert). The export template must be built with
+  `NvBlast*.dll` / `libNvBlast*.so` (`blast_sdk=`; linked at startup, so the
+  game won't start without them), `PhysXGpu_64.dll` / `libPhysXGpu_64.so`
+  (`physx_gpu=yes`; without it PhysX silently falls back to the CPU), and
+  `nvflow.dll` / `nvflowext.dll` (`flow_sdk=`; without them the Flow nodes
+  stay inert). The export template must be built with
   the same options.
 - **NVIDIA Flow** (`PhysXFlow3D`):
   - only box, sphere, capsule and cylinder shapes are solids for the gas;
@@ -745,9 +756,7 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   - NanoVDB (volume) emitters aren't supported;
   - `SCsub` only copies Flow's Windows DLLs; Flow itself builds on Linux,
     not on macOS.
-- Windows and Linux x86-64 are the only platforms built and tested, and on
-  Linux only the CPU build — see [Building](#building) for what's unverified
-  about a Linux GPU build.
+- Windows and Linux x86-64 are the only platforms built and tested.
 
 ## Layout
 
@@ -783,16 +792,17 @@ any binary you distribute must carry the PhysX copyright notice and disclaimer
 (e.g. by shipping `PHYSX-LICENSE.md` alongside it or adding a stanza to the
 engine's `COPYRIGHT.txt`).
 
-With `physx_gpu=yes` the build also depends on `PhysXGpu_64.dll` (same PhysX
-SDK, same BSD-3-Clause license, built from its GPU source) and, at runtime, on
-an NVIDIA driver's CUDA library (`nvcuda.dll`) — the CUDA toolkit is only
-needed to *build* the SDK, not to ship it.
+With `physx_gpu=yes` the build also depends on `PhysXGpu_64.dll` /
+`libPhysXGpu_64.so` (same PhysX SDK, same BSD-3-Clause license, built from its
+GPU source) and, at runtime, on an NVIDIA driver's CUDA library (`nvcuda.dll` /
+`libcuda.so.1`) — the CUDA toolkit is only needed to *build* the SDK, not to
+ship it.
 
 With `blast_sdk=` set, the build also links **NvBlast**
 (<https://github.com/NVIDIA-Omniverse/PhysX/tree/main/blast>) — the same
 `NVIDIA-Omniverse/PhysX` repository as PhysX itself, so the same
 BSD-3-Clause license in `PHYSX-LICENSE.md` covers it too. Unlike PhysX's
-static libraries, Blast ships as DLLs (`NvBlast`, `NvBlastGlobals`,
+static libraries, Blast ships as shared libraries (`NvBlast`, `NvBlastGlobals`,
 `NvBlastExtAuthoring`, `NvBlastExtShaders`) that must ship next to the Godot
 binary — see Building above.
 

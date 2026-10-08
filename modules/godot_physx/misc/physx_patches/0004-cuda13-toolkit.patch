@@ -1,0 +1,54 @@
+Build and load with the CUDA 13 toolkit. CUDA 13 changed cuCtxCreate and
+added launch functions PhysXGpu has to stub, otherwise libPhysXGpu_64.so
+won't load. Only kicks in on CUDA 13, 12.x builds don't change.
+
+diff --git a/physx/source/cudamanager/src/CudaContextManager.cpp b/physx/source/cudamanager/src/CudaContextManager.cpp
+index 5f88b39..7771157 100644
+--- a/physx/source/cudamanager/src/CudaContextManager.cpp
++++ b/physx/source/cudamanager/src/CudaContextManager.cpp
+@@ -573,7 +573,12 @@ CudaCtxMgr::CudaCtxMgr(const PxCudaContextManagerDesc& desc, PxErrorCallback& er
+ 				return;
+ 			}
+ 			
++#if CUDA_VERSION >= 13000
++			// CUDA 13 changed cuCtxCreate, NULL keeps the old behavior.
++			status = cuCtxCreate(&mCtx, NULL, (unsigned int)flags, mDevHandle);
++#else
+ 			status = cuCtxCreate(&mCtx, (unsigned int)flags, mDevHandle);
++#endif
+ 			if (CUDA_SUCCESS != status)
+ 			{
+ 				const size_t bufferSize = 128;
+diff --git a/physx/source/cudamanager/src/CudaKernelWrangler.cpp b/physx/source/cudamanager/src/CudaKernelWrangler.cpp
+index 245d1d9..b21d52e 100644
+--- a/physx/source/cudamanager/src/CudaKernelWrangler.cpp
++++ b/physx/source/cudamanager/src/CudaKernelWrangler.cpp
+@@ -202,6 +202,28 @@ cudaError_t CUDARTAPI cudaLaunchKernel( const void* , dim3 , dim3 , void** , siz
+ 	return cudaSuccess;
+ }
+ 
++#if CUDA_VERSION >= 13000
++/* CUDA 13 launches call these. PhysX launches through the driver API,
++ * so empty ones are fine. */
++extern "C"
++cudaError_t CUDARTAPI __cudaGetKernel(cudaKernel_t*, const void*)
++{
++	return cudaSuccess;
++}
++
++extern "C"
++cudaError_t CUDARTAPI __cudaLaunchKernel(cudaKernel_t, dim3, dim3, void**, size_t, cudaStream_t)
++{
++	return cudaSuccess;
++}
++
++extern "C"
++cudaError_t CUDARTAPI __cudaLaunchKernel_ptsz(cudaKernel_t, dim3, dim3, void**, size_t, cudaStream_t)
++{
++	return cudaSuccess;
++}
++#endif
++
+ extern "C"
+ cudaError_t CUDARTAPI cudaSetupArgument(const void*, size_t, size_t)
+ {

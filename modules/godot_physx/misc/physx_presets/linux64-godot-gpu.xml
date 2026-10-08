@@ -1,11 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  UNVERIFIED: the Linux GPU build has not been run yet. The GPU switches here
-  have only been exercised on the Windows preset; whether PhysXGpu on Linux
-  needs PX_GENERATE_GPU_STATIC_LIBRARIES=False the same way (shipping
-  libPhysXGpu_64.so loaded at runtime) or works differently has not been
-  checked. Treat this as a starting point for a Linux GPU build, not a
-  working one, until someone runs it.
+  Same as vc17win64-godot-gpu.xml minus the Windows only bits. SCsub copies
+  libPhysXGpu_64.so next to the Godot binary.
 -->
 <preset name="linux64-godot-gpu" comment="Linux x86-64 static libs plus the CUDA GPU projects, for the Godot godot_physx module built with physx_gpu=yes.">
   <platform targetPlatform="linux" compiler="clang" />

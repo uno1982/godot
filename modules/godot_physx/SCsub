@@ -15,8 +15,8 @@ env_physx = env_modules.Clone()
 # environment variable. See modules/godot_physx/README.md and
 # modules/godot_physx/misc/build_physx.py for building the SDK.
 #
-# `physx_gpu=yes` links the GPU-enabled SDK build (adds PhysXGpu_64.lib); the
-# matching PhysXGpu_64.dll must sit next to the Godot binary at runtime.
+# physx_gpu=yes builds against the GPU SDK. The GPU library gets copied next to
+# the Godot binary further down.
 physx_gpu = ARGUMENTS.get("physx_gpu", "no") not in ("no", "0", "false", "False")
 
 # config.py::can_build() has already checked this is set (otherwise the module is
@@ -48,15 +48,8 @@ if env["platform"] == "windows":
         physx_libs.append("PhysXGpu_64")  # import lib for PhysXGpu_64.dll
 elif env["platform"] == "linuxbsd":
     physx_lib = os.path.join(physx_sdk, "bin", "linux.x86_64", "release")
+    # No GPU lib to link on Linux, PhysX loads it itself at runtime.
     physx_libs = list(physx_static_libs)
-    if physx_gpu:
-        # UNVERIFIED: on Windows this links an import lib for a DLL loaded at
-        # runtime; the Linux equivalent (libPhysXGpu_64.so) may need a plain
-        # -l link plus an rpath/LD_LIBRARY_PATH entry instead, or may be
-        # dlopen'd by the SDK itself with no link-time dependency at all.
-        # Confirm against the actual GPU preset's install output before
-        # shipping a physx_gpu=yes Linux build.
-        physx_libs.append("PhysXGpu_64")
 else:
     physx_lib = ""
     physx_libs = []
@@ -111,11 +104,7 @@ def _godot_physx_copy_runtime_dll(src_path, dst_name):
 if env["platform"] == "windows" and physx_gpu:
     _godot_physx_copy_runtime_dll(os.path.join(physx_lib, "PhysXGpu_64.dll"), "PhysXGpu_64.dll")
 elif env["platform"] == "linuxbsd" and physx_gpu:
-    # UNVERIFIED, same caveat as the GPU link mechanism above -- whether this
-    # even needs a copied .so (vs. an rpath/LD_LIBRARY_PATH entry, or a pure
-    # dlopen with no on-disk convention to match) hasn't been confirmed
-    # against a real Linux GPU build.
-    pass
+    _godot_physx_copy_runtime_dll(os.path.join(physx_lib, "libPhysXGpu_64.so"), "libPhysXGpu_64.so")
 
 # --- Blast SDK location (optional) ------------------------------------------------
 # Blast (NvBlast + extensions) is a separate, optional SDK on top of PhysX --
@@ -128,10 +117,8 @@ elif env["platform"] == "linuxbsd" and physx_gpu:
 # that repo's own `blast/` subdirectory, version-locked to the same release
 # train), so there is no separate clone/pin to manage.
 #
-# Unlike PhysX, Blast's own build sets `staticruntime "Off"`, so it ships as
-# DLLs, not static libs -- this only ever links the small import `.lib` stubs;
-# the matching `NvBlast*.dll` files must sit next to the Godot binary at
-# runtime, the same way `PhysXGpu_64.dll` already does for `physx_gpu=yes`.
+# Unlike PhysX, Blast ships as shared libraries. They get copied next to the
+# Godot binary, same as the GPU library.
 blast_sdk = ARGUMENTS.get("blast_sdk", os.environ.get("BLAST_SDK", ""))
 if blast_sdk:
     blast_inc = os.path.join(blast_sdk, "include")
@@ -175,6 +162,13 @@ if blast_sdk:
             )
     elif env["platform"] == "linuxbsd":
         env.Append(LIBS=blast_libs)
+        for _blast_lib_name in blast_libs:
+            _blast_so = "lib" + _blast_lib_name + ".so"
+            _godot_physx_copy_runtime_dll(os.path.join(blast_lib_dir, _blast_so), _blast_so)
+
+# Linux doesn't look next to the binary for libs by default, so tell it to.
+if env["platform"] == "linuxbsd" and (physx_gpu or blast_sdk):
+    env.Append(RPATH=[env.Literal("\\$$ORIGIN")])
 
 # --- NVIDIA Flow location (optional) ----------------------------------------------
 # Flow (sparse-grid smoke / fire / dust) lives in the same NVIDIA-Omniverse/PhysX

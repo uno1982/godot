@@ -45,6 +45,11 @@ using namespace physx;
 GodotPhysXArea3D::GodotPhysXArea3D() {}
 
 GodotPhysXArea3D::~GodotPhysXArea3D() {
+	for (const ShapeRef &sr : shapes) {
+		if (sr.shape) {
+			sr.shape->remove_owner(this);
+		}
+	}
 	_destroy_actor();
 }
 
@@ -58,6 +63,106 @@ void GodotPhysXArea3D::_destroy_actor() {
 	}
 	px_actor->release();
 	px_actor = nullptr;
+	px_shapes.clear(); // released with the actor
+}
+
+// A new (unattached) trigger shape for entry `p_idx`, or nullptr. The caller attaches + releases it.
+PxShape *GodotPhysXArea3D::_create_px_shape(uint32_t p_idx) {
+	const ShapeRef &sr = shapes[p_idx];
+	if (sr.disabled || !sr.shape || !sr.shape->is_valid() || !space || !space->get_px_physics()) {
+		return nullptr;
+	}
+	const GodotPhysXShape3D::ScaledGeometry sg = sr.shape->scaled_geometry(built_scale * sr.xform.basis.get_scale());
+	PxShape *px_shape = space->get_px_physics()->createShape(sg.geom.any(), *space->get_default_material(), true,
+			PxShapeFlag::eTRIGGER_SHAPE | PxShapeFlag::eSCENE_QUERY_SHAPE);
+	if (!px_shape) {
+		return nullptr;
+	}
+	px_shape->setLocalPose(to_px(sr.xform) * sg.local_pose);
+	px_shape->userData = reinterpret_cast<void *>(static_cast<uintptr_t>(p_idx));
+	PxFilterData fd;
+	fd.word0 = collision_layer;
+	fd.word1 = collision_mask;
+	px_shape->setSimulationFilterData(fd);
+	px_shape->setQueryFilterData(fd);
+	return px_shape;
+}
+
+// Entry `p_idx` on the LIVE actor: same geometry type → setGeometry + setLocalPose (overlaps stay, a resized hurtbox
+// just resizes); otherwise the old trigger shape is detached (its overlaps taken back) and a new one attached.
+// False = no live actor.
+bool GodotPhysXArea3D::_edit_shape_in_place(uint32_t p_idx) {
+	if (!px_actor || !space || !space->get_px_scene()) {
+		return false;
+	}
+	if (px_shapes.size() < shapes.size()) {
+		const uint32_t old_size = px_shapes.size();
+		px_shapes.resize(shapes.size());
+		for (uint32_t i = old_size; i < px_shapes.size(); i++) {
+			px_shapes[i] = nullptr;
+		}
+	}
+	const ShapeRef &sr = shapes[p_idx];
+	const bool want = !sr.disabled && sr.shape && sr.shape->is_valid();
+	PxShape *old = px_shapes[p_idx];
+	if (want && old) {
+		const GodotPhysXShape3D::ScaledGeometry sg = sr.shape->scaled_geometry(built_scale * sr.xform.basis.get_scale());
+		if (sg.geom.getType() == old->getGeometry().getType()) {
+			old->setGeometry(sg.geom.any());
+			old->setLocalPose(to_px(sr.xform) * sg.local_pose);
+			return true;
+		}
+	}
+	if (old) {
+		_release_area_shape_pairs((int)p_idx);
+		px_actor->detachShape(*old);
+		px_shapes[p_idx] = nullptr;
+	}
+	if (want) {
+		if (PxShape *s = _create_px_shape(p_idx)) {
+			px_actor->attachShape(*s);
+			s->release();
+			px_shapes[p_idx] = s;
+		}
+	}
+	return true;
+}
+
+void GodotPhysXArea3D::_release_area_shape_pairs(int p_area_shape) {
+	LocalVector<OverlapKey> keys;
+	LocalVector<GodotPhysXBody3D *> bodies;
+	for (const KeyValue<OverlapKey, ActivePair> &E : active_pairs) {
+		if ((int)(E.key.shape_pair & 0xFFFF) == p_area_shape) {
+			keys.push_back(E.key);
+			bodies.push_back(E.value.body);
+		}
+	}
+	for (uint32_t i = 0; i < keys.size(); i++) {
+		HashMap<OverlapKey, ActivePair, OverlapKeyHasher>::Iterator it = active_pairs.find(keys[i]);
+		const int n = it ? it->value.count : 0;
+		for (int j = 0; j < n; j++) {
+			report_body_overlap(bodies[i], (int)(keys[i].shape_pair >> 16), p_area_shape, false);
+		}
+	}
+}
+
+void GodotPhysXArea3D::body_shape_gone(GodotPhysXBody3D *p_body, int p_body_shape) {
+	if (!p_body || active_pairs.is_empty()) {
+		return;
+	}
+	LocalVector<OverlapKey> keys;
+	for (const KeyValue<OverlapKey, ActivePair> &E : active_pairs) {
+		if (E.value.body == p_body && (int)(E.key.shape_pair >> 16) == p_body_shape) {
+			keys.push_back(E.key);
+		}
+	}
+	for (const OverlapKey &k : keys) {
+		HashMap<OverlapKey, ActivePair, OverlapKeyHasher>::Iterator it = active_pairs.find(k);
+		const int n = it ? it->value.count : 0;
+		for (int i = 0; i < n; i++) {
+			report_body_overlap(p_body, p_body_shape, (int)(k.shape_pair & 0xFFFF), false);
+		}
+	}
 }
 
 void GodotPhysXArea3D::_build_actor() {
@@ -67,30 +172,23 @@ void GodotPhysXArea3D::_build_actor() {
 	}
 	PxPhysics *physics = space->get_px_physics();
 	PxScene *scene = space->get_px_scene();
-	PxMaterial *material = space->get_default_material();
 	ERR_FAIL_NULL(physics);
 	ERR_FAIL_NULL(scene);
+	ERR_FAIL_NULL(space->get_default_material());
 
 	px_actor = physics->createRigidStatic(to_px(area_transform));
 	ERR_FAIL_NULL(px_actor);
 	px_actor->userData = this;
 	built_scale = area_transform.basis.get_scale();
 
+	px_shapes.resize(shapes.size());
 	for (uint32_t i = 0; i < shapes.size(); i++) {
-		const ShapeRef &sr = shapes[i];
-		if (sr.disabled || !sr.shape || !sr.shape->is_valid()) {
-			continue;
+		px_shapes[i] = nullptr;
+		if (PxShape *px_shape = _create_px_shape(i)) {
+			px_actor->attachShape(*px_shape);
+			px_shape->release();
+			px_shapes[i] = px_shape;
 		}
-		const GodotPhysXShape3D::ScaledGeometry sg = sr.shape->scaled_geometry(built_scale * sr.xform.basis.get_scale());
-		PxShape *px_shape = physics->createShape(sg.geom.any(), *material, true,
-				PxShapeFlag::eTRIGGER_SHAPE | PxShapeFlag::eSCENE_QUERY_SHAPE);
-		if (!px_shape) {
-			continue;
-		}
-		px_shape->setLocalPose(to_px(sr.xform) * sg.local_pose);
-		px_shape->userData = reinterpret_cast<void *>(static_cast<uintptr_t>(i));
-		px_actor->attachShape(*px_shape);
-		px_shape->release();
 	}
 
 	_apply_filter_data();
@@ -108,12 +206,12 @@ void GodotPhysXArea3D::_apply_filter_data() {
 	fd.word3 = 0;
 
 	const PxU32 nb = px_actor->getNbShapes();
-	LocalVector<PxShape *> px_shapes;
-	px_shapes.resize(nb);
-	px_actor->getShapes(px_shapes.ptr(), nb);
+	LocalVector<PxShape *> all;
+	all.resize(nb);
+	px_actor->getShapes(all.ptr(), nb);
 	for (PxU32 i = 0; i < nb; i++) {
-		px_shapes[i]->setSimulationFilterData(fd);
-		px_shapes[i]->setQueryFilterData(fd);
+		all[i]->setSimulationFilterData(fd);
+		all[i]->setQueryFilterData(fd);
 	}
 }
 
@@ -132,21 +230,35 @@ void GodotPhysXArea3D::set_space(GodotPhysXSpace3D *p_space) {
 	}
 }
 
+// Shape edits update the live trigger actor in place; only removing a shape that isn't the last (later indices
+// shift) or no actor yet builds it anew.
 void GodotPhysXArea3D::add_shape(GodotPhysXShape3D *p_shape, const Transform3D &p_xform, bool p_disabled) {
 	ShapeRef sr;
 	sr.shape = p_shape;
 	sr.xform = p_xform;
 	sr.disabled = p_disabled;
 	shapes.push_back(sr);
-	if (space) {
+	if (p_shape) {
+		p_shape->add_owner(this);
+	}
+	if (space && !_edit_shape_in_place(shapes.size() - 1)) {
 		_build_actor();
 	}
 }
 
 void GodotPhysXArea3D::set_shape(int p_idx, GodotPhysXShape3D *p_shape) {
 	ERR_FAIL_INDEX(p_idx, (int)shapes.size());
+	if (shapes[p_idx].shape == p_shape) {
+		return;
+	}
+	if (shapes[p_idx].shape) {
+		shapes[p_idx].shape->remove_owner(this);
+	}
 	shapes[p_idx].shape = p_shape;
-	if (space) {
+	if (p_shape) {
+		p_shape->add_owner(this);
+	}
+	if (space && !_edit_shape_in_place(p_idx)) {
 		_build_actor();
 	}
 }
@@ -154,21 +266,34 @@ void GodotPhysXArea3D::set_shape(int p_idx, GodotPhysXShape3D *p_shape) {
 void GodotPhysXArea3D::set_shape_transform(int p_idx, const Transform3D &p_xform) {
 	ERR_FAIL_INDEX(p_idx, (int)shapes.size());
 	shapes[p_idx].xform = p_xform;
-	if (space) {
+	if (space && !_edit_shape_in_place(p_idx)) {
 		_build_actor();
 	}
 }
 
 void GodotPhysXArea3D::set_shape_disabled(int p_idx, bool p_disabled) {
 	ERR_FAIL_INDEX(p_idx, (int)shapes.size());
+	if (shapes[p_idx].disabled == p_disabled) {
+		return;
+	}
 	shapes[p_idx].disabled = p_disabled;
-	if (space) {
+	if (space && !_edit_shape_in_place(p_idx)) {
 		_build_actor();
 	}
 }
 
 void GodotPhysXArea3D::remove_shape(int p_idx) {
 	ERR_FAIL_INDEX(p_idx, (int)shapes.size());
+	if (shapes[p_idx].shape) {
+		shapes[p_idx].shape->remove_owner(this);
+	}
+	if (space && px_actor && p_idx == (int)shapes.size() - 1) {
+		shapes[p_idx].disabled = true; // the last one: detach it in place
+		_edit_shape_in_place(p_idx);
+		shapes.remove_at(p_idx);
+		px_shapes.resize(MIN(px_shapes.size(), shapes.size()));
+		return;
+	}
 	shapes.remove_at(p_idx);
 	if (space) {
 		_build_actor();
@@ -176,8 +301,27 @@ void GodotPhysXArea3D::remove_shape(int p_idx) {
 }
 
 void GodotPhysXArea3D::clear_shapes() {
+	for (const ShapeRef &sr : shapes) {
+		if (sr.shape) {
+			sr.shape->remove_owner(this);
+		}
+	}
 	shapes.clear();
 	if (space) {
+		_build_actor();
+	}
+}
+
+void GodotPhysXArea3D::shape_freed(GodotPhysXShape3D *p_shape) {
+	bool removed = false;
+	for (int i = (int)shapes.size() - 1; i >= 0; i--) {
+		if (shapes[i].shape == p_shape) {
+			p_shape->remove_owner(this);
+			shapes.remove_at(i);
+			removed = true;
+		}
+	}
+	if (removed && space) {
 		_build_actor();
 	}
 }
@@ -191,8 +335,14 @@ void GodotPhysXArea3D::set_transform(const Transform3D &p_transform) {
 	area_transform = p_transform;
 	if (px_actor) {
 		if (!area_transform.basis.get_scale().is_equal_approx(built_scale)) {
-			_build_actor(); // scale changed -- re-cook shapes
-			return;
+			// scale changed -- the shapes take it in place (PhysX poses carry no scale)
+			built_scale = area_transform.basis.get_scale();
+			for (uint32_t i = 0; i < shapes.size(); i++) {
+				if (!_edit_shape_in_place(i)) {
+					_build_actor();
+					return;
+				}
+			}
 		}
 		px_actor->setGlobalPose(to_px(area_transform));
 	}
@@ -546,11 +696,12 @@ void GodotPhysXArea3D::_release_all_pairs() {
 }
 
 void GodotPhysXArea3D::shape_changed(GodotPhysXShape3D *p_shape) {
+	if (!space) {
+		return;
+	}
 	for (uint32_t i = 0; i < shapes.size(); i++) {
-		if (shapes[i].shape == p_shape) {
-			if (space) {
-				_build_actor();
-			}
+		if (shapes[i].shape == p_shape && !_edit_shape_in_place(i)) {
+			_build_actor();
 			return;
 		}
 	}

@@ -69,6 +69,11 @@ GodotPhysXBody3D::~GodotPhysXBody3D() {
 	}
 	joints.clear();
 
+	for (const ShapeRef &sr : shapes) {
+		if (sr.shape) {
+			sr.shape->remove_owner(this);
+		}
+	}
 	_destroy_actor();
 	if (px_material) {
 		px_material->release();
@@ -105,6 +110,117 @@ void GodotPhysXBody3D::_destroy_actor() {
 	}
 	px_actor->release();
 	px_actor = nullptr;
+	px_shapes.clear(); // released with the actor
+}
+
+// Whether shape `p_idx` gets a PhysX shape on the current actor.
+bool GodotPhysXBody3D::_shape_wanted(uint32_t p_idx) const {
+	const ShapeRef &sr = shapes[p_idx];
+	if (sr.disabled || !sr.shape || !sr.shape->is_valid()) {
+		return false;
+	}
+	const bool non_kinematic_dynamic = _is_dynamic() && mode != PhysicsServer3D::BODY_MODE_KINEMATIC;
+	return !(sr.shape->is_static_only() && non_kinematic_dynamic);
+}
+
+bool GodotPhysXBody3D::_has_static_only_shape() const {
+	for (const ShapeRef &sr : shapes) {
+		if (!sr.disabled && sr.shape && sr.shape->is_valid() && sr.shape->is_static_only()) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// A new (unattached) PhysX shape for entry `p_idx`, or nullptr. The caller attaches + releases it.
+PxShape *GodotPhysXBody3D::_create_px_shape(uint32_t p_idx) {
+	if (!_shape_wanted(p_idx)) {
+		return nullptr;
+	}
+	PxPhysics *physics = space ? space->get_px_physics() : nullptr;
+	PxMaterial *material = _get_material();
+	if (!physics || !material) {
+		return nullptr;
+	}
+	const ShapeRef &sr = shapes[p_idx];
+	const GodotPhysXShape3D::ScaledGeometry sg = sr.shape->scaled_geometry(built_scale * sr.xform.basis.get_scale());
+	PxShape *px_shape = physics->createShape(sg.geom.any(), *material, true);
+	if (!px_shape) {
+		ERR_PRINT_ONCE(vformat("PhysX: createShape failed for geometry type %d.", (int)sg.geom.getType()));
+		return nullptr;
+	}
+	px_shape->setLocalPose(to_px(sr.xform) * sg.local_pose);
+	// Store the Godot shape index so queries can report body_shape.
+	px_shape->userData = reinterpret_cast<void *>(static_cast<uintptr_t>(p_idx));
+	const PxFilterData fd = _filter_data();
+	px_shape->setSimulationFilterData(fd);
+	px_shape->setQueryFilterData(fd);
+	return px_shape;
+}
+
+// Bring entry `p_idx`'s PhysX shape up to date on the LIVE actor: same geometry type → setGeometry + setLocalPose
+// (the actor, its joints, contacts and area overlaps all stay); otherwise the old one is detached (the areas it was in
+// take that pair back -- PhysX reports a detached shape's trigger pairs as removed) and a new one attached. False =
+// no live actor (the caller builds one).
+bool GodotPhysXBody3D::_edit_shape_in_place(uint32_t p_idx) {
+	if (!px_actor || !space || !space->get_px_scene()) {
+		return false;
+	}
+	if (px_shapes.size() < shapes.size()) {
+		const uint32_t old_size = px_shapes.size();
+		px_shapes.resize(shapes.size());
+		for (uint32_t i = old_size; i < px_shapes.size(); i++) {
+			px_shapes[i] = nullptr;
+		}
+	}
+	PxShape *old = px_shapes[p_idx];
+	const bool want = _shape_wanted(p_idx);
+	if (want && old) {
+		const ShapeRef &sr = shapes[p_idx];
+		const GodotPhysXShape3D::ScaledGeometry sg = sr.shape->scaled_geometry(built_scale * sr.xform.basis.get_scale());
+		if (sg.geom.getType() == old->getGeometry().getType()) {
+			old->setGeometry(sg.geom.any());
+			old->setLocalPose(to_px(sr.xform) * sg.local_pose);
+			return true;
+		}
+	}
+	if (old) {
+		space->body_shape_gone(this, (int)p_idx);
+		px_actor->detachShape(*old);
+		px_shapes[p_idx] = nullptr;
+	}
+	if (want) {
+		if (PxShape *s = _create_px_shape(p_idx)) {
+			px_actor->attachShape(*s);
+			s->release();
+			px_shapes[p_idx] = s;
+		}
+	}
+	return true;
+}
+
+// After in-place shape edits: separation rays, mass + inertia from the new shapes, and a wake (like Jolt: a body
+// whose shape changed is re-checked against what it rests on).
+void GodotPhysXBody3D::_shapes_edited() {
+	if (!px_actor || !space) {
+		return;
+	}
+	const bool non_kinematic_dynamic = _is_dynamic() && mode != PhysicsServer3D::BODY_MODE_KINEMATIC;
+	bool has_separation_ray = false;
+	for (const ShapeRef &sr : shapes) {
+		if (!sr.disabled && sr.shape && sr.shape->is_separation_ray()) {
+			has_separation_ray = true;
+		}
+	}
+	space->set_body_separation_rays(this, has_separation_ray && non_kinematic_dynamic);
+	if (PxRigidDynamic *dyn = px_actor->is<PxRigidDynamic>()) {
+		if (non_kinematic_dynamic) {
+			_update_mass_properties();
+			if (dyn->getScene()) {
+				dyn->wakeUp();
+			}
+		}
+	}
 }
 
 void GodotPhysXBody3D::_build_actor() {
@@ -151,82 +267,80 @@ void GodotPhysXBody3D::_build_actor() {
 
 	// Separation rays have no PhysX shape; the space casts them each step.
 	bool has_separation_ray = false;
+	px_shapes.resize(shapes.size());
 	for (uint32_t shape_idx = 0; shape_idx < shapes.size(); shape_idx++) {
 		const ShapeRef &sr = shapes[shape_idx];
+		px_shapes[shape_idx] = nullptr;
 		if (!sr.disabled && sr.shape && sr.shape->is_separation_ray()) {
 			has_separation_ray = true;
 		}
-		if (sr.disabled || !sr.shape || !sr.shape->is_valid()) {
-			continue;
-		}
-		if (sr.shape->is_static_only() && non_kinematic_dynamic) {
+		if (!sr.disabled && sr.shape && sr.shape->is_valid() && sr.shape->is_static_only() && non_kinematic_dynamic) {
 			ERR_PRINT_ONCE("PhysX: concave (trimesh) and height-map shapes are only supported on static and kinematic bodies; shape skipped.");
-			continue;
 		}
-		const GodotPhysXShape3D::ScaledGeometry sg = sr.shape->scaled_geometry(built_scale * sr.xform.basis.get_scale());
-		PxShape *px_shape = physics->createShape(sg.geom.any(), *material, true);
-		if (!px_shape) {
-			ERR_PRINT_ONCE(vformat("PhysX: createShape failed for geometry type %d.", (int)sg.geom.getType()));
-			continue;
+		if (PxShape *px_shape = _create_px_shape(shape_idx)) {
+			px_actor->attachShape(*px_shape);
+			px_shape->release();
+			px_shapes[shape_idx] = px_shape;
 		}
-		px_shape->setLocalPose(to_px(sr.xform) * sg.local_pose);
-		// Store the Godot shape index so queries can report body_shape.
-		px_shape->userData = reinterpret_cast<void *>(static_cast<uintptr_t>(shape_idx));
-		px_actor->attachShape(*px_shape);
-		px_shape->release();
 	}
 
-	_apply_filter_data();
 	space->set_body_separation_rays(this, has_separation_ray && non_kinematic_dynamic);
-
-	if (PxRigidDynamic *dyn = px_actor->is<PxRigidDynamic>()) {
-		if (mode != PhysicsServer3D::BODY_MODE_KINEMATIC) {
-			// setMassAndUpdateInertia takes an absolute mass, matching Godot's
-			// RigidBody3D.mass semantics -- updateMassAndInertia's argument is a
-			// *density*, which silently gave the wrong mass for any shape whose
-			// volume isn't ~1 m^3 (it only looked right for unit-sized shapes,
-			// where mass and density are numerically the same). The optional
-			// massLocalPose folds a custom center-of-mass target directly into
-			// this same shape-based computation (a real parallel-axis-correct
-			// inertia around that point) -- NOT a separate setCMassLocalPose()
-			// call after the fact, which would leave the inertia tensor
-			// computed for the OLD (shape-centroid) pivot silently attached to
-			// the NEW one. That mismatch is a real, physically-inconsistent
-			// bug this code briefly had: a first attempt exactly that
-			// (post-hoc setCMassLocalPose) was verified, via a real rollover
-			// repro, to make an unstable vehicle chassis MORE chaotic, not
-			// less -- rotational dynamics with a mismatched inertia/pivot
-			// pair are wrong, not just imprecise.
-			_update_mass_properties();
-			dyn->setActorFlag(PxActorFlag::eDISABLE_GRAVITY, gravity_scale == 0.0 || omit_force_integration);
-			dyn->setSleepThreshold((PxReal)space->get_sleep_energy_threshold());
-			dyn->setWakeCounter((PxReal)space->get_time_before_sleep());
-			if (!can_sleep || !GodotPhysXProjectSettings::allow_sleep) {
-				// Keep it awake by making the energy threshold unreachable.
-				dyn->setSleepThreshold(0.0f);
-			}
-		}
-		// continuous_cd → SPECULATIVE CCD: works without the scene's CCD flag + a CCD pair flag in the filter shader
-		// (sweep CCD needs both, so the flag alone did nothing), and is the cheaper kind.
-		if (ccd) {
-			dyn->setRigidBodyFlag(PxRigidBodyFlag::eENABLE_SPECULATIVE_CCD, true);
-		}
-		// overlapping bodies separate at most this fast (the SDK default is unbounded: they popped apart in one step)
-		if (GodotPhysXProjectSettings::max_depenetration_velocity > 0.0) {
-			dyn->setMaxDepenetrationVelocity((PxReal)GodotPhysXProjectSettings::max_depenetration_velocity);
-		}
-	}
+	_apply_dynamic_flags();
 
 	_apply_damping();
 	_apply_axis_lock();
 	_apply_solver_iterations();
 
 	scene->addActor(*px_actor);
+	_gravity_scale_changed();
 
 	// The actor pointer changed; any joints referencing this body must be
 	// recreated against the new actor.
 	for (GodotPhysXJoint3D *j : joints) {
 		j->rebuild();
+	}
+}
+
+// The dynamic actor's mode-dependent state: mass + inertia, gravity, sleep (non-kinematic), CCD, depenetration cap.
+void GodotPhysXBody3D::_apply_dynamic_flags() {
+	PxRigidDynamic *dyn = px_actor ? px_actor->is<PxRigidDynamic>() : nullptr;
+	if (!dyn || !space) {
+		return;
+	}
+	if (mode != PhysicsServer3D::BODY_MODE_KINEMATIC) {
+		// setMassAndUpdateInertia takes an absolute mass, matching Godot's
+		// RigidBody3D.mass semantics -- updateMassAndInertia's argument is a
+		// *density*, which silently gave the wrong mass for any shape whose
+		// volume isn't ~1 m^3 (it only looked right for unit-sized shapes,
+		// where mass and density are numerically the same). The optional
+		// massLocalPose folds a custom center-of-mass target directly into
+		// this same shape-based computation (a real parallel-axis-correct
+		// inertia around that point) -- NOT a separate setCMassLocalPose()
+		// call after the fact, which would leave the inertia tensor
+		// computed for the OLD (shape-centroid) pivot silently attached to
+		// the NEW one. That mismatch is a real, physically-inconsistent
+		// bug this code briefly had: a first attempt exactly that
+		// (post-hoc setCMassLocalPose) was verified, via a real rollover
+		// repro, to make an unstable vehicle chassis MORE chaotic, not
+		// less -- rotational dynamics with a mismatched inertia/pivot
+		// pair are wrong, not just imprecise.
+		_update_mass_properties();
+		dyn->setActorFlag(PxActorFlag::eDISABLE_GRAVITY, gravity_scale == 0.0 || omit_force_integration);
+		dyn->setSleepThreshold((PxReal)space->get_sleep_energy_threshold());
+		dyn->setWakeCounter((PxReal)space->get_time_before_sleep());
+		if (!can_sleep || !GodotPhysXProjectSettings::allow_sleep) {
+			// Keep it awake by making the energy threshold unreachable.
+			dyn->setSleepThreshold(0.0f);
+		}
+	}
+	// continuous_cd → SPECULATIVE CCD: works without the scene's CCD flag + a CCD pair flag in the filter shader
+	// (sweep CCD needs both, so the flag alone did nothing), and is the cheaper kind.
+	if (ccd) {
+		dyn->setRigidBodyFlag(PxRigidBodyFlag::eENABLE_SPECULATIVE_CCD, true);
+	}
+	// overlapping bodies separate at most this fast (the SDK default is unbounded: they popped apart in one step)
+	if (GodotPhysXProjectSettings::max_depenetration_velocity > 0.0) {
+		dyn->setMaxDepenetrationVelocity((PxReal)GodotPhysXProjectSettings::max_depenetration_velocity);
 	}
 }
 
@@ -261,28 +375,83 @@ void GodotPhysXBody3D::set_mode(PhysicsServer3D::BodyMode p_mode) {
 	if (mode == p_mode) {
 		return;
 	}
+	const PhysicsServer3D::BodyMode old_mode = mode;
 	mode = p_mode;
-	if (space) {
+	if (!space) {
+		return;
+	}
+	// Rigid <-> kinematic <-> rigid-linear: the same PxRigidDynamic, flipped in place (a freeze / unfreeze no longer
+	// rebuilds the actor + its joints). Static <-> anything, or a trimesh / height field (skipped on a rigid body), rebuilds.
+	PxRigidDynamic *dyn = px_actor ? px_actor->is<PxRigidDynamic>() : nullptr;
+	if (!dyn || !dyn->getScene() || old_mode == PhysicsServer3D::BODY_MODE_STATIC || p_mode == PhysicsServer3D::BODY_MODE_STATIC || _has_static_only_shape()) {
 		_build_actor();
+		return;
+	}
+	const bool kinematic = p_mode == PhysicsServer3D::BODY_MODE_KINEMATIC;
+	dyn->setRigidBodyFlag(PxRigidBodyFlag::eKINEMATIC, kinematic);
+	_apply_dynamic_flags();
+	_apply_axis_lock();
+	_apply_damping();
+	bool has_separation_ray = false;
+	for (const ShapeRef &sr : shapes) {
+		if (!sr.disabled && sr.shape && sr.shape->is_separation_ray()) {
+			has_separation_ray = true;
+		}
+	}
+	space->set_body_separation_rays(this, has_separation_ray && !kinematic);
+	if (!kinematic) {
+		dyn->setLinearVelocity(to_px(linear_velocity));
+		dyn->setAngularVelocity(to_px(angular_velocity));
+		dyn->wakeUp();
+	} else {
+		dyn->setKinematicTarget(to_px(body_transform));
+	}
+	_gravity_scale_changed();
+	// A joint made while one side was kinematic (or dynamic) keeps solving it that way after the flip -- a pair
+	// unfrozen in place barely moved -- so the body's joints are re-made (cheap; the actor itself stays).
+	for (GodotPhysXJoint3D *j : joints) {
+		j->rebuild();
 	}
 }
 
+// Shape edits update the live actor in place (_edit_shape_in_place); only removing a shape that isn't the last
+// (every later index shifts) or the actor not existing yet builds it anew.
 void GodotPhysXBody3D::add_shape(GodotPhysXShape3D *p_shape, const Transform3D &p_xform, bool p_disabled) {
 	ShapeRef sr;
 	sr.shape = p_shape;
 	sr.xform = p_xform;
 	sr.disabled = p_disabled;
 	shapes.push_back(sr);
+	if (p_shape) {
+		p_shape->add_owner(this);
+	}
 	if (space) {
-		_build_actor();
+		if (_edit_shape_in_place(shapes.size() - 1)) {
+			_shapes_edited();
+		} else {
+			_build_actor();
+		}
 	}
 }
 
 void GodotPhysXBody3D::set_shape(int p_idx, GodotPhysXShape3D *p_shape) {
 	ERR_FAIL_INDEX(p_idx, (int)shapes.size());
+	if (shapes[p_idx].shape == p_shape) {
+		return;
+	}
+	if (shapes[p_idx].shape) {
+		shapes[p_idx].shape->remove_owner(this);
+	}
 	shapes[p_idx].shape = p_shape;
+	if (p_shape) {
+		p_shape->add_owner(this);
+	}
 	if (space) {
-		_build_actor();
+		if (_edit_shape_in_place(p_idx)) {
+			_shapes_edited();
+		} else {
+			_build_actor();
+		}
 	}
 }
 
@@ -290,20 +459,42 @@ void GodotPhysXBody3D::set_shape_transform(int p_idx, const Transform3D &p_xform
 	ERR_FAIL_INDEX(p_idx, (int)shapes.size());
 	shapes[p_idx].xform = p_xform;
 	if (space) {
-		_build_actor();
+		if (_edit_shape_in_place(p_idx)) {
+			_shapes_edited();
+		} else {
+			_build_actor();
+		}
 	}
 }
 
 void GodotPhysXBody3D::set_shape_disabled(int p_idx, bool p_disabled) {
 	ERR_FAIL_INDEX(p_idx, (int)shapes.size());
+	if (shapes[p_idx].disabled == p_disabled) {
+		return;
+	}
 	shapes[p_idx].disabled = p_disabled;
 	if (space) {
-		_build_actor();
+		if (_edit_shape_in_place(p_idx)) {
+			_shapes_edited();
+		} else {
+			_build_actor();
+		}
 	}
 }
 
 void GodotPhysXBody3D::remove_shape(int p_idx) {
 	ERR_FAIL_INDEX(p_idx, (int)shapes.size());
+	if (shapes[p_idx].shape) {
+		shapes[p_idx].shape->remove_owner(this);
+	}
+	if (space && px_actor && p_idx == (int)shapes.size() - 1) {
+		shapes[p_idx].disabled = true; // the last one: detach it in place
+		_edit_shape_in_place(p_idx);
+		shapes.remove_at(p_idx);
+		px_shapes.resize(MIN(px_shapes.size(), shapes.size()));
+		_shapes_edited();
+		return;
+	}
 	shapes.remove_at(p_idx);
 	if (space) {
 		_build_actor();
@@ -311,8 +502,27 @@ void GodotPhysXBody3D::remove_shape(int p_idx) {
 }
 
 void GodotPhysXBody3D::clear_shapes() {
+	for (const ShapeRef &sr : shapes) {
+		if (sr.shape) {
+			sr.shape->remove_owner(this);
+		}
+	}
 	shapes.clear();
 	if (space) {
+		_build_actor();
+	}
+}
+
+void GodotPhysXBody3D::shape_freed(GodotPhysXShape3D *p_shape) {
+	bool removed = false;
+	for (int i = (int)shapes.size() - 1; i >= 0; i--) {
+		if (shapes[i].shape == p_shape) {
+			p_shape->remove_owner(this);
+			shapes.remove_at(i);
+			removed = true;
+		}
+	}
+	if (removed && space) {
 		_build_actor();
 	}
 }
@@ -326,11 +536,19 @@ void GodotPhysXBody3D::shape_changed(GodotPhysXShape3D *p_shape) {
 	if (!space) {
 		return;
 	}
-	for (const ShapeRef &sr : shapes) {
-		if (sr.shape == p_shape) {
+	bool used = false;
+	for (uint32_t i = 0; i < shapes.size(); i++) {
+		if (shapes[i].shape != p_shape) {
+			continue;
+		}
+		used = true;
+		if (!_edit_shape_in_place(i)) {
 			_build_actor();
 			return;
 		}
+	}
+	if (used) {
+		_shapes_edited();
 	}
 }
 
@@ -392,10 +610,34 @@ void GodotPhysXBody3D::set_param(PhysicsServer3D::BodyParameter p_param, const V
 				_update_mass_properties();
 			}
 			if (p_param == PhysicsServer3D::BODY_PARAM_GRAVITY_SCALE) {
-				dyn->setActorFlag(PxActorFlag::eDISABLE_GRAVITY, gravity_scale == 0.0);
+				dyn->setActorFlag(PxActorFlag::eDISABLE_GRAVITY, gravity_scale == 0.0 || omit_force_integration);
 			}
 		}
 	}
+	if (p_param == PhysicsServer3D::BODY_PARAM_GRAVITY_SCALE) {
+		_gravity_scale_changed();
+	}
+}
+
+// PhysX gravity is on / off per actor: a scale other than 0 or 1 gets the rest from the space each step.
+void GodotPhysXBody3D::_gravity_scale_changed() {
+	if (!space) {
+		return;
+	}
+	const bool scaled = px_actor && mode != PhysicsServer3D::BODY_MODE_KINEMATIC && mode != PhysicsServer3D::BODY_MODE_STATIC &&
+			!omit_force_integration && gravity_scale != 0.0 && gravity_scale != 1.0;
+	space->set_body_gravity_scaled(this, scaled);
+}
+
+void GodotPhysXBody3D::apply_gravity_delta(const Vector3 &p_force) {
+	if (!px_actor || p_force.is_zero_approx() || !px_actor->getScene()) {
+		return;
+	}
+	PxRigidDynamic *dyn = px_actor->is<PxRigidDynamic>();
+	if (!dyn || dyn->isSleeping()) {
+		return;
+	}
+	dyn->addForce(to_px(p_force), PxForceMode::eFORCE, false);
 }
 
 Variant GodotPhysXBody3D::get_param(PhysicsServer3D::BodyParameter p_param) const {
@@ -431,9 +673,15 @@ void GodotPhysXBody3D::set_state(PhysicsServer3D::BodyState p_state, const Varia
 			body_transform = p_value;
 			if (px_actor) {
 				if (!body_transform.basis.get_scale().is_equal_approx(built_scale)) {
-					// Scale changed -- shapes must be re-cooked.
-					_build_actor();
-					break;
+					// Scale changed -- the shapes take it in place (PhysX poses carry no scale).
+					built_scale = body_transform.basis.get_scale();
+					for (uint32_t i = 0; i < shapes.size(); i++) {
+						if (!_edit_shape_in_place(i)) {
+							_build_actor();
+							break;
+						}
+					}
+					_shapes_edited();
 				}
 				const PxTransform pose = to_px(body_transform);
 				if (PxRigidDynamic *dyn = px_actor->is<PxRigidDynamic>()) {
@@ -495,10 +743,7 @@ void GodotPhysXBody3D::set_ccd(bool p_enable) {
 	}
 }
 
-void GodotPhysXBody3D::_apply_filter_data() {
-	if (!px_actor) {
-		return;
-	}
+PxFilterData GodotPhysXBody3D::_filter_data() const {
 	// word0/word1: Godot collision layer/mask. word2: flags read by the scene
 	// filter shader -- this body wants contact reports, or has collision
 	// exceptions (its pairs go to the filter callback). word3 marks a body.
@@ -507,14 +752,22 @@ void GodotPhysXBody3D::_apply_filter_data() {
 	fd.word1 = collision_mask;
 	fd.word2 = (reports_contacts() ? FILTER_REPORTS_CONTACTS : 0u) | (collision_exceptions.is_empty() ? 0u : FILTER_HAS_EXCEPTIONS);
 	fd.word3 = FILTER_BODY_MARKER;
+	return fd;
+}
+
+void GodotPhysXBody3D::_apply_filter_data() {
+	if (!px_actor) {
+		return;
+	}
+	const PxFilterData fd = _filter_data();
 
 	const PxU32 nb = px_actor->getNbShapes();
-	LocalVector<PxShape *> px_shapes;
-	px_shapes.resize(nb);
-	px_actor->getShapes(px_shapes.ptr(), nb);
+	LocalVector<PxShape *> all;
+	all.resize(nb);
+	px_actor->getShapes(all.ptr(), nb);
 	for (PxU32 i = 0; i < nb; i++) {
-		px_shapes[i]->setSimulationFilterData(fd);
-		px_shapes[i]->setQueryFilterData(fd);
+		all[i]->setSimulationFilterData(fd);
+		all[i]->setQueryFilterData(fd);
 	}
 }
 
@@ -569,6 +822,7 @@ void GodotPhysXBody3D::set_omit_force_integration(bool p_enable) {
 	if (space) {
 		space->set_body_force_integrator(this, p_enable);
 	}
+	_gravity_scale_changed();
 }
 
 void GodotPhysXBody3D::set_force_integration_callback(const Callable &p_callable, const Variant &p_udata) {

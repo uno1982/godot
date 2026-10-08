@@ -41,6 +41,8 @@
 namespace physx {
 class PxRigidActor;
 class PxMaterial;
+class PxShape;
+struct PxFilterData;
 } //namespace physx
 
 class GodotPhysXSpace3D;
@@ -85,6 +87,9 @@ private:
 	physx::PxRigidActor *px_actor = nullptr;
 
 	LocalVector<ShapeRef> shapes;
+	// The PhysX shape built for each entry of `shapes` (nullptr: disabled, invalid, a separation ray, or a mesh a
+	// dynamic body can't carry), while the actor exists -- so a shape edit updates it in place instead of rebuilding.
+	LocalVector<physx::PxShape *> px_shapes;
 
 	Transform3D body_transform;
 	// Node scale baked into the shapes on the last _build_actor(); a change
@@ -101,8 +106,8 @@ private:
 	// RigidBody3D only ever sends this (via BODY_PARAM_CENTER_OF_MASS) when
 	// center_of_mass_mode is CUSTOM -- there's no separate "mode" param, so a
 	// value having been sent at all IS the "custom" signal. _build_actor()
-	// destroys and recreates px_actor on almost any shape/mode change, which
-	// would otherwise silently drop this back to the shape-auto-computed
+	// recreates px_actor (a static <-> dynamic switch, a removed shape, ...),
+	// which would otherwise silently drop this back to the shape-auto-computed
 	// pose every time -- reapplied there too, not just in set_param().
 	bool has_custom_center_of_mass = false;
 	Vector3 center_of_mass;
@@ -173,6 +178,14 @@ private:
 	void _destroy_actor();
 	void _apply_solver_iterations();
 	void _build_actor();
+	physx::PxShape *_create_px_shape(uint32_t p_idx);
+	bool _shape_wanted(uint32_t p_idx) const;
+	bool _edit_shape_in_place(uint32_t p_idx);
+	void _shapes_edited();
+	void _apply_dynamic_flags();
+	bool _has_static_only_shape() const;
+	physx::PxFilterData _filter_data() const;
+	void _gravity_scale_changed();
 	void _apply_filter_data();
 	void _collision_exceptions_changed();
 	void _apply_damping();
@@ -210,6 +223,8 @@ public:
 	int get_shape_count() const { return shapes.size(); }
 	const ShapeRef *get_shape_ref(int p_idx) const;
 	void shape_changed(GodotPhysXShape3D *p_shape);
+	// The shape is being freed: drop every entry using it.
+	void shape_freed(GodotPhysXShape3D *p_shape);
 
 	void set_param(PhysicsServer3D::BodyParameter p_param, const Variant &p_value);
 	Variant get_param(PhysicsServer3D::BodyParameter p_param) const;
@@ -293,6 +308,9 @@ public:
 	bool has_constant_forces() const { return !constant_force.is_zero_approx() || !constant_torque.is_zero_approx(); }
 	// Called by the space before simulate() for bodies with constant forces.
 	void apply_constant_forces();
+	// Called by the space before simulate() for a body whose gravity_scale isn't 0 or 1: PhysX gives it the full
+	// gravity, this adds the rest (`p_force` = (scale - 1) x gravity x mass); a sleeping body stays asleep.
+	void apply_gravity_delta(const Vector3 &p_force);
 
 	void set_axis_velocity(const Vector3 &p_axis_velocity);
 	void reset_mass_properties();

@@ -71,6 +71,20 @@ GodotPhysXShape3D::~GodotPhysXShape3D() {
 	_release_meshes();
 }
 
+void GodotPhysXShape3D::remove_owner(GodotPhysXBody3D *p_body) {
+	HashMap<GodotPhysXBody3D *, int>::Iterator it = body_owners.find(p_body);
+	if (it && --it->value <= 0) {
+		body_owners.remove(it);
+	}
+}
+
+void GodotPhysXShape3D::remove_owner(GodotPhysXArea3D *p_area) {
+	HashMap<GodotPhysXArea3D *, int>::Iterator it = area_owners.find(p_area);
+	if (it && --it->value <= 0) {
+		area_owners.remove(it);
+	}
+}
+
 void GodotPhysXShape3D::_release_meshes() {
 	if (convex_mesh) {
 		convex_mesh->release();

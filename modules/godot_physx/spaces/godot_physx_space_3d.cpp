@@ -411,6 +411,12 @@ void GodotPhysXSpace3D::body_actor_gone(GodotPhysXBody3D *p_body) {
 	}
 }
 
+void GodotPhysXSpace3D::body_shape_gone(GodotPhysXBody3D *p_body, int p_shape) {
+	for (GodotPhysXArea3D *area : areas) {
+		area->body_shape_gone(p_body, p_shape);
+	}
+}
+
 void GodotPhysXSpace3D::body_removed_from_areas(GodotPhysXBody3D *p_body) {
 	for (GodotPhysXArea3D *area : areas) {
 		area->body_removed(p_body);
@@ -481,6 +487,7 @@ void GodotPhysXSpace3D::_apply_area_overrides() {
 
 		const Vector3 pos = body->get_transform().origin;
 		const real_t mass = MAX(body->get_mass(), (real_t)0.0001);
+		const real_t gravity_scale = body->get_gravity_scale();
 
 		// Areas build on the space's defaults: COMBINE adds, REPLACE replaces.
 		Vector3 grav = gravity;
@@ -528,15 +535,23 @@ void GodotPhysXSpace3D::_apply_area_overrides() {
 			wind += area->wind_at(pos);
 		}
 
-		// Gravity delta relative to the world default (bodies already get world
-		// gravity from the scene), plus wind, as a force; the damping goes to
-		// the body's own solver damping, combined with its own per its modes.
-		const Vector3 force = (grav - gravity) * mass + wind;
+		// Gravity delta relative to what the scene already gives the body (the
+		// world default, or nothing at gravity_scale 0), times its gravity
+		// scale, plus wind, as a force; the damping goes to the body's own
+		// solver damping, combined with its own per its modes.
+		const Vector3 builtin = gravity_scale == 0.0 ? Vector3() : gravity;
+		const Vector3 force = (grav * gravity_scale - builtin) * mass + wind;
 		if (!force.is_zero_approx()) {
 			body->apply_central_force(force);
 		}
 		body->set_area_damping(lin_damp, ang_damp);
 		damped_now.insert(body);
+	}
+	// gravity_scale other than 0 / 1 outside any overriding area: the rest of the scaled world gravity.
+	for (GodotPhysXBody3D *body : gravity_scaled_bodies) {
+		if (!affected.has(body)) {
+			body->apply_gravity_delta(gravity * (body->get_gravity_scale() - 1.0) * MAX(body->get_mass(), (real_t)0.0001));
+		}
 	}
 	// Bodies that left every overriding area go back to the defaults.
 	for (GodotPhysXBody3D *body : area_damped_bodies) {

@@ -31,6 +31,7 @@
 #pragma once
 
 #include "core/math/vector3.h"
+#include "core/templates/hash_map.h"
 #include "core/templates/rid.h"
 #include "core/templates/rid_owner.h"
 #include "core/variant/variant.h"
@@ -47,6 +48,8 @@
 #include <geometry/PxTriangleMeshGeometry.h>
 
 class GodotPhysXShape3D;
+class GodotPhysXBody3D;
+class GodotPhysXArea3D;
 
 // Local pose offset that a shape wants applied when attached to an actor
 // (PhysX capsules/planes are X-axis aligned; Godot expects Y / plane-at-origin).
@@ -134,4 +137,17 @@ public:
 		physx::PxTransform local_pose{ physx::PxIdentity };
 	};
 	ScaledGeometry scaled_geometry(const Vector3 &p_scale) const;
+
+	// The bodies / areas using this shape (refcounted: one may use it at several indices), so a data change or a
+	// free reaches just them instead of every body on the server.
+	void add_owner(GodotPhysXBody3D *p_body) { body_owners[p_body]++; }
+	void remove_owner(GodotPhysXBody3D *p_body);
+	void add_owner(GodotPhysXArea3D *p_area) { area_owners[p_area]++; }
+	void remove_owner(GodotPhysXArea3D *p_area);
+	const HashMap<GodotPhysXBody3D *, int> &get_body_owners() const { return body_owners; }
+	const HashMap<GodotPhysXArea3D *, int> &get_area_owners() const { return area_owners; }
+
+private:
+	HashMap<GodotPhysXBody3D *, int> body_owners;
+	HashMap<GodotPhysXArea3D *, int> area_owners;
 };

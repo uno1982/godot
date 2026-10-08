@@ -42,6 +42,7 @@
 
 namespace physx {
 class PxRigidActor;
+class PxShape;
 } //namespace physx
 
 class GodotPhysXSpace3D;
@@ -78,6 +79,9 @@ private:
 	LocalVector<ShapeRef> shapes;
 	Transform3D area_transform;
 	Vector3 built_scale = Vector3(1, 1, 1); // node scale baked into shapes on last _build_actor()
+	// The PhysX trigger shape built for each entry of `shapes` (nullptr: disabled / invalid), while the actor exists --
+	// a shape edit updates it in place instead of rebuilding the actor (which took every overlap back).
+	LocalVector<physx::PxShape *> px_shapes;
 	uint32_t collision_layer = 1;
 	uint32_t collision_mask = 1;
 	bool monitorable = false;
@@ -157,6 +161,9 @@ private:
 	void _destroy_actor();
 	void _build_actor();
 	void _apply_filter_data();
+	physx::PxShape *_create_px_shape(uint32_t p_idx);
+	bool _edit_shape_in_place(uint32_t p_idx);
+	void _release_area_shape_pairs(int p_area_shape);
 
 public:
 	void set_self(const RID &p_self) { self = p_self; }
@@ -231,6 +238,10 @@ public:
 	void body_actor_gone(GodotPhysXBody3D *p_body);
 	// A shape this area uses changed its data: rebuild the actor with it.
 	void shape_changed(GodotPhysXShape3D *p_shape);
+	// The shape is being freed: drop every entry using it.
+	void shape_freed(GodotPhysXShape3D *p_shape);
+	// One of `p_body`'s shapes left its actor (swapped / disabled in place): take that shape's overlaps back.
+	void body_shape_gone(GodotPhysXBody3D *p_body, int p_body_shape);
 
 	// Called once per physics step, once per (this, p_other) pair where this
 	// area wants_area_monitoring() and p_other->is_monitorable() -- see

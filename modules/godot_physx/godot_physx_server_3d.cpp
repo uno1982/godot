@@ -139,21 +139,20 @@ void GodotPhysXServer3D::shape_set_data(RID p_shape, const Variant &p_data) {
 	ERR_FAIL_NULL(shape);
 	shape->set_data(p_data);
 
-	// Rebuild any body currently using this shape.
-	LocalVector<RID> body_rids = body_owner.get_owned_list();
-	for (const RID &body_rid : body_rids) {
-		GodotPhysXBody3D *body = body_owner.get_or_null(body_rid);
-		if (body) {
-			body->shape_changed(shape);
-		}
+	// Update the bodies + areas using this shape (in place: see GodotPhysXBody3D::_edit_shape_in_place).
+	LocalVector<GodotPhysXBody3D *> bodies;
+	for (const KeyValue<GodotPhysXBody3D *, int> &E : shape->get_body_owners()) {
+		bodies.push_back(E.key);
 	}
-	// ... and any area (a resized hurtbox kept its old size).
-	LocalVector<RID> area_rids = area_owner.get_owned_list();
-	for (const RID &area_rid : area_rids) {
-		GodotPhysXArea3D *area = area_owner.get_or_null(area_rid);
-		if (area) {
-			area->shape_changed(shape);
-		}
+	for (GodotPhysXBody3D *body : bodies) {
+		body->shape_changed(shape);
+	}
+	LocalVector<GodotPhysXArea3D *> areas;
+	for (const KeyValue<GodotPhysXArea3D *, int> &E : shape->get_area_owners()) {
+		areas.push_back(E.key);
+	}
+	for (GodotPhysXArea3D *area : areas) {
+		area->shape_changed(shape);
 	}
 }
 
@@ -1415,6 +1414,21 @@ void GodotPhysXServer3D::soft_body_apply_central_force(RID p_body, const Vector3
 
 void GodotPhysXServer3D::free_rid(RID p_rid) {
 	if (GodotPhysXShape3D *shape = shape_owner.get_or_null(p_rid)) {
+		// Whoever still uses it drops it (they kept a dangling pointer before).
+		LocalVector<GodotPhysXBody3D *> bodies;
+		for (const KeyValue<GodotPhysXBody3D *, int> &E : shape->get_body_owners()) {
+			bodies.push_back(E.key);
+		}
+		for (GodotPhysXBody3D *body : bodies) {
+			body->shape_freed(shape);
+		}
+		LocalVector<GodotPhysXArea3D *> areas;
+		for (const KeyValue<GodotPhysXArea3D *, int> &E : shape->get_area_owners()) {
+			areas.push_back(E.key);
+		}
+		for (GodotPhysXArea3D *area : areas) {
+			area->shape_freed(shape);
+		}
 		shape_owner.free(p_rid);
 		memdelete(shape);
 	} else if (GodotPhysXBody3D *body = body_owner.get_or_null(p_rid)) {

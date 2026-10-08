@@ -409,8 +409,19 @@ class RayQueryFilter : public QueryFilter {
 public:
 	PxVec3 ray_dir;
 	bool hit_back_faces = true;
+	bool hit_from_inside = false;
 
 	virtual PxQueryHitType::Enum postFilter(const PxFilterData &, const PxQueryHit &p_hit, const PxShape *p_shape, const PxRigidActor *p_actor) override {
+		// A ray that STARTS inside a solid shape: PhysX reports it at distance 0. Godot (and Jolt) skip that shape
+		// unless hit_from_inside is set -- character code casts from inside its own capsule (foot IK, ground and
+		// ledge probes) and must reach the ground below. Meshes and height fields have no inside: left as they are.
+		if (!hit_from_inside && p_shape && static_cast<const PxLocationHit &>(p_hit).distance <= 0.0f) {
+			const PxGeometryType::Enum gt = p_shape->getGeometry().getType();
+			if (gt == PxGeometryType::eSPHERE || gt == PxGeometryType::eCAPSULE || gt == PxGeometryType::eBOX ||
+					gt == PxGeometryType::eCONVEXMESH) {
+				return PxQueryHitType::eNONE;
+			}
+		}
 		if (!p_shape || !p_actor || p_hit.faceIndex == 0xFFFFFFFF || p_shape->getGeometry().getType() != PxGeometryType::eTRIANGLEMESH) {
 			return PxQueryHitType::eBLOCK;
 		}
@@ -467,6 +478,7 @@ bool GodotPhysXDirectSpaceState3D::intersect_ray(const RayParameters &p_paramete
 	filter.picking = p_parameters.pick_ray;
 	filter.ray_dir = to_px(delta / dist);
 	filter.hit_back_faces = p_parameters.hit_back_faces;
+	filter.hit_from_inside = p_parameters.hit_from_inside;
 
 	PxQueryFilterData fd(PxQueryFlag::eSTATIC | PxQueryFlag::eDYNAMIC | PxQueryFlag::ePREFILTER | PxQueryFlag::ePOSTFILTER);
 	PxHitFlags hit_flags = PxHitFlag::ePOSITION | PxHitFlag::eNORMAL | PxHitFlag::eFACE_INDEX;
@@ -483,7 +495,8 @@ bool GodotPhysXDirectSpaceState3D::intersect_ray(const RayParameters &p_paramete
 	const PxRaycastHit &b = hit.block;
 	const QueryHitObject o = hit_object(b.actor, b.shape);
 	r_result.position = to_godot(b.position);
-	r_result.normal = to_godot(b.normal);
+	// Started inside (hit_from_inside): Godot reports a zero normal there.
+	r_result.normal = b.distance <= 0.0f ? Vector3() : to_godot(b.normal);
 	r_result.rid = o.rid;
 	r_result.collider_id = o.instance_id;
 	r_result.collider = r_result.collider_id.is_valid() ? ObjectDB::get_instance(r_result.collider_id) : nullptr;

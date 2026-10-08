@@ -38,9 +38,9 @@ with GCC, the two link together fine). Tested with clang 18 and 22, and GCC
 there with `NVCC_CCBIN` (Arch's `cuda` package already does).
 
 Win64 / MSVC and Linux x86-64 are built and tested, CPU and GPU, with and
-without Blast. On Linux `SCsub` copies `libPhysXGpu_64.so` and the Blast
-`.so` files next to the binary and sets an `$ORIGIN` rpath so they're found.
-Flow builds on Linux but isn't hooked up there yet.
+without Blast and Flow. On Linux `SCsub` copies `libPhysXGpu_64.so` and the
+Blast and Flow `.so` files next to the binary and sets an `$ORIGIN` rpath so
+they're found.
 
 The `.so` files need the glibc of the machine that built them (or newer), so
 build release SDKs on an older distro, not a rolling one. The
@@ -166,8 +166,9 @@ set CL=/wd4756
 build.bat
 ```
 
-Nothing is linked: Flow's loader opens `nvflow.dll` and `nvflowext.dll` at run
-time, and `SCsub` copies both next to the built binary. Without them the Flow
+Nothing is linked: Flow's loader opens `nvflow.dll` and `nvflowext.dll`
+(`libnvflow.so` and `libnvflowext.so` on Linux) at run time, and `SCsub`
+copies both next to the built binary. Without them the Flow
 nodes show a configuration warning and stay inert.
 
 ## Selecting the backend
@@ -741,8 +742,8 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   `NvBlast*.dll` / `libNvBlast*.so` (`blast_sdk=`; linked at startup, so the
   game won't start without them), `PhysXGpu_64.dll` / `libPhysXGpu_64.so`
   (`physx_gpu=yes`; without it PhysX silently falls back to the CPU), and
-  `nvflow.dll` / `nvflowext.dll` (`flow_sdk=`; without them the Flow nodes
-  stay inert). The export template must be built with
+  `nvflow.dll` / `nvflowext.dll` / `libnvflow*.so` (`flow_sdk=`; without them
+  the Flow nodes stay inert). The export template must be built with
   the same options.
 - **NVIDIA Flow** (`PhysXFlow3D`):
   - only box, sphere, capsule and cylinder shapes are solids for the gas;
@@ -754,8 +755,7 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   - it draws after transparent geometry, so an additive mesh inside the gas
     is painted over — use an opaque glowing mesh for a flame core;
   - NanoVDB (volume) emitters aren't supported;
-  - `SCsub` only copies Flow's Windows DLLs; Flow itself builds on Linux,
-    not on macOS.
+  - Flow doesn't build on macOS.
 - Windows and Linux x86-64 are the only platforms built and tested.
 
 ## Layout
@@ -809,4 +809,4 @@ binary — see Building above.
 With `flow_sdk=` set, the build loads **NVIDIA Flow**
 (<https://github.com/NVIDIA-Omniverse/PhysX/tree/main/flow>) at run time —
 again the same repository and BSD-3-Clause license. `nvflow.dll` and
-`nvflowext.dll` must ship next to the Godot binary.
+`nvflowext.dll` (`.so` on Linux) must ship next to the Godot binary.

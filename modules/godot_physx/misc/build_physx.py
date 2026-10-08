@@ -22,8 +22,8 @@ Godot binary too.
 --flow additionally builds NVIDIA Flow (sparse-grid smoke / fire / dust,
 backing PhysXFlow3D) from the same checkout's flow/ subdirectory, with its own
 build.bat / build.sh. flow_sdk= is that flow/ directory itself. Nothing is
-linked -- nvflow / nvflowext are loaded at run time; on Windows SCsub copies
-both DLLs next to the Godot binary, on Linux it doesn't yet.
+linked -- nvflow / nvflowext are loaded at run time, and SCsub copies both
+next to the Godot binary.
 
 The last thing printed is the scons command for everything built.
 
@@ -33,6 +33,7 @@ defaults to the host OS (windows / linuxbsd).
 
 import argparse
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -204,7 +205,11 @@ def main():
         flow_dir = os.path.join(src, "flow")
         if not os.path.isdir(flow_dir):
             sys.exit("--flow needs a flow/ directory in the checkout at " + src)
-        flow_script = os.path.join(flow_dir, "build.bat" if is_windows else "build.sh")
+        if is_windows:
+            flow_script = os.path.join(flow_dir, "build.bat")
+        else:
+            # ARM Linux has its own script.
+            flow_script = os.path.join(flow_dir, "build_aarch64.sh" if platform.machine() == "aarch64" else "build.sh")
         if not os.path.isfile(flow_script):
             sys.exit("no Flow build script at " + flow_script)
         flow_env = os.environ.copy()
@@ -213,35 +218,18 @@ def main():
         print("+ %s  (in %s)" % (flow_script, flow_dir))
         subprocess.check_call([flow_script] if is_windows else ["bash", flow_script], cwd=flow_dir, env=flow_env)
 
-        flow_platform = "windows-x86_64" if is_windows else "linux-x86_64"
+        flow_platform = "windows-x86_64" if is_windows else "linux-" + platform.machine()
         flow_bin = os.path.join(flow_dir, "_build", flow_platform, "release")
-        if is_windows:
-            flow_libs = ("nvflow.dll", "nvflowext.dll")
-            missing = [name for name in flow_libs if not os.path.isfile(os.path.join(flow_bin, name))]
-            if missing:
-                sys.exit("Flow build finished but %s missing from %s" % (", ".join(missing), flow_bin))
-        else:
-            # The Linux library names aren't verified yet: take whatever
-            # nvflow / nvflowext shared libraries the build produced.
-            flow_libs = sorted(
-                name
-                for name in (os.listdir(flow_bin) if os.path.isdir(flow_bin) else [])
-                if "nvflow" in name and ".so" in name and "rtx" not in name
-            )
-            if not flow_libs:
-                sys.exit("Flow build finished but no nvflow libraries in " + flow_bin)
+        flow_libs = ("nvflow.dll", "nvflowext.dll") if is_windows else ("libnvflow.so", "libnvflowext.so")
+        missing = [name for name in flow_libs if not os.path.isfile(os.path.join(flow_bin, name))]
+        if missing:
+            sys.exit("Flow build finished but %s missing from %s" % (", ".join(missing), flow_bin))
         scons_args.append("flow_sdk=" + flow_dir.replace("\\", "/"))
 
         print()
         print("Flow ready:")
         print("    " + flow_dir)
-        if is_windows:
-            print("SCsub copies nvflow.dll and nvflowext.dll next to the Godot binary automatically.")
-        else:
-            # SCsub only copies Flow's Windows DLLs so far.
-            print("Copy Flow's libraries next to the Godot binary (SCsub doesn't on Linux yet):")
-            for name in flow_libs:
-                print("    cp %s bin/" % os.path.join(flow_bin, name))
+        print("SCsub copies %s and %s next to the Godot binary automatically." % flow_libs)
 
     print()
     print("Build the module with:")

@@ -1,0 +1,15 @@
+Flow's build.sh uses the arch command, which some distros (Arch) don't have.
+uname -m gives the same thing everywhere.
+
+diff --git a/flow/build.sh b/flow/build.sh
+index 7d2731b..603fa01 100755
+--- a/flow/build.sh
++++ b/flow/build.sh
+@@ -1,6 +1,6 @@
+ #! /bin/bash
+ SCRIPT_DIR=$(dirname ${BASH_SOURCE})
+-source "$SCRIPT_DIR/buildtools/packman/packman" pull "$SCRIPT_DIR/dependencies.xml" -p linux-$(arch)
++source "$SCRIPT_DIR/buildtools/packman/packman" pull "$SCRIPT_DIR/dependencies.xml" -p linux-$(uname -m)
+ 
+ ./generate_projects.sh
+ 

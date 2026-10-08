@@ -179,7 +179,11 @@ bool acquire_library(char *r_error, int p_error_size) {
 	load_error[0] = '\0';
 	NvFlowLoaderInit(&l->loader, on_load_error, nullptr);
 	if (l->loader.module_nvflow == nullptr || l->loader.module_nvflowext == nullptr) {
+#ifdef _WIN32
 		snprintf(r_error, p_error_size, "nvflow.dll / nvflowext.dll not found next to the executable (%s)", load_error);
+#else
+		snprintf(r_error, p_error_size, "libnvflow.so / libnvflowext.so not found next to the executable (%s)", load_error);
+#endif
 		NvFlowLoaderDestroy(&l->loader);
 		delete l;
 		return false;

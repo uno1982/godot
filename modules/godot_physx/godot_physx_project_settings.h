@@ -72,6 +72,11 @@ public:
 	// GPU path). A fixed value is useful for reproducible profiling.
 	inline static int cpu_worker_threads = 0;
 
+	// physics/physx_3d/simulation/max_depenetration_velocity
+	// How fast (m/s) overlapping dynamic bodies are pushed apart at most. PhysX's default is unbounded -- bodies that
+	// start overlapping (spawns, crowds, a capsule growing) pop apart in one step. 0 = unbounded.
+	inline static float max_depenetration_velocity = 4.0f;
+
 	// physics/physx_3d/soft_body/mode
 	//
 	// Backend for the stock SoftBody3D node. 0 = Auto (GPU PxDeformableVolume

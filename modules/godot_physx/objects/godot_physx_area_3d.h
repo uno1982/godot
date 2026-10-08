@@ -122,6 +122,17 @@ private:
 	};
 	HashMap<OverlapKey, OverlapState, OverlapKeyHasher> pending;
 
+	// The live (body, shape pair) overlaps and their refcounts. PhysX reports a destroyed actor's trigger pairs as
+	// REMOVED (pointers no longer usable), so an actor rebuild / removal takes its pairs back here instead: an exit is
+	// queued per pair, and a rebuilt actor that still overlaps re-reports an enter on the next step -- the two cancel
+	// in call_queries() (no signals), a body that really left gets its body_exited.
+	struct ActivePair {
+		GodotPhysXBody3D *body = nullptr;
+		int count = 0;
+	};
+	HashMap<OverlapKey, ActivePair, OverlapKeyHasher> active_pairs;
+	void _release_all_pairs();
+
 	Callable area_monitor_callback;
 
 	// (other_area_rid, other_shape << 16 | self_shape) -- same key shape as
@@ -216,6 +227,10 @@ public:
 	void report_body_overlap(GodotPhysXBody3D *p_body, int p_body_shape, int p_area_shape, bool p_entered);
 	// Called when a body leaves the simulation while still overlapping.
 	void body_removed(GodotPhysXBody3D *p_body) { overlapping_bodies.erase(p_body); }
+	// A body's PhysX actor is being destroyed (rebuilt or removed): queue an exit for each pair it holds here.
+	void body_actor_gone(GodotPhysXBody3D *p_body);
+	// A shape this area uses changed its data: rebuild the actor with it.
+	void shape_changed(GodotPhysXShape3D *p_shape);
 
 	// Called once per physics step, once per (this, p_other) pair where this
 	// area wants_area_monitoring() and p_other->is_monitorable() -- see

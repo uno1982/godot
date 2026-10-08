@@ -405,6 +405,12 @@ void GodotPhysXSpace3D::step(real_t p_step) {
 	awake_bodies = now_awake;
 }
 
+void GodotPhysXSpace3D::body_actor_gone(GodotPhysXBody3D *p_body) {
+	for (GodotPhysXArea3D *area : areas) {
+		area->body_actor_gone(p_body);
+	}
+}
+
 void GodotPhysXSpace3D::body_removed_from_areas(GodotPhysXBody3D *p_body) {
 	for (GodotPhysXArea3D *area : areas) {
 		area->body_removed(p_body);

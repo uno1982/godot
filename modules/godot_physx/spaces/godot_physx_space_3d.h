@@ -173,6 +173,8 @@ public:
 
 	// Drop a body from every area's overlap set (body leaving the simulation).
 	void body_removed_from_areas(GodotPhysXBody3D *p_body);
+	// A body's actor is destroyed (rebuilt / removed): every area takes its overlaps back (see GodotPhysXArea3D).
+	void body_actor_gone(GodotPhysXBody3D *p_body);
 
 	void step(real_t p_step);
 	void call_queries();

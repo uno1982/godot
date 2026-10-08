@@ -97,6 +97,9 @@ void GodotPhysXBody3D::_destroy_actor() {
 	if (!px_actor) {
 		return;
 	}
+	if (space) {
+		space->body_actor_gone(this); // the areas it overlaps take their pairs back (an exit unless it re-enters)
+	}
 	if (space && space->get_px_scene()) {
 		space->get_px_scene()->removeActor(*px_actor);
 	}
@@ -203,8 +206,14 @@ void GodotPhysXBody3D::_build_actor() {
 				dyn->setSleepThreshold(0.0f);
 			}
 		}
+		// continuous_cd → SPECULATIVE CCD: works without the scene's CCD flag + a CCD pair flag in the filter shader
+		// (sweep CCD needs both, so the flag alone did nothing), and is the cheaper kind.
 		if (ccd) {
-			dyn->setRigidBodyFlag(PxRigidBodyFlag::eENABLE_CCD, true);
+			dyn->setRigidBodyFlag(PxRigidBodyFlag::eENABLE_SPECULATIVE_CCD, true);
+		}
+		// overlapping bodies separate at most this fast (the SDK default is unbounded: they popped apart in one step)
+		if (GodotPhysXProjectSettings::max_depenetration_velocity > 0.0) {
+			dyn->setMaxDepenetrationVelocity((PxReal)GodotPhysXProjectSettings::max_depenetration_velocity);
 		}
 	}
 
@@ -481,7 +490,7 @@ void GodotPhysXBody3D::set_ccd(bool p_enable) {
 	ccd = p_enable;
 	if (px_actor) {
 		if (PxRigidDynamic *dyn = px_actor->is<PxRigidDynamic>()) {
-			dyn->setRigidBodyFlag(PxRigidBodyFlag::eENABLE_CCD, p_enable);
+			dyn->setRigidBodyFlag(PxRigidBodyFlag::eENABLE_SPECULATIVE_CCD, p_enable);
 		}
 	}
 }

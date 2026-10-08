@@ -147,6 +147,14 @@ void GodotPhysXServer3D::shape_set_data(RID p_shape, const Variant &p_data) {
 			body->shape_changed(shape);
 		}
 	}
+	// ... and any area (a resized hurtbox kept its old size).
+	LocalVector<RID> area_rids = area_owner.get_owned_list();
+	for (const RID &area_rid : area_rids) {
+		GodotPhysXArea3D *area = area_owner.get_or_null(area_rid);
+		if (area) {
+			area->shape_changed(shape);
+		}
+	}
 }
 
 void GodotPhysXServer3D::shape_set_margin(RID p_shape, real_t p_margin) {

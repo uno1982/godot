@@ -52,6 +52,7 @@ void GodotPhysXArea3D::_destroy_actor() {
 	if (!px_actor) {
 		return;
 	}
+	_release_all_pairs();
 	if (space && space->get_px_scene()) {
 		space->get_px_scene()->removeActor(*px_actor);
 	}
@@ -212,6 +213,23 @@ void GodotPhysXArea3D::report_body_overlap(GodotPhysXBody3D *p_body, int p_body_
 		return;
 	}
 
+	OverlapKey key;
+	key.body_rid = p_body->get_self();
+	key.shape_pair = ((uint32_t)p_body_shape << 16) | ((uint32_t)p_area_shape & 0xFFFF);
+	if (p_entered) {
+		ActivePair &ap = active_pairs[key];
+		ap.body = p_body;
+		ap.count++;
+	} else {
+		HashMap<OverlapKey, ActivePair, OverlapKeyHasher>::Iterator ait = active_pairs.find(key);
+		if (!ait) {
+			return; // already taken back (the old actor's pair, released at its rebuild)
+		}
+		if (--ait->value.count <= 0) {
+			active_pairs.remove(ait);
+		}
+	}
+
 	// Track the set of overlapping bodies (refcounted by shape pair) so the space
 	// can apply gravity/damp/wind overrides even when no monitor callback is set.
 	if (p_entered) {
@@ -230,9 +248,6 @@ void GodotPhysXArea3D::report_body_overlap(GodotPhysXBody3D *p_body, int p_body_
 	if (monitor_callback.is_null()) {
 		return;
 	}
-	OverlapKey key;
-	key.body_rid = p_body->get_self();
-	key.shape_pair = ((uint32_t)p_body_shape << 16) | ((uint32_t)p_area_shape & 0xFFFF);
 	OverlapState &st = pending[key];
 	st.instance_id = p_body->get_instance_id();
 	st.delta += p_entered ? 1 : -1;
@@ -496,5 +511,47 @@ void GodotPhysXArea3D::call_queries() {
 			area_monitor_callback.callp(argp, 5, ret, ce);
 		}
 		pending_areas.clear();
+	}
+}
+
+void GodotPhysXArea3D::body_actor_gone(GodotPhysXBody3D *p_body) {
+	if (!p_body || active_pairs.is_empty()) {
+		return;
+	}
+	LocalVector<OverlapKey> keys;
+	for (const KeyValue<OverlapKey, ActivePair> &E : active_pairs) {
+		if (E.value.body == p_body) {
+			keys.push_back(E.key);
+		}
+	}
+	for (const OverlapKey &k : keys) {
+		HashMap<OverlapKey, ActivePair, OverlapKeyHasher>::Iterator it = active_pairs.find(k);
+		const int n = it ? it->value.count : 0;
+		for (int i = 0; i < n; i++) {
+			report_body_overlap(p_body, (int)(k.shape_pair >> 16), (int)(k.shape_pair & 0xFFFF), false);
+		}
+	}
+}
+
+void GodotPhysXArea3D::_release_all_pairs() {
+	LocalVector<GodotPhysXBody3D *> bodies;
+	for (const KeyValue<OverlapKey, ActivePair> &E : active_pairs) {
+		if (E.value.body && bodies.find(E.value.body) < 0) {
+			bodies.push_back(E.value.body);
+		}
+	}
+	for (GodotPhysXBody3D *b : bodies) {
+		body_actor_gone(b);
+	}
+}
+
+void GodotPhysXArea3D::shape_changed(GodotPhysXShape3D *p_shape) {
+	for (uint32_t i = 0; i < shapes.size(); i++) {
+		if (shapes[i].shape == p_shape) {
+			if (space) {
+				_build_actor();
+			}
+			return;
+		}
 	}
 }

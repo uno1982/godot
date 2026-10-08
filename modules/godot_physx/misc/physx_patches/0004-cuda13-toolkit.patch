@@ -23,7 +23,7 @@ diff --git a/physx/source/cudamanager/src/CudaKernelWrangler.cpp b/physx/source/
 index 245d1d9..b21d52e 100644
 --- a/physx/source/cudamanager/src/CudaKernelWrangler.cpp
 +++ b/physx/source/cudamanager/src/CudaKernelWrangler.cpp
-@@ -202,6 +202,28 @@ cudaError_t CUDARTAPI cudaLaunchKernel( const void* , dim3 , dim3 , void** , siz
+@@ -202,6 +202,28 @@ cudaError_t CUDARTAPI cudaLaunchKernel(
  	return cudaSuccess;
  }
  

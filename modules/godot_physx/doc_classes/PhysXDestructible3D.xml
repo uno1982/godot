@@ -4,7 +4,7 @@
 		A mesh that fractures into real rigid-body debris at runtime, provided by the PhysX module's NvBlast integration.
 	</brief_description>
 	<description>
-		Author one by selecting a [MeshInstance3D] and using [b]Mesh → Fracture with Blast[/b] (or right-clicking a [Mesh] resource in the FileSystem dock) -- a live in-viewport dialog lets you pick a fracture pattern and Accept replaces the node with a [PhysXDestructible3D] using the result, saved as a [member blast_asset] resource next to the scene.
+		Author one by right-clicking a [MeshInstance3D] in the Scene tree dock (or a [Mesh] resource in the FileSystem dock) and picking [b]Fracture with Blast...[/b] -- a live in-viewport dialog lets you pick a fracture pattern and Accept replaces the node with a [PhysXDestructible3D] using the result, saved as a [member blast_asset] resource next to the scene. Script-side authoring goes through [PhysXBlastAuthoring.fracture_mesh].
 		While intact, it renders and collides as the whole unfractured mesh through one [PhysicsServer3D] body. [method apply_radial_damage] breaks it explicitly -- an explosion, a weapon hit -- and each newly detached piece becomes its own real rigid body with a cooked convex collision hull, kicked outward from the damage origin at [member shatter_speed]. [member dynamic] additionally makes the intact object fall and collide like any other rigid body, and lets a hard enough physical impact fracture it on its own via [member impact_strength] / [member impact_damage_scale] / [member impact_radius], the way stacked destructible props behave in other engines' Blast integrations.
 		[b]How damage, health, and radius actually interact:[/b] every bond holding two pieces of the mesh together starts with [member health] "hit points." A single [method apply_radial_damage] call applies its [code]damage[/code] amount [i]in full[/i] to every bond within [code]min_radius[/code] of the hit, falling off linearly to zero by [code]max_radius[/code] (nothing beyond that radius is touched at all). A bond breaks once the damage it has received -- from one hit or accumulated across several -- reaches its [member health]. So [code]damage &gt;= health[/code] at full strength (inside [code]min_radius[/code]) breaks that bond outright in one hit; a weaker or more distant hit only chips at it, leaving it standing until a harder or closer follow-up (or several weaker ones) finishes the job. A piece only visibly detaches once every bond connecting it to the rest of the structure has broken -- a hit that weakens several bonds without fully breaking any of them can leave the object looking untouched even though it took real damage.
 		[member dynamic]'s auto-fracture path feeds the exact same pipeline: a collision whose impulse clears [member impact_strength] is converted to [code]damage = (impulse - impact_strength) * impact_damage_scale[/code] (floored so it always at least matches [member health] × 1.5, guaranteeing a real break rather than a hit that looked hard but silently did nothing) and applied via [method apply_radial_damage] at the contact point with [code]min_radius = 0[/code] and [code]max_radius = [/code][member impact_radius].
@@ -62,6 +62,9 @@
 		<member name="gi_mode" type="int" setter="set_gi_mode" getter="get_gi_mode" enum="PhysXDestructible3D.GIMode" default="1">
 			Controls VoxelGI baking for every piece's render mesh, the same two settings as [member GeometryInstance3D.gi_mode]. Defaults to [constant GI_MODE_STATIC], matching a plain [MeshInstance3D]'s default. Consider [constant GI_MODE_DYNAMIC] for an object that's expected to move once fractured -- but a single fracture can spawn many pieces at once, and a VoxelGI's dynamic-object tracking cost scales with how many it has to follow every frame, so it isn't the default.
 		</member>
+		<member name="ignore_occlusion_culling" type="bool" setter="set_ignore_occlusion_culling" getter="get_ignore_occlusion_culling" default="false">
+			Turns off occlusion culling for every piece, the same as [member GeometryInstance3D.ignore_occlusion_culling].
+		</member>
 		<member name="health" type="float" setter="set_health" getter="get_health" default="1.0">
 			How much cumulative damage each bond in the fracture structure can absorb before it breaks -- see the class description's "How damage, health, and radius actually interact" section for the full picture. Higher [member health] needs more damage (a harder hit, a closer one, or several weaker ones added together) to break the same bond.
 		</member>
@@ -94,6 +97,9 @@
 		</member>
 		<member name="shatter_speed" type="float" setter="set_shatter_speed" getter="get_shatter_speed" default="8.0">
 			Speed (m/s, before falloff) each newly detached piece is kicked away from the damage origin -- see [method apply_radial_damage]'s own note on the exact direction/falloff shape. Purely a "how violently does debris scatter on break" feel knob, not a physically derived value.
+		</member>
+		<member name="transparency" type="float" setter="set_transparency" getter="get_transparency" default="0.0">
+			Transparency of every piece's render mesh, 0.0 (opaque) to 1.0 (fully invisible) -- the same value [method RenderingServer.instance_geometry_set_transparency] takes. Applies to the intact object and to all current and future pieces (changing it re-pushes to every already-existing piece immediately). Useful for ghost/preview placements of a destructible.
 		</member>
 		<member name="visibility_range_begin" type="float" setter="set_visibility_range_begin" getter="get_visibility_range_begin" default="0.0">
 			Distance from the camera at which every piece starts being visible, the same as [member GeometryInstance3D.visibility_range_begin]. [code]0.0[/code] disables the near limit.

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXBlastAuthoring" inherits="RefCounted" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Script-callable Blast fracture authoring: turns a [Mesh] into a [PhysXBlastAsset] at runtime or in headless tool scripts.
+	</brief_description>
+	<description>
+		Runs the same NVIDIA Blast authoring pipeline as the editor's in-viewport fracture dialog (the one behind right-clicking a [MeshInstance3D] in the Scene tree or a [Mesh] in the FileSystem dock), but callable from any script -- useful for batch asset generation, CI-authored test assets, or in-game procedural destruction authoring. Needs the module built with [code]blast_sdk=[/code].
+		The result carries the cooked NvBlast asset plus the per-chunk render geometry; feed it to a [PhysXDestructible3D] via its [member PhysXDestructible3D.blast_asset] property.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="fracture_mesh">
+			<return type="PhysXBlastAsset" />
+			<param index="0" name="mesh" type="Mesh" />
+			<param index="1" name="site_count" type="int" />
+			<param index="2" name="seed" type="int" />
+			<param index="3" name="pattern" type="int" default="0" />
+			<param index="4" name="cutout_pattern" type="Texture2D" default="null" />
+			<description>
+				Fractures [param mesh] and returns the finished [PhysXBlastAsset], or a null reference on failure (null mesh, a mesh whose triangles don't form a closed watertight surface after the automatic cleanup pass, or [constant PATTERN_CUTOUT] without a usable [param cutout_pattern]).
+				[param site_count] is the cell/slice count: for [constant PATTERN_VORONOI] it is the number of random cells the mesh is split into; for [constant PATTERN_SLICING] it is cut into roughly that many brick-like pieces on the longest axis; it is ignored for [constant PATTERN_CUTOUT] (the pattern texture alone defines the pieces). [param seed] makes [constant PATTERN_VORONOI] reproducible -- the same mesh, count and seed always produce the same asset.
+				Note the mesh is authored as-is: a source [MeshInstance3D]'s node transform (including scale) is not baked in.
+			</description>
+		</method>
+	</methods>
+	<constants>
+		<constant name="PATTERN_VORONOI" value="0" enum="FracturePattern">
+			Random Voronoi cells -- organic, rock-like chunks. The default.
+		</constant>
+		<constant name="PATTERN_SLICING" value="1" enum="FracturePattern">
+			Evenly spaced cutting planes per axis -- regular, brick-like pieces. Good for crates and walls.
+		</constant>
+		<constant name="PATTERN_CUTOUT" value="2" enum="FracturePattern">
+			Extrudes a caller-supplied grayscale [param cutout_pattern] texture through the mesh -- glass/tile-style breaks. The cracks must reach the texture's edge (like a real broken pane) or the fracture is rejected.
+		</constant>
+	</constants>
+</class>

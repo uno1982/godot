@@ -497,11 +497,12 @@ so chunks never linger forever.
 ## Destruction — `PhysXDestructible3D`
 
 Real runtime mesh fracture via NVIDIA's [NvBlast](https://github.com/NVIDIA-Omniverse/PhysX/tree/main/blast)
-(needs the separate `blast_sdk=` build — see Building above). Select a
-`MeshInstance3D` and use **Mesh → Fracture with Blast** (or right-click a
-`Mesh` resource in the FileSystem dock) to open a live in-viewport authoring
-dialog: pick a fracture pattern, tune it, and Accept replaces the node with a
-`PhysXDestructible3D` using the result.
+(needs the separate `blast_sdk=` build — see Building above). Right-click a
+`MeshInstance3D` in the Scene tree dock, or a `Mesh` resource in the
+FileSystem dock, and pick **Fracture with Blast...** to open a live
+in-viewport authoring dialog: pick a fracture pattern, tune it, and Accept
+replaces the node with a `PhysXDestructible3D` using the result. (The same
+pipeline is script-callable headless as `PhysXBlastAuthoring.fracture_mesh()`.)
 
 Three fracture patterns: **Voronoi** (random cells, the default), **Slicing**
 (brick-like, evenly spaced planes per axis), and **Cutout** (a caller-supplied

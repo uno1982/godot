@@ -37,14 +37,18 @@ def configure(env):
 def get_doc_classes():
     return [
         "PhysXParticleFluid3D",
+        "PhysXGranular3D",
         "PhysXCloth3D",
         "PhysXSkinnedCloth3D",
         "PhysXChunkEmitter3D",
         "PhysXDestructible3D",
         "PhysXBlastAsset",
+        "PhysXBlastAuthoring",
         "PhysXFlow3D",
         "PhysXFlowEmitter3D",
         "PhysXFlowRenderEffect",
+        "PhysXGas3D",
+        "PhysXGasEmitter3D",
         "PhysXVehicle3D",
         "PhysXVehicleWheel3D",
         "PhysXMotorcycle3D",

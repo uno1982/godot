@@ -19,7 +19,7 @@
 			Grid cell size in meters. Also reconfigures the grid when changed.
 		</member>
 		<member name="emitters" type="NodePath[]" setter="set_emitters" getter="get_emitters" default="[]">
-			Up to 4 [Node3D] paths, each an injection point. A [PhysXGasEmitter3D] gives its own independent shape (sphere or axis-aligned box), size, velocity and density; any other [Node3D] falls back to a sphere using [member emitter_radius]/[member emitter_velocity]/[member emitter_density] at that node's global position -- same fallback pattern [member colliders] uses for [member collider_radius]. An empty array means nothing is emitted.
+			Up to 8 [Node3D] paths, each an injection point. A [PhysXGasEmitter3D] gives its own independent shape (sphere or axis-aligned box), size, velocity and density; any other [Node3D] falls back to a sphere using [member emitter_radius]/[member emitter_velocity]/[member emitter_density] at that node's global position -- same fallback pattern [member colliders] uses for [member collider_radius]. An empty array means nothing is emitted.
 		</member>
 		<member name="emitter_radius" type="float" setter="set_emitter_radius" getter="get_emitter_radius" default="0.22">
 			Fallback sphere radius (meters) for entries in [member emitters] that are not a [PhysXGasEmitter3D].

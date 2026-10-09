@@ -292,6 +292,17 @@ public:
 	// re-spawn already-live chunks as second overlapping bodies).
 	int get_piece_count() const { return (int)pieces.size(); }
 
+	// Read-only inspection of one live piece (regression tests, debug
+	// overlays). Indexes follow the internal piece array: 0 is the intact
+	// placeholder until it is retired; after fracture each entry is one
+	// leaf chunk's live body. The transform comes from the physics server,
+	// so it is the body's real simulated pose -- not the node's frozen
+	// post-fracture transform. Returns identity for an out-of-range index
+	// or a dead body (call get_piece_count() first); get_piece_chunk()
+	// returns UINT32_MAX there.
+	Transform3D get_piece_transform(int p_index) const;
+	uint32_t get_piece_chunk(int p_index) const;
+
 	PackedStringArray get_configuration_warnings() const override;
 
 	// Always chunk 0's (the whole intact mesh's) local-space bounds,
@@ -372,14 +383,19 @@ private:
 
 	struct ChunkVisual {
 		RID body;
-		RID shape;
+		// One shape per chunk the piece covers (chunk_index.size() of them,
+		// added to the body in the same order); empty for a render-only
+		// editor piece.
+		LocalVector<RID> shapes;
 		RID mesh;
 		RID instance;
-		// Which asset chunk this piece renders/collides: 0 only while intact
-		// (the placeholder), a real leaf chunk once fractured. _spawn_piece()
-		// uses it to free a chunk's superseded piece before spawning a new
+		// Which asset chunks this piece renders/collides, aligned with
+		// `shapes`. One entry while intact (chunk 0, the placeholder) and
+		// for a single-chunk (leaf) split product; an island split product
+		// carries every visible chunk of its actor. _spawn_piece() uses
+		// these to free a chunk's superseded piece before spawning a new
 		// one, keeping the one-live-piece-per-chunk invariant below.
-		uint32_t chunk_index = 0;
+		LocalVector<uint32_t> chunk_indices;
 	};
 	LocalVector<ChunkVisual> pieces;
 
@@ -407,19 +423,29 @@ private:
 	// total_leaf_volume (floored so a sliver never gets a near-zero mass),
 	// except chunk 0 (the whole intact mesh), which just gets `mass` itself.
 	float _chunk_mass(uint32_t p_chunk_index) const;
-	// Tears down any existing family/pieces and, if already inside the world,
-	// immediately re-loads and re-spawns from whatever asset_path/chunks_path/
+	// Tears down any existing family/pieces and, if already inside the world,	// immediately re-loads and re-spawns from whatever asset_path/chunks_path/
 	// blast_asset now point at -- called from those setters so assigning a
 	// new asset (or dragging one onto an empty node already in the tree)
 	// shows up right away instead of only on the next time the node enters
 	// the tree (e.g. reopening the scene).
 	void _reload();
 	void _spawn_intact();
+	// Spawns ONE piece for ONE new (island) actor from a split -- see the
+	// definition for why the old one-body-per-chunk spawning had to go.
+	// Returns 1 if a piece was spawned, 0 otherwise.
+	int _spawn_island_piece(NvBlastActor *p_actor, PhysicsServer3D *p_ps, const Transform3D &p_base_transform, const Vector3 &p_base_linear, const Vector3 &p_base_angular, const Vector3 &p_damage_world_origin, real_t p_max_radius, PhysicsServer3D::BodyMode p_body_mode);
 	// p_physics: create a PhysicsServer3D body+shape for this piece too, not
 	// just its RenderingServer mesh instance. False in the editor (no physics
 	// simulation runs there anyway) so the node still shows *something* in
-	// the viewport -- ChunkVisual::body/shape stay RID() in that case.
-	void _spawn_piece(uint32_t p_chunk_index, const Transform3D &p_transform, const Vector3 &p_linear_velocity, bool p_physics = true);
+	// the viewport -- ChunkVisual::body/shapes stay RID() in that case.
+	// p_body_mode: RIGID for a free-flying piece, STATIC for a piece of an
+	// anchored (static) destructible -- the caller passes its predecessor's
+	// mode down so chipping a static wall never wakes the remainder island
+	// as one dynamic body.
+	// Returns the pushed piece's index into `pieces` (the U24 dedup inside
+	// may have swapped entries around, so callers can't assume a fixed
+	// position), or -1 if the chunk was rejected.
+	int _spawn_piece(const LocalVector<uint32_t> &p_chunk_indices, const Transform3D &p_transform, const Vector3 &p_linear_velocity, bool p_physics = true, PhysicsServer3D::BodyMode p_body_mode = PhysicsServer3D::BODY_MODE_RIGID);
 	// See set_gi_mode()'s own note on why this is needed at all.
 	void _apply_gi_mode(RenderingServer *p_rs, RID p_instance) const;
 	// Same idea as _apply_gi_mode(), covering the rest of the

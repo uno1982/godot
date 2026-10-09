@@ -11,6 +11,15 @@ hardware, and the room that a built-in backend leaves for GPU particle,
 destruction and fluid effects that have no representation in the stock physics
 interface. On the CPU alone, Jolt is the better choice.
 
+## Example project and tests
+
+Scenes and a regression-test suite for the module live in a separate Godot
+project: [godot-physx-example](https://github.com/uno1982/godot-physx-example).
+`demo/...` paths referenced in this document (such as the demo boat,
+`demo/common/boat/boat.tscn`) are relative to that repository. Its `test/`
+directory holds per-feature tests that run headless against a custom build;
+see the project's README for the run instructions.
+
 ## Building
 
 The PhysX 5 SDK is **not vendored** — it is built out of tree and linked in. The

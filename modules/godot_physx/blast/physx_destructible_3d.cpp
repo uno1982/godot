@@ -129,6 +129,7 @@ void PhysXDestructible3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_kill_y", "y"), &PhysXDestructible3D::set_kill_y);
 	ClassDB::bind_method(D_METHOD("get_kill_y"), &PhysXDestructible3D::get_kill_y);
 	ClassDB::bind_method(D_METHOD("apply_radial_damage", "world_position", "damage", "min_radius", "max_radius"), &PhysXDestructible3D::apply_radial_damage);
+	ClassDB::bind_method(D_METHOD("get_piece_count"), &PhysXDestructible3D::get_piece_count);
 
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "asset_path", PROPERTY_HINT_FILE, "*.asset"), "set_asset_path", "get_asset_path");
 	ADD_PROPERTY(PropertyInfo(Variant::STRING, "chunks_path", PROPERTY_HINT_FILE, "*.chunks"), "set_chunks_path", "get_chunks_path");
@@ -736,8 +737,8 @@ void PhysXDestructible3D::_spawn_piece(uint32_t p_chunk_index, const Transform3D
 
 	RID shape;
 	RID body;
+	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
 	if (p_physics) {
-		PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
 		shape = ps->convex_polygon_shape_create();
 		ps->shape_set_data(shape, points);
 
@@ -800,11 +801,34 @@ void PhysXDestructible3D::_spawn_piece(uint32_t p_chunk_index, const Transform3D
 	_apply_gi_mode(rs, instance);
 	_apply_extra_render_settings(rs, instance);
 
+	// U24: an island actor's later split re-emits chunks that were already
+	// spawned live when the island itself first formed. Freeing the
+	// superseded piece here -- instead of at each caller -- structurally
+	// enforces one live piece per chunk for every spawn path; without it a
+	// re-emitted chunk gets a second overlapping body on top of the first.
+	// Linear scan over live pieces only, and only on this split path.
+	for (uint32_t i = 0; i < pieces.size(); i++) {
+		if (pieces[i].chunk_index != p_chunk_index) {
+			continue;
+		}
+		if (pieces[i].body.is_valid()) {
+			ps->free_rid(pieces[i].body);
+		}
+		if (pieces[i].shape.is_valid()) {
+			ps->free_rid(pieces[i].shape);
+		}
+		rs->free_rid(pieces[i].instance);
+		rs->free_rid(pieces[i].mesh);
+		pieces.remove_at_unordered(i);
+		break;
+	}
+
 	ChunkVisual piece;
 	piece.body = body;
 	piece.shape = shape;
 	piece.mesh = mesh;
 	piece.instance = instance;
+	piece.chunk_index = p_chunk_index;
 	pieces.push_back(piece);
 }
 

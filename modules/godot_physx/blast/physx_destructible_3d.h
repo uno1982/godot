@@ -283,6 +283,15 @@ public:
 	// demo-script concern layered on top.
 	int apply_radial_damage(const Vector3 &p_world_position, float p_damage, float p_min_radius, float p_max_radius);
 
+	// Live piece count right now: 1 while intact (the chunk-0 placeholder),
+	// then one per still-simulating piece, dropping as debris passes kill_y.
+	// Because _spawn_piece() frees a chunk's previous piece before spawning
+	// its replacement, this can never exceed the asset's visible (leaf)
+	// chunk count no matter how many times actors split -- the observable
+	// form of the one-body-per-chunk invariant (U24: island actors used to
+	// re-spawn already-live chunks as second overlapping bodies).
+	int get_piece_count() const { return (int)pieces.size(); }
+
 	PackedStringArray get_configuration_warnings() const override;
 
 	// Always chunk 0's (the whole intact mesh's) local-space bounds,
@@ -366,6 +375,11 @@ private:
 		RID shape;
 		RID mesh;
 		RID instance;
+		// Which asset chunk this piece renders/collides: 0 only while intact
+		// (the placeholder), a real leaf chunk once fractured. _spawn_piece()
+		// uses it to free a chunk's superseded piece before spawning a new
+		// one, keeping the one-live-piece-per-chunk invariant below.
+		uint32_t chunk_index = 0;
 	};
 	LocalVector<ChunkVisual> pieces;
 

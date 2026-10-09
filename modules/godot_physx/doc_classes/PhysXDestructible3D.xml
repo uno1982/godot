@@ -24,6 +24,12 @@
 				Each newly detached piece gets a real outward velocity -- radial direction from [param world_position] to that piece's own centroid, scaled by [member shatter_speed] and the same distance falloff the damage itself used, plus a slight upward bias.
 			</description>
 		</method>
+		<method name="get_piece_count">
+			<return type="int" />
+			<description>
+				Returns how many pieces are live right now: [code]1[/code] while intact (the chunk-0 placeholder), then one per still-simulating piece, dropping as debris passes [member kill_y]. A chunk's piece is always freed before that chunk can be spawned again (e.g. when a still-bonded group's later split re-emits chunks that were already live), so this never exceeds the asset's visible chunk count no matter how many times it fractures.
+			</description>
+		</method>
 	</methods>
 	<members>
 		<member name="asset_path" type="String" setter="set_asset_path" getter="get_asset_path" default="&quot;&quot;">

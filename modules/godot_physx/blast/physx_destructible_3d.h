@@ -396,8 +396,17 @@ private:
 		// these to free a chunk's superseded piece before spawning a new
 		// one, keeping the one-live-piece-per-chunk invariant below.
 		LocalVector<uint32_t> chunk_indices;
+		// The Blast actor this piece is the body of (one piece per actor). A
+		// piece leaving (kill_y) retires its actor too, and an actor with no
+		// piece after the first break is dead -- without this a later hit could
+		// split an actor whose debris was long gone and re-spawn its chunks.
+		NvBlastActor *actor = nullptr;
 	};
 	LocalVector<ChunkVisual> pieces;
+	// The index in `pieces` of p_actor's piece, or -1.
+	int _piece_of_actor(const NvBlastActor *p_actor) const;
+	// Frees piece p_index (body, shapes, mesh, instance) and removes it (unordered).
+	void _free_piece(uint32_t p_index);
 
 	bool loaded = false;
 	bool fractured = false;
@@ -445,7 +454,7 @@ private:
 	// Returns the pushed piece's index into `pieces` (the U24 dedup inside
 	// may have swapped entries around, so callers can't assume a fixed
 	// position), or -1 if the chunk was rejected.
-	int _spawn_piece(const LocalVector<uint32_t> &p_chunk_indices, const Transform3D &p_transform, const Vector3 &p_linear_velocity, bool p_physics = true, PhysicsServer3D::BodyMode p_body_mode = PhysicsServer3D::BODY_MODE_RIGID);
+	int _spawn_piece(const LocalVector<uint32_t> &p_chunk_indices, const Transform3D &p_transform, const Vector3 &p_linear_velocity, bool p_physics = true, PhysicsServer3D::BodyMode p_body_mode = PhysicsServer3D::BODY_MODE_RIGID, NvBlastActor *p_actor = nullptr);
 	// See set_gi_mode()'s own note on why this is needed at all.
 	void _apply_gi_mode(RenderingServer *p_rs, RID p_instance) const;
 	// Same idea as _apply_gi_mode(), covering the rest of the

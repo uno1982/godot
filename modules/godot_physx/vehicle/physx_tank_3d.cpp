@@ -134,8 +134,9 @@ bool PhysXTank3D::_build() {
 	for (uint32_t i = 0; i < wheels.size(); i++) {
 		PhysXVehicleWheel3D *w = wheels[i];
 		VehicleTrackWheelConfig &wc = cfg.wheels[i];
-		wc.position = w->get_position();
-		wc.basis = w->get_transform().basis;
+		// The rest pose, not the node's current (simulated) one -- see get_rest_transform().
+		wc.position = w->get_rest_transform().origin;
+		wc.basis = w->get_rest_transform().basis;
 		wc.radius = w->get_radius();
 		wc.half_width = w->get_half_width();
 		wc.wheel_mass = w->get_wheel_mass();
@@ -229,7 +230,7 @@ void PhysXTank3D::_notification(int p_what) {
 			set_global_transform(to_godot(v.physxActor.rigidBody->getGlobalPose()));
 			const PxTransform cmass_local_pose = v.physxActor.rigidBody->getCMassLocalPose();
 			for (uint32_t i = 0; i < wheels.size(); i++) {
-				wheels[i]->set_transform(to_godot(cmass_local_pose * v.wheelLocalPoses[i].localPose));
+				wheels[i]->_set_simulated_transform(to_godot(cmass_local_pose * v.wheelLocalPoses[i].localPose));
 			}
 		} break;
 	}
@@ -324,7 +325,7 @@ PackedStringArray PhysXTank3D::get_configuration_warnings() const {
 	} else {
 		int nb_left = 0, nb_right = 0, nb_centerline = 0;
 		for (uint32_t i = 0; i < wheels.size(); i++) {
-			real_t x = wheels[i]->get_position().x;
+			real_t x = wheels[i]->get_rest_transform().origin.x;
 			if (Math::is_zero_approx(x)) {
 				nb_centerline++;
 			} else if (x > 0.0) { // the driver's left is +X

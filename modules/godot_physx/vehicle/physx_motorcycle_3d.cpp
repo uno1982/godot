@@ -156,8 +156,9 @@ bool PhysXMotorcycle3D::_build() {
 	for (int i = 0; i < 2; i++) {
 		Vehicle2WWheelConfig &wc = *wheel_cfgs[i];
 		PhysXVehicleWheel3D *w = wheel_nodes[i];
-		wc.position = w->get_position();
-		wc.basis = w->get_transform().basis;
+		// The rest pose, not the node's current (simulated) one -- see get_rest_transform().
+		wc.position = w->get_rest_transform().origin;
+		wc.basis = w->get_rest_transform().basis;
 		wc.radius = w->get_radius();
 		wc.half_width = w->get_half_width();
 		wc.wheel_mass = w->get_wheel_mass();
@@ -239,7 +240,7 @@ void PhysXMotorcycle3D::_notification(int p_what) {
 			set_global_transform(to_godot(v.physxActor.rigidBody->getGlobalPose()));
 			const PxTransform cmass_local_pose = v.physxActor.rigidBody->getCMassLocalPose();
 			for (uint32_t i = 0; i < 2; i++) {
-				wheels[impl->wheel_order[i]]->set_transform(to_godot(cmass_local_pose * v.wheelLocalPoses[i].localPose));
+				wheels[impl->wheel_order[i]]->_set_simulated_transform(to_godot(cmass_local_pose * v.wheelLocalPoses[i].localPose));
 			}
 		} break;
 	}

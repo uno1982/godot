@@ -36,8 +36,25 @@
 
 #include "core/object/class_db.h"
 
+PhysXVehicleWheel3D::PhysXVehicleWheel3D() {
+	// Every local transform change outside _set_simulated_transform() is an
+	// authored one (also before entering the tree: a scene load sets position first).
+	set_notify_local_transform(true);
+}
+
+void PhysXVehicleWheel3D::_set_simulated_transform(const Transform3D &p_transform) {
+	writing_simulated_pose = true;
+	set_transform(p_transform);
+	writing_simulated_pose = false;
+}
+
 void PhysXVehicleWheel3D::_notification(int p_what) {
 	switch (p_what) {
+		case NOTIFICATION_LOCAL_TRANSFORM_CHANGED: {
+			if (!writing_simulated_pose) {
+				rest_transform = get_transform();
+			}
+		} break;
 		case NOTIFICATION_ENTER_TREE: {
 			if (PhysXVehicle3D *v = Object::cast_to<PhysXVehicle3D>(get_parent())) {
 				vehicle = v;

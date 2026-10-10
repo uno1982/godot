@@ -101,7 +101,21 @@ public:
 
 	PackedStringArray get_configuration_warnings() const override;
 
+	// The wheel's rest pose: its local transform as authored (inspector, scene,
+	// or a script setting it). The parent vehicle writes the simulated pose
+	// (suspension, steer, spin) onto the node every tick; building -- including
+	// a rebuild from a property set on a live vehicle -- reads this instead, or
+	// the vehicle would be rebuilt around wherever the wheels happened to be.
+	Transform3D get_rest_transform() const { return rest_transform; }
+
+	PhysXVehicleWheel3D();
+
 private:
+	Transform3D rest_transform;
+	bool writing_simulated_pose = false;
+	// The parent vehicle's per-tick write: moves the node without moving the rest pose.
+	void _set_simulated_transform(const Transform3D &p_transform);
+
 	real_t radius = 0.35f;
 	real_t half_width = 0.15f;
 	real_t wheel_mass = 20.0f;

@@ -203,6 +203,7 @@ Under `physics/physx_3d/simulation/`:
 | `enhanced_determinism` | `false` | Makes the CPU simulation reproducible across runs on the same binary and platform, independent of worker-thread count and API call order. It is **not** cross-platform deterministic and has a performance cost. Enabling it forces the CPU solver even when a CUDA device is present, because the GPU solver is never deterministic. |
 | `allow_sleep` | `true` | When off, no rigid body ever sleeps — the same as turning `RigidBody3D.can_sleep` off on every body. Useful for debugging or setups that need every body integrated every step. |
 | `stabilization` | `true` | `PxSceneFlag::eENABLE_STABILIZATION` — damps low-mass stacked bodies toward rest so piles settle and sleep instead of jittering. Turn it off if it causes visible drift on very light bodies. |
+| `max_depenetration_velocity` | `4.0` | The fastest (m/s) overlapping rigid bodies are pushed apart — bodies that start inside each other (spawns, piles, a growing shape) ease apart instead of popping. `0` = unlimited, PhysX's own default. Applies to `RigidBody3D`-style bodies, not to vehicles, cloth or fluids. |
 | `cpu_worker_threads` | `0` (auto) | Size of the PhysX CPU task pool. `0` picks a value based on the active path: a small pool (2–4) when GPU dynamics is running, since the CPU mostly waits on the GPU each step; most of the machine otherwise. A fixed value overrides this in both cases — setting it high while on the GPU path will usually cost performance, not gain it. |
 
 And `physics/physx_3d/soft_body/mode` — `Auto` / `CPU` / `GPU` for the stock
@@ -512,15 +513,25 @@ the fracture is rejected before ever touching the native SDK).
 
 While intact, a `PhysXDestructible3D` renders and collides as the whole
 unfractured mesh. `apply_radial_damage(world_position, damage, min_radius,
-max_radius)` breaks it explicitly (an explosion, a weapon hit) — each newly
-detached chunk becomes its own rigid body with a cooked convex hull and a
-`shatter_speed`-scaled outward kick from the damage origin. `dynamic = true`
+max_radius)` breaks it explicitly (an explosion, a weapon hit). A break splits
+it into connected pieces: whatever is still held together moves as one body
+(one convex hull per chunk), so a small hit chips a few chunks off and the rest
+stands; a single loose chunk becomes debris with a `shatter_speed`-scaled
+outward kick from the damage origin. `dynamic = true`
 additionally makes the intact object fall/collide like any other rigid body
 and auto-fractures it from a hard enough physical impact
 (`impact_strength`/`impact_damage_scale`), the way stacked destructible props
 behave in Unreal's own Blast integration; `dynamic = false` (the default)
 keeps it a fixed prop that only ever breaks from an explicit
-`apply_radial_damage()` call. `mass` auto-computes from the mesh's volume
+`apply_radial_damage()` call. For a fixed prop, `anchor` decides which pieces
+stay put once it breaks (debris always falls): **Framed** (the default) keeps
+any piece still touching the bottom, top, left or right edge of the intact
+mesh — a wall in a building, a door, a window: the part above a cut hangs from
+the frame, a chunk punched out of the middle drops; **Grounded** keeps only
+pieces touching the bottom — a freestanding wall or pillar: cut through, the
+top is let go; **None** lets everything go at the first break. Edges are the
+mesh's local X (left/right) and Y (bottom/top). Debris that falls below
+`kill_y` is removed for good. `mass` auto-computes from the mesh's volume
 (uncheck `auto_mass` for a true override) and is distributed across split
 pieces proportional to each one's own volume. `gi_mode` controls VoxelGI
 static/dynamic baking per piece (defaults to Static, matching a plain
@@ -557,7 +568,12 @@ sits at the right height in the editor. Wheels carry the suspension
   place without a gear change.
 
 All three sleep when parked (`can_sleep`) and only simulate in a running game,
-never in the editor.
+never in the editor. `collision_mask` applies to the chassis and to the wheels:
+like a `RayCast3D`, a wheel only rests on shapes whose layer is in the mask, and
+never on an `Area3D`. `physics_material_override` sets the chassis box's contact
+material — how it grips or slides when the body itself touches something, on
+its roof after a flip or along a wall (default friction 0.5); tire grip is the
+wheels' own.
 
 ## Water — `PhysXWaterSurface3D`
 

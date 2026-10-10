@@ -524,6 +524,7 @@ void PhysXDestructible3D::_notification(int p_what) {
 						set_global_transform(t);
 						RenderingServer::get_singleton()->instance_set_transform(pieces[0].instance, t);
 						_check_impact_fracture();
+						_record_piece_velocities();
 					}
 				}
 			}
@@ -1030,6 +1031,7 @@ int PhysXDestructible3D::_spawn_piece(const LocalVector<uint32_t> &p_chunk_indic
 	piece.instance = instance;
 	piece.chunk_indices = chunk_indices_storage;
 	piece.actor = p_actor;
+	piece.last_linear_velocity = p_linear_velocity;
 	pieces.push_back(piece);
 	return (int)pieces.size() - 1;
 }
@@ -1129,6 +1131,21 @@ void PhysXDestructible3D::_sync_transforms() {
 	// (the "that segment got a lot stronger" report); consult every live
 	// piece's contacts here instead, every tick, same as before the break.
 	_check_impact_fracture();
+	_record_piece_velocities();
+}
+
+void PhysXDestructible3D::_record_piece_velocities() {
+	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
+	for (ChunkVisual &piece : pieces) {
+		if (!piece.body.is_valid()) {
+			continue;
+		}
+		PhysicsDirectBodyState3D *state = ps->body_get_direct_state(piece.body);
+		if (state) {
+			piece.last_linear_velocity = state->get_linear_velocity();
+			piece.last_angular_velocity = state->get_angular_velocity();
+		}
+	}
 }
 
 void PhysXDestructible3D::_check_impact_fracture() {
@@ -1254,6 +1271,7 @@ int PhysXDestructible3D::_spawn_island_piece(NvBlastActor *p_actor, PhysicsServe
 	}
 	if (pieces[piece_idx].body.is_valid()) {
 		p_ps->body_set_state(pieces[piece_idx].body, PhysicsServer3D::BODY_STATE_ANGULAR_VELOCITY, piece_angular);
+		pieces[piece_idx].last_angular_velocity = piece_angular;
 	}
 	return 1;
 }
@@ -1306,8 +1324,8 @@ int PhysXDestructible3D::apply_radial_damage(const Vector3 &p_world_position, fl
 		const Transform3D t = ps->body_get_state(pieces[0].body, PhysicsServer3D::BODY_STATE_TRANSFORM);
 		if (t != Transform3D()) {
 			base_transform = t;
-			base_linear = ps->body_get_state(pieces[0].body, PhysicsServer3D::BODY_STATE_LINEAR_VELOCITY);
-			base_angular = ps->body_get_state(pieces[0].body, PhysicsServer3D::BODY_STATE_ANGULAR_VELOCITY);
+			base_linear = pieces[0].last_linear_velocity; // pre-impact, see ChunkVisual
+			base_angular = pieces[0].last_angular_velocity;
 		}
 	}
 	LocalVector<NvBlastActor *> actors_to_process(live_actors);
@@ -1392,8 +1410,11 @@ int PhysXDestructible3D::apply_radial_damage(const Vector3 &p_world_position, fl
 			const Transform3D t = ps->body_get_state(body, PhysicsServer3D::BODY_STATE_TRANSFORM);
 			if (t != Transform3D()) {
 				pred_transform = t;
-				pred_linear = ps->body_get_state(body, PhysicsServer3D::BODY_STATE_LINEAR_VELOCITY);
-				pred_angular = ps->body_get_state(body, PhysicsServer3D::BODY_STATE_ANGULAR_VELOCITY);
+				// The velocity from before this tick's contacts (see ChunkVisual):
+				// an impact's push stays with the chunks near it (their shatter
+				// kick), not with the whole predecessor.
+				pred_linear = pieces[actor_piece].last_linear_velocity;
+				pred_angular = pieces[actor_piece].last_angular_velocity;
 				pred_mode = ps->body_get_mode(body);
 			}
 		}

@@ -440,10 +440,19 @@ private:
 		// piece after the first break is dead -- without this a later hit could
 		// split an actor whose debris was long gone and re-spawn its chunks.
 		NvBlastActor *actor = nullptr;
+		// The body's velocity as of the end of the previous physics tick --
+		// i.e. BEFORE the step whose contacts trigger an impact fracture. A
+		// split hands these to its children: the live velocity already holds
+		// that impact's push, which on a rigid intact body reaches every
+		// chunk, so a car ramming a wall sent its far edges flying with it.
+		Vector3 last_linear_velocity;
+		Vector3 last_angular_velocity;
 	};
 	LocalVector<ChunkVisual> pieces;
 	// The index in `pieces` of p_actor's piece, or -1.
 	int _piece_of_actor(const NvBlastActor *p_actor) const;
+	// Store each piece's live velocity as its last_* (end of a physics tick).
+	void _record_piece_velocities();
 	// Frees piece p_index (body, shapes, mesh, instance) and removes it (unordered).
 	void _free_piece(uint32_t p_index);
 

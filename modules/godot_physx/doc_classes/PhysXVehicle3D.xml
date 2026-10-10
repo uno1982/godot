@@ -18,6 +18,12 @@
 				The real PhysX actor's own world-space origin -- for comparing against this node's own [member Node3D.global_position] (which tracks the same point) when diagnosing a suspension/placement issue.
 			</description>
 		</method>
+		<method name="get_forward" qualifiers="const">
+			<return type="Vector3" />
+			<description>
+				Current world-space forward direction of the chassis: its local +Z axis, the same forward as [VehicleBody3D] ([constant Vector3.MODEL_FRONT]).
+			</description>
+		</method>
 		<method name="get_forward_speed" qualifiers="const">
 			<return type="float" />
 			<description>

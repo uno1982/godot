@@ -286,6 +286,14 @@ Vector3 PhysXVehicle3D::get_linear_velocity() const {
 	return to_godot(impl->vehicle.rigidBodyState.linearVelocity);
 }
 
+Vector3 PhysXVehicle3D::get_forward() const {
+	if (!impl->built) {
+		return get_global_transform().basis.get_column(2).normalized();
+	}
+	const PxTransform actor_pose = impl->vehicle.physxActor.rigidBody->getGlobalPose();
+	return to_godot(actor_pose.q.getBasisVector2());
+}
+
 real_t PhysXVehicle3D::get_forward_speed() const {
 	if (!impl->built) {
 		return 0.0;
@@ -548,6 +556,7 @@ void PhysXVehicle3D::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("get_linear_velocity"), &PhysXVehicle3D::get_linear_velocity);
 	ClassDB::bind_method(D_METHOD("get_forward_speed"), &PhysXVehicle3D::get_forward_speed);
+	ClassDB::bind_method(D_METHOD("get_forward"), &PhysXVehicle3D::get_forward);
 	ClassDB::bind_method(D_METHOD("get_wheel_jounce", "wheel"), &PhysXVehicle3D::get_wheel_jounce);
 	ClassDB::bind_method(D_METHOD("get_wheel_separation", "wheel"), &PhysXVehicle3D::get_wheel_separation);
 	ClassDB::bind_method(D_METHOD("get_actor_position"), &PhysXVehicle3D::get_actor_position);

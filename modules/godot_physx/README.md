@@ -548,7 +548,10 @@ offer: an engine torque response, Ackermann steering, a slip-based tire friction
 curve (grip peaks at small slip and falls off when sliding), and per-wheel drive.
 
 The node layout mirrors `VehicleBody3D`: a `CollisionShape3D` child with a
-`BoxShape3D` for the chassis, plus `PhysXVehicleWheel3D` children. A wheel's own
+`BoxShape3D` for the chassis, plus `PhysXVehicleWheel3D` children. Like
+`VehicleBody3D`, a vehicle faces its local **+Z** (`Vector3.MODEL_FRONT`, the
+front of an imported model), with +X on its left; `get_forward()` returns that
+axis and `get_forward_speed()` is positive driving forward. A wheel's own
 `position` is where it rests under static load, so a mesh parented under it
 follows the live suspension, steering and roll with no syncing code, and already
 sits at the right height in the editor. Wheels carry the suspension
@@ -563,7 +566,7 @@ sits at the right height in the editor. Wheels carry the suspension
   `get_roll_angle()` / `get_angular_velocity()` each tick and correct with
   `apply_torque_impulse()`, like a rider would.
 - **`PhysXTank3D`** — 2–16 wheels, skid-steer. Each wheel is assigned to the left
-  or right track from the sign of its local X. Drive with signed `left_ratio` /
+  or right track from the sign of its local X (+X is the left side). Drive with signed `left_ratio` /
   `right_ratio` (−1..1): the sign is the direction, so opposite signs pivot in
   place without a gear change.
 

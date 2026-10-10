@@ -5,7 +5,7 @@
 	</brief_description>
 	<description>
 		PxVehicle2 has no track/tank primitive of its own. Every wheel is driven and none steer; instead, each wheel's own throttle response is set independently every tick from [member left_ratio]/[member right_ratio], so the two sides of the vehicle can spin in genuinely opposite directions at once for a real pivot turn.
-		Node structure mirrors [PhysXVehicle3D]/[PhysXMotorcycle3D]: add a [CollisionShape3D] child with a [BoxShape3D] for the hull, and 2 to 16 [PhysXVehicleWheel3D] children. Which track a wheel belongs to is inferred automatically from its own local X position sign (negative = left, positive = right) -- there is no explicit per-wheel track-side property, and [member PhysXVehicleWheel3D.use_as_steering]/[member PhysXVehicleWheel3D.use_as_traction] are unused on a tank's wheels. Each wheel's own [member Node3D.position] is where it rests under static load, same convention [PhysXVehicle3D]'s wheels use.
+		Node structure mirrors [PhysXVehicle3D]/[PhysXMotorcycle3D]: add a [CollisionShape3D] child with a [BoxShape3D] for the hull, and 2 to 16 [PhysXVehicleWheel3D] children. Which track a wheel belongs to is inferred automatically from its own local X position sign (positive = left, negative = right: the hull faces local +Z, the same forward as [VehicleBody3D]) -- there is no explicit per-wheel track-side property, and [member PhysXVehicleWheel3D.use_as_steering]/[member PhysXVehicleWheel3D.use_as_traction] are unused on a tank's wheels. Each wheel's own [member Node3D.position] is where it rests under static load, same convention [PhysXVehicle3D]'s wheels use.
 		Drive it every physics tick by setting [member left_ratio], [member right_ratio], and [member brake]. Unlike [member PhysXVehicle3D.throttle]/[member PhysXMotorcycle3D.throttle] ([code]0[/code] to [code]1[/code], direction chosen by a separate reverse gear), [member left_ratio]/[member right_ratio] are signed ([code]-1[/code] to [code]1[/code]): the sign is the direction, so a track can drive forward, reverse, or (with the two tracks at opposite signs) pivot in place, all without a gear change.
 		Only runs in an actual running game, never in the editor -- placing or moving the node in the Inspector does not simulate or fall under gravity.
 	</description>
@@ -27,7 +27,7 @@
 		<method name="get_forward" qualifiers="const">
 			<return type="Vector3" />
 			<description>
-				Current world-space forward direction of the hull.
+				Current world-space forward direction of the hull: its local +Z axis, the same forward as [VehicleBody3D] ([constant Vector3.MODEL_FRONT]).
 			</description>
 		</method>
 		<method name="get_forward_speed" qualifiers="const">

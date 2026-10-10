@@ -145,11 +145,10 @@ Vector3 GodotPhysXMotorcycleProbe::get_up() const {
 }
 
 Vector3 GodotPhysXMotorcycleProbe::get_forward() const {
-	ERR_FAIL_COND_V(!impl->initialized, Vector3(0, 0, -1));
+	ERR_FAIL_COND_V(!impl->initialized, Vector3(0, 0, 1));
 	const PxTransform actor_pose = impl->vehicle.physxActor.rigidBody->getGlobalPose();
-	// Godot forward is -Z, PxVehicleFrame::eNegZ (see configure_vehicle2w()) --
-	// basis vector 2 is the local Z axis, negate it.
-	return -to_godot(actor_pose.q.getBasisVector2());
+	// Forward is the local +Z axis (see configure_vehicle2w()): basis vector 2.
+	return to_godot(actor_pose.q.getBasisVector2());
 }
 
 Vector3 GodotPhysXMotorcycleProbe::get_angular_velocity() const {

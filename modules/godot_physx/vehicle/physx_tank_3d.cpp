@@ -273,11 +273,12 @@ Vector3 PhysXTank3D::get_up() const {
 }
 
 Vector3 PhysXTank3D::get_forward() const {
+	// Local +Z, as VehicleBody3D (Vector3.MODEL_FRONT).
 	if (!impl->built) {
-		return -get_global_transform().basis.get_column(2);
+		return get_global_transform().basis.get_column(2).normalized();
 	}
 	const PxTransform actor_pose = impl->vehicle.physxActor.rigidBody->getGlobalPose();
-	return -to_godot(actor_pose.q.getBasisVector2());
+	return to_godot(actor_pose.q.getBasisVector2());
 }
 
 real_t PhysXTank3D::get_wheel_jounce(int p_wheel) const {
@@ -326,7 +327,7 @@ PackedStringArray PhysXTank3D::get_configuration_warnings() const {
 			real_t x = wheels[i]->get_position().x;
 			if (Math::is_zero_approx(x)) {
 				nb_centerline++;
-			} else if (x < 0.0) {
+			} else if (x > 0.0) { // the driver's left is +X
 				nb_left++;
 			} else {
 				nb_right++;

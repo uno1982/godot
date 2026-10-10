@@ -530,7 +530,12 @@ struct Vehicle2WConfig {
 inline bool configure_vehicle2w(Vehicle2W &v, const Vehicle2WConfig &cfg, PxPhysics &physics, PxScene &scene, PxVehiclePhysXSimulationContext &out_context) {
 	v.setToDefault();
 
-	v.frame.lngAxis = PxVehicleAxes::eNegZ;
+	// Godot's vehicle convention: forward = +Z (VehicleBody3D: "the local forward
+	// for this node is Vector3.MODEL_FRONT"), left = +X, up = +Y -- also PhysX's own
+	// default frame, and a 1:1 component mapping (godot_physx_conversions.h), so no
+	// axis remap reading the chassis pose back out. (Was declared -Z while the
+	// vehicles drove +Z anyway: only get_forward_speed() read the declaration.)
+	v.frame.lngAxis = PxVehicleAxes::ePosZ;
 	v.frame.latAxis = PxVehicleAxes::ePosX;
 	v.frame.vrtAxis = PxVehicleAxes::ePosY;
 	v.scale.scale = 1.0f;

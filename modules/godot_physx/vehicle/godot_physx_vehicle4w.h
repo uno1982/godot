@@ -509,7 +509,7 @@ struct Vehicle4WWheelConfig {
 };
 
 // Everything a caller can tune about a direct-drive 4-wheel vehicle, in Godot
-// units/conventions (meters, kg, radians, Godot's -Z-forward/+X-right/+Y-up).
+// units/conventions (meters, kg, radians, Godot's +Z-forward/+X-left/+Y-up vehicle convention).
 // Shared between the probe (hardcoded sedan-like defaults) and PhysXVehicle3D
 // (these become real exported properties -- chassis_half_extents/
 // chassis_half_extents/chassis_box_center_local come from a real CollisionShape3D child, wheels[] from
@@ -579,10 +579,12 @@ struct Vehicle4WConfig {
 inline bool configure_vehicle4w(Vehicle4W &v, const Vehicle4WConfig &cfg, PxPhysics &physics, PxScene &scene, PxVehiclePhysXSimulationContext &out_context, PxU32 out_wheel_order[4]) {
 	v.setToDefault();
 
-	// Godot convention: forward = -Z, right = +X, up = +Y (matches
-	// godot_physx_conversions.h's 1:1 PhysX<->Godot component mapping, so no
-	// axis remap is needed when reading the chassis pose back out).
-	v.frame.lngAxis = PxVehicleAxes::eNegZ;
+	// Godot's vehicle convention: forward = +Z (VehicleBody3D: "the local forward
+	// for this node is Vector3.MODEL_FRONT"), left = +X, up = +Y -- also PhysX's own
+	// default frame, and a 1:1 component mapping (godot_physx_conversions.h), so no
+	// axis remap reading the chassis pose back out. (Was declared -Z while the
+	// vehicles drove +Z anyway: only get_forward_speed() read the declaration.)
+	v.frame.lngAxis = PxVehicleAxes::ePosZ;
 	v.frame.latAxis = PxVehicleAxes::ePosX;
 	v.frame.vrtAxis = PxVehicleAxes::ePosY;
 	v.scale.scale = 1.0f;

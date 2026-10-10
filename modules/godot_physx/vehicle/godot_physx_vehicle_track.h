@@ -592,7 +592,12 @@ inline bool configure_vehicle_track(VehicleTrack &v, const VehicleTrackConfig &c
 	v.numWheels = wheel_count;
 	v.setToDefault();
 
-	v.frame.lngAxis = PxVehicleAxes::eNegZ;
+	// Godot's vehicle convention: forward = +Z (VehicleBody3D: "the local forward
+	// for this node is Vector3.MODEL_FRONT"), left = +X, up = +Y -- also PhysX's own
+	// default frame, and a 1:1 component mapping (godot_physx_conversions.h), so no
+	// axis remap reading the chassis pose back out. (Was declared -Z while the
+	// vehicles drove +Z anyway: only get_forward_speed() read the declaration.)
+	v.frame.lngAxis = PxVehicleAxes::ePosZ;
 	v.frame.latAxis = PxVehicleAxes::ePosX;
 	v.frame.vrtAxis = PxVehicleAxes::ePosY;
 	v.scale.scale = 1.0f;
@@ -605,7 +610,7 @@ inline bool configure_vehicle_track(VehicleTrack &v, const VehicleTrackConfig &c
 			ERR_PRINT(vformat("PhysX tank: wheel %d sits exactly on the centerline (local X = 0) -- can't tell which track it belongs to.", i));
 			return false;
 		}
-		v.wheelIsLeftTrack[i] = cfg.wheels[i].position.x < 0.0f;
+		v.wheelIsLeftTrack[i] = cfg.wheels[i].position.x > 0.0f; // the driver's left is +X (forward is +Z)
 		if (v.wheelIsLeftTrack[i]) {
 			v.numLeftWheels++;
 		} else {

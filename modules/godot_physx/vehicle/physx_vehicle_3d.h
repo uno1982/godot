@@ -136,6 +136,8 @@ public:
 
 	Vector3 get_linear_velocity() const;
 	real_t get_forward_speed() const;
+	// World-space forward: the chassis's local +Z, as VehicleBody3D (Vector3.MODEL_FRONT).
+	Vector3 get_forward() const;
 
 	// Diagnostics -- see GodotPhysXVehicleProbe's own identical methods for
 	// what these mean. wheel index here matches this node's own `wheels`

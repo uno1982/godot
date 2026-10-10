@@ -296,11 +296,12 @@ Vector3 PhysXMotorcycle3D::get_up() const {
 }
 
 Vector3 PhysXMotorcycle3D::get_forward() const {
+	// Local +Z, as VehicleBody3D (Vector3.MODEL_FRONT).
 	if (!impl->built) {
-		return -get_global_transform().basis.get_column(2);
+		return get_global_transform().basis.get_column(2).normalized();
 	}
 	const PxTransform actor_pose = impl->vehicle.physxActor.rigidBody->getGlobalPose();
-	return -to_godot(actor_pose.q.getBasisVector2());
+	return to_godot(actor_pose.q.getBasisVector2());
 }
 
 real_t PhysXMotorcycle3D::get_roll_angle() const {

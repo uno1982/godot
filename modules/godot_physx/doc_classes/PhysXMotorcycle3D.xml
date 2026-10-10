@@ -42,7 +42,7 @@
 		<method name="get_forward" qualifiers="const">
 			<return type="Vector3" />
 			<description>
-				Current world-space forward direction of the chassis.
+				Current world-space forward direction of the chassis: its local +Z axis, the same forward as [VehicleBody3D] ([constant Vector3.MODEL_FRONT]).
 			</description>
 		</method>
 		<method name="get_forward_speed" qualifiers="const">

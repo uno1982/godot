@@ -31,6 +31,7 @@
 #pragma once
 
 #include "../godot_physx_conversions.h"
+#include "godot_physx_wheel_query_filter.h"
 
 #include "core/error/error_macros.h"
 #include "core/math/basis.h"
@@ -119,6 +120,7 @@ public:
 
 	// --- PhysX integration (PhysXIntegrationParams/State) ------------------
 	PxVehiclePhysXRoadGeometryQueryParams physxRoadGeometryQueryParams;
+	GodotPhysXWheelQueryFilter wheelQueryFilter; // physxRoadGeometryQueryParams.filterCallback points here
 	PxVehiclePhysXMaterialFrictionParams physxMaterialFrictionParams[4];
 	PxVehiclePhysXSuspensionLimitConstraintParams physxSuspensionLimitConstraintParams[4];
 	PxTransform physxActorCMassLocalPose;
@@ -744,8 +746,9 @@ inline bool configure_vehicle4w(Vehicle4W &v, const Vehicle4WConfig &cfg, PxPhys
 	}
 
 	v.physxRoadGeometryQueryParams.roadGeometryQueryType = PxVehiclePhysXRoadGeometryQueryType::eRAYCAST;
-	v.physxRoadGeometryQueryParams.defaultFilterData = PxQueryFilterData(PxFilterData(0, 0, 0, 0), PxQueryFlag::eSTATIC | PxQueryFlag::eDYNAMIC);
-	v.physxRoadGeometryQueryParams.filterCallback = nullptr;
+	v.physxRoadGeometryQueryParams.defaultFilterData = PxQueryFilterData(PxFilterData(0, 0, 0, 0), PxQueryFlag::eSTATIC | PxQueryFlag::eDYNAMIC | PxQueryFlag::ePREFILTER);
+	v.wheelQueryFilter.collision_mask = (PxU32)cfg.collision_mask;
+	v.physxRoadGeometryQueryParams.filterCallback = &v.wheelQueryFilter;
 	v.physxRoadGeometryQueryParams.filterDataEntries = nullptr;
 
 	v.physxActorCMassLocalPose = PxTransform(to_px(cfg.chassis_com_local));

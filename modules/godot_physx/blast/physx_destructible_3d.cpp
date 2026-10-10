@@ -227,6 +227,7 @@ void PhysXDestructible3D::_validate_property(PropertyInfo &p_property) const {
 
 PhysXDestructible3D::~PhysXDestructible3D() {
 	_free_all_pieces();
+	_free_chunk_cache();
 	if (family_mem) {
 		aligned_free_16(family_mem);
 	}
@@ -574,6 +575,7 @@ bool PhysXDestructible3D::_load() {
 		}
 		_compute_chunk_volumes();
 		_compute_chunk_faces();
+		_compute_chunk_surfaces();
 		return true;
 	}
 
@@ -615,6 +617,7 @@ bool PhysXDestructible3D::_load() {
 
 	_compute_chunk_volumes();
 	_compute_chunk_faces();
+	_compute_chunk_surfaces();
 	return true;
 }
 
@@ -684,6 +687,63 @@ bool PhysXDestructible3D::_island_anchored(const LocalVector<uint32_t> &p_chunks
 	return false;
 }
 
+void PhysXDestructible3D::_compute_chunk_surfaces() {
+	// Flat per-triangle normals -- the asset only stores positions -- with the
+	// winding (c-a)x(b-a), not the intuitive (b-a)x(c-a): Blast's
+	// AuthoringResult::geometry triangles are opposite to CCW-front-face here,
+	// and the wrong order cooked clean but rendered every face pitch-black
+	// (normals inward).
+	chunk_surfaces.resize(chunk_points.size());
+	for (uint32_t c = 0; c < chunk_points.size(); c++) {
+		const PackedVector3Array &points = chunk_points[c];
+		const int tri_count = points.size() / 3;
+		ChunkSurface surface;
+		surface.vertices = points;
+		surface.normals.resize(points.size());
+		Vector3 *nw = surface.normals.ptrw();
+		for (int t = 0; t < tri_count; t++) {
+			const Vector3 a = points[t * 3 + 0];
+			const Vector3 b = points[t * 3 + 1];
+			const Vector3 c3 = points[t * 3 + 2];
+			const Vector3 n = (c3 - a).cross(b - a).normalized();
+			nw[t * 3 + 0] = n;
+			nw[t * 3 + 1] = n;
+			nw[t * 3 + 2] = n;
+		}
+		chunk_surfaces[c].clear();
+		chunk_surfaces[c].push_back(surface);
+	}
+}
+
+RID PhysXDestructible3D::_chunk_shape(uint32_t p_chunk) {
+	ERR_FAIL_UNSIGNED_INDEX_V(p_chunk, chunk_points.size(), RID());
+	if (chunk_shapes.size() < chunk_points.size()) {
+		const uint32_t old_size = chunk_shapes.size();
+		chunk_shapes.resize(chunk_points.size());
+		for (uint32_t i = old_size; i < chunk_shapes.size(); i++) {
+			chunk_shapes[i] = RID();
+		}
+	}
+	if (!chunk_shapes[p_chunk].is_valid()) {
+		PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
+		chunk_shapes[p_chunk] = ps->convex_polygon_shape_create();
+		ps->shape_set_data(chunk_shapes[p_chunk], chunk_points[p_chunk]);
+	}
+	return chunk_shapes[p_chunk];
+}
+
+// After _free_all_pieces(): no body may still hold one of these shapes.
+void PhysXDestructible3D::_free_chunk_cache() {
+	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
+	for (const RID &shape : chunk_shapes) {
+		if (shape.is_valid()) {
+			ps->free_rid(shape);
+		}
+	}
+	chunk_shapes.clear();
+	chunk_surfaces.clear();
+}
+
 void PhysXDestructible3D::_compute_chunk_volumes() {
 	// Divergence-theorem volume of a closed triangle soup: sum each
 	// triangle's signed tetrahedron volume against the origin
@@ -750,6 +810,7 @@ float PhysXDestructible3D::_chunk_mass(uint32_t p_chunk_index) const {
 
 void PhysXDestructible3D::_reload() {
 	_free_all_pieces();
+	_free_chunk_cache();
 	if (family_mem) {
 		aligned_free_16(family_mem);
 		family_mem = nullptr;
@@ -832,19 +893,12 @@ int PhysXDestructible3D::_spawn_piece(const LocalVector<uint32_t> &p_chunk_indic
 	// piece's own chunks for a pre-existing overlap once `piece` owns them.
 	LocalVector<uint32_t> chunk_indices_storage(p_chunk_indices);
 
-	LocalVector<RID> shapes;
 	RID body;
 	PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
 	if (p_physics) {
 		// Chunk hull points are authored in the actor's frame, so shapes sit
 		// at identity transforms on the body no matter how many chunks it
 		// carries.
-		for (uint32_t ci : p_chunk_indices) {
-			RID shape = ps->convex_polygon_shape_create();
-			ps->shape_set_data(shape, chunk_points[ci]);
-			shapes.push_back(shape);
-		}
-
 		body = ps->body_create();
 		// A real CollisionObject3D (RigidBody3D, StaticBody3D, ...) always
 		// does this in its constructor -- it's how the *other* body's
@@ -868,8 +922,8 @@ int PhysXDestructible3D::_spawn_piece(const LocalVector<uint32_t> &p_chunk_indic
 		if (p_body_mode == PhysicsServer3D::BODY_MODE_RIGID) {
 			ps->body_set_max_contacts_reported(body, 8);
 		}
-		for (RID shape : shapes) {
-			ps->body_add_shape(body, shape);
+		for (uint32_t ci : p_chunk_indices) {
+			ps->body_add_shape(body, _chunk_shape(ci));
 		}
 		ps->body_set_collision_layer(body, collision_layer);
 		ps->body_set_collision_mask(body, collision_mask);
@@ -887,32 +941,51 @@ int PhysXDestructible3D::_spawn_piece(const LocalVector<uint32_t> &p_chunk_indic
 		}
 	}
 
-	// One surface per chunk with flat per-triangle normals -- the authoring
-	// dump only stores positions, and the winding needs (c-a)x(b-a) (not the
-	// intuitive (b-a)x(c-a)): Blast's AuthoringResult::geometry triangles are
-	// opposite to CCW-front-face here, and the wrong order cooked clean but
-	// rendered every face pitch-black (normals inward). A leaf piece gets one
-	// surface; an island piece gets one per chunk, all authored in the same
-	// frame so the single body transform positions all of them.
+	// One surface per material slot, concatenating every chunk the piece
+	// carries (see chunk_surfaces) -- all authored in the same frame, so the
+	// single body transform positions all of them.
 	RenderingServer *rs = RenderingServer::get_singleton();
 	RID mesh = rs->mesh_create();
-	Array arrays;
-	arrays.resize(RSE::ARRAY_MAX);
+	int max_slot = -1;
 	for (uint32_t ci : p_chunk_indices) {
-		const PackedVector3Array &points = chunk_points[ci];
-		const uint32_t tri_count = points.size() / 3;
-		PackedVector3Array normals;
-		normals.resize(points.size());
-		for (uint32_t t = 0; t < tri_count; t++) {
-			const Vector3 a = points[t * 3 + 0];
-			const Vector3 b = points[t * 3 + 1];
-			const Vector3 c = points[t * 3 + 2];
-			const Vector3 n = (c - a).cross(b - a).normalized();
-			normals.write[t * 3 + 0] = n;
-			normals.write[t * 3 + 1] = n;
-			normals.write[t * 3 + 2] = n;
+		if (ci < chunk_surfaces.size()) {
+			for (const ChunkSurface &cs : chunk_surfaces[ci]) {
+				max_slot = MAX(max_slot, cs.slot);
+			}
 		}
-		arrays[RSE::ARRAY_VERTEX] = points;
+	}
+	for (int slot = 0; slot <= max_slot; slot++) {
+		int count = 0;
+		for (uint32_t ci : p_chunk_indices) {
+			for (const ChunkSurface &cs : chunk_surfaces[ci]) {
+				if (cs.slot == slot) {
+					count += cs.vertices.size();
+				}
+			}
+		}
+		if (count == 0) {
+			continue;
+		}
+		PackedVector3Array vertices;
+		PackedVector3Array normals;
+		vertices.resize(count);
+		normals.resize(count);
+		Vector3 *vw = vertices.ptrw();
+		Vector3 *nw = normals.ptrw();
+		int at = 0;
+		for (uint32_t ci : p_chunk_indices) {
+			for (const ChunkSurface &cs : chunk_surfaces[ci]) {
+				if (cs.slot != slot) {
+					continue;
+				}
+				memcpy(vw + at, cs.vertices.ptr(), sizeof(Vector3) * cs.vertices.size());
+				memcpy(nw + at, cs.normals.ptr(), sizeof(Vector3) * cs.normals.size());
+				at += cs.vertices.size();
+			}
+		}
+		Array arrays;
+		arrays.resize(RSE::ARRAY_MAX);
+		arrays[RSE::ARRAY_VERTEX] = vertices;
 		arrays[RSE::ARRAY_NORMAL] = normals;
 		rs->mesh_add_surface_from_arrays(mesh, RSE::PRIMITIVE_TRIANGLES, arrays);
 	}
@@ -953,7 +1026,6 @@ int PhysXDestructible3D::_spawn_piece(const LocalVector<uint32_t> &p_chunk_indic
 
 	ChunkVisual piece;
 	piece.body = body;
-	piece.shapes = shapes;
 	piece.mesh = mesh;
 	piece.instance = instance;
 	piece.chunk_indices = chunk_indices_storage;
@@ -982,11 +1054,6 @@ void PhysXDestructible3D::_free_piece(uint32_t p_index) {
 	if (piece.body.is_valid()) {
 		ps->free_rid(piece.body);
 	}
-	for (RID shape : piece.shapes) {
-		if (shape.is_valid()) {
-			ps->free_rid(shape);
-		}
-	}
 	rs->free_rid(piece.instance);
 	rs->free_rid(piece.mesh);
 	pieces.remove_at_unordered(p_index);
@@ -1014,11 +1081,6 @@ void PhysXDestructible3D::_free_all_pieces() {
 		// most servers, but skip it explicitly rather than rely on that.
 		if (piece.body.is_valid()) {
 			ps->free_rid(piece.body);
-		}
-		for (RID shape : piece.shapes) {
-			if (shape.is_valid()) {
-				ps->free_rid(shape);
-			}
 		}
 		rs->free_rid(piece.instance);
 		rs->free_rid(piece.mesh);

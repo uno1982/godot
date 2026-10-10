@@ -401,16 +401,31 @@ private:
 	static constexpr uint8_t ANCHOR_FACE_BOTTOM = 1 << 2; // -Y
 	static constexpr uint8_t ANCHOR_FACE_TOP = 1 << 3; // +Y
 	void _compute_chunk_faces();
+	// Per-chunk collision shapes, cooked once on first use and shared by every
+	// piece carrying that chunk -- hull points are in the asset frame, so one
+	// shape fits any piece's body. Re-cooking an island's every hull on each
+	// split cost ~5 ms per chip on a ~190-chunk wall. Freed with the asset.
+	LocalVector<RID> chunk_shapes;
+	RID _chunk_shape(uint32_t p_chunk);
+	// Per-chunk render data, by material slot, computed once per load. A
+	// piece's mesh gets ONE surface per slot (not per chunk: an island of
+	// ~190 chunks was ~190 draw calls). Every chunk is slot 0 today -- the
+	// asset keeps positions only; an interior-face slot (Blast's
+	// kMaterialInteriorId) slots in here once authoring keeps it.
+	struct ChunkSurface {
+		int slot = 0;
+		PackedVector3Array vertices;
+		PackedVector3Array normals;
+	};
+	LocalVector<LocalVector<ChunkSurface>> chunk_surfaces;
+	void _compute_chunk_surfaces();
+	void _free_chunk_cache();
 	// Whether an island made of p_chunks stays STATIC under `anchor`.
 	bool _island_anchored(const LocalVector<uint32_t> &p_chunks) const;
 	double total_leaf_volume = 0.0;
 
 	struct ChunkVisual {
-		RID body;
-		// One shape per chunk the piece covers (chunk_index.size() of them,
-		// added to the body in the same order); empty for a render-only
-		// editor piece.
-		LocalVector<RID> shapes;
+		RID body; // its shapes are the shared chunk_shapes[] of chunk_indices, not owned
 		RID mesh;
 		RID instance;
 		// Which asset chunks this piece renders/collides, aligned with

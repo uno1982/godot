@@ -238,6 +238,19 @@ public:
 	void set_dynamic(bool p_dynamic) { dynamic = p_dynamic; }
 	bool get_dynamic() const { return dynamic; }
 
+	// Static (non-dynamic) only: which of the remaining pieces stay put once it
+	// breaks. Leaf debris always falls. An island is "anchored" when one of its
+	// chunks touches an anchored outer face of the intact mesh's bounds (local
+	// axes: left/right = -X/+X, bottom/top = -Y/+Y; the faces of the thickness,
+	// +-Z, never anchor).
+	enum Anchor {
+		ANCHOR_FRAMED, // held at the bottom, top, left or right edge: walls in a building, doors, windows
+		ANCHOR_GROUNDED, // held at the bottom only: freestanding walls, pillars, statues
+		ANCHOR_NONE, // static until the first break, then every island falls
+	};
+	void set_anchor(Anchor p_anchor) { anchor = p_anchor; }
+	Anchor get_anchor() const { return anchor; }
+
 	// Initial NvBlast bond/chunk health (both, uniformly) -- how much
 	// cumulative damage the support structure can absorb before bonds start
 	// breaking. Higher health needs more damage (a harder impact, or more of
@@ -355,6 +368,7 @@ private:
 	float mass = 1.0f;
 	bool auto_mass = true;
 	bool dynamic = false;
+	Anchor anchor = ANCHOR_FRAMED;
 	float health = 1.0f;
 	float impact_strength = 5.0f;
 	float impact_damage_scale = 1.0f;
@@ -379,6 +393,16 @@ private:
 	// computed once in _compute_chunk_volumes(), called from _load(). See
 	// set_mass() for why.
 	LocalVector<double> chunk_volumes;
+	// chunk_faces[chunk_index] = the ANCHOR_FACE_* bits of the intact mesh's
+	// bounds that chunk touches (computed once per load, object-local).
+	LocalVector<uint8_t> chunk_faces;
+	static constexpr uint8_t ANCHOR_FACE_LEFT = 1 << 0; // -X
+	static constexpr uint8_t ANCHOR_FACE_RIGHT = 1 << 1; // +X
+	static constexpr uint8_t ANCHOR_FACE_BOTTOM = 1 << 2; // -Y
+	static constexpr uint8_t ANCHOR_FACE_TOP = 1 << 3; // +Y
+	void _compute_chunk_faces();
+	// Whether an island made of p_chunks stays STATIC under `anchor`.
+	bool _island_anchored(const LocalVector<uint32_t> &p_chunks) const;
 	double total_leaf_volume = 0.0;
 
 	struct ChunkVisual {
@@ -479,3 +503,4 @@ private:
 VARIANT_ENUM_CAST(PhysXDestructible3D::GIMode);
 VARIANT_ENUM_CAST(PhysXDestructible3D::ShadowCastingSetting);
 VARIANT_ENUM_CAST(PhysXDestructible3D::VisibilityRangeFadeMode);
+VARIANT_ENUM_CAST(PhysXDestructible3D::Anchor);

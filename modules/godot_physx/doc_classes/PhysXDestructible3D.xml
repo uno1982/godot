@@ -32,6 +32,9 @@
 		</method>
 	</methods>
 	<members>
+		<member name="anchor" type="int" setter="set_anchor" getter="get_anchor" enum="PhysXDestructible3D.Anchor" default="0">
+			Only used when [member dynamic] is [code]false[/code]: which of the remaining pieces stay in place once the object breaks. Single-chunk debris always falls. A piece counts as held when one of its chunks touches a held outer face of the intact mesh's bounds, in the node's local axes (left/right is -X/+X, bottom/top is -Y/+Y; the front and back faces never hold). A piece that loses every held face falls, keeping its pose and velocity. See [enum Anchor].
+		</member>
 		<member name="asset_path" type="String" setter="set_asset_path" getter="get_asset_path" default="&quot;&quot;">
 			Legacy loading path: a [code].asset[/code] file (raw [code]NvBlastAsset[/code] bytes), paired with [member chunks_path]. Prefer [member blast_asset] for anything authored through the in-editor fracture dialog; this remains only for assets authored before [PhysXBlastAsset] existed as a real [Resource] type.
 		</member>
@@ -61,9 +64,6 @@
 		</member>
 		<member name="gi_mode" type="int" setter="set_gi_mode" getter="get_gi_mode" enum="PhysXDestructible3D.GIMode" default="1">
 			Controls VoxelGI baking for every piece's render mesh, the same two settings as [member GeometryInstance3D.gi_mode]. Defaults to [constant GI_MODE_STATIC], matching a plain [MeshInstance3D]'s default. Consider [constant GI_MODE_DYNAMIC] for an object that's expected to move once fractured -- but a single fracture can spawn many pieces at once, and a VoxelGI's dynamic-object tracking cost scales with how many it has to follow every frame, so it isn't the default.
-		</member>
-		<member name="ignore_occlusion_culling" type="bool" setter="set_ignore_occlusion_culling" getter="get_ignore_occlusion_culling" default="false">
-			Turns off occlusion culling for every piece, the same as [member GeometryInstance3D.ignore_occlusion_culling].
 		</member>
 		<member name="health" type="float" setter="set_health" getter="get_health" default="1.0">
 			How much cumulative damage each bond in the fracture structure can absorb before it breaks -- see the class description's "How damage, health, and radius actually interact" section for the full picture. Higher [member health] needs more damage (a harder hit, a closer one, or several weaker ones added together) to break the same bond.
@@ -147,6 +147,15 @@
 		</constant>
 		<constant name="VISIBILITY_RANGE_FADE_DEPENDENCIES" value="2" enum="VisibilityRangeFadeMode">
 			Pieces this object is visually linked to (via a shared LOD group) fade together instead of independently.
+		</constant>
+		<constant name="ANCHOR_FRAMED" value="0" enum="Anchor">
+			Pieces still touching the bottom, top, left or right edge stay in place; a piece cut free of all four falls. For a wall that is part of a building, a door, a window or a panel in a frame: its upper part can hang from the frame, but a chunk punched out of the middle drops.
+		</constant>
+		<constant name="ANCHOR_GROUNDED" value="1" enum="Anchor">
+			Only pieces still touching the bottom stay in place. For a freestanding wall, a pillar, a statue or a fence: cut through, the upper part falls.
+		</constant>
+		<constant name="ANCHOR_NONE" value="2" enum="Anchor">
+			Static only until the first break: every remaining piece then falls.
 		</constant>
 	</constants>
 </class>

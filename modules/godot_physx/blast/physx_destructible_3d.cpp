@@ -164,6 +164,9 @@ void PhysXDestructible3D::_bind_methods() {
 	// headroom instead of relying on that alone.
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "mass", PROPERTY_HINT_RANGE, "0.001,1000000,0.001,or_greater,exp"), "set_mass", "get_mass");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "dynamic"), "set_dynamic", "get_dynamic");
+	ClassDB::bind_method(D_METHOD("set_anchor", "anchor"), &PhysXDestructible3D::set_anchor);
+	ClassDB::bind_method(D_METHOD("get_anchor"), &PhysXDestructible3D::get_anchor);
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "anchor", PROPERTY_HINT_ENUM, "Framed,Grounded,None"), "set_anchor", "get_anchor");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "health", PROPERTY_HINT_RANGE, "0.01,20,0.01"), "set_health", "get_health");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_strength", PROPERTY_HINT_RANGE, "0,200,0.1"), "set_impact_strength", "get_impact_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impact_damage_scale", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_impact_damage_scale", "get_impact_damage_scale");
@@ -182,6 +185,10 @@ void PhysXDestructible3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(VISIBILITY_RANGE_FADE_DISABLED);
 	BIND_ENUM_CONSTANT(VISIBILITY_RANGE_FADE_SELF);
 	BIND_ENUM_CONSTANT(VISIBILITY_RANGE_FADE_DEPENDENCIES);
+
+	BIND_ENUM_CONSTANT(ANCHOR_FRAMED);
+	BIND_ENUM_CONSTANT(ANCHOR_GROUNDED);
+	BIND_ENUM_CONSTANT(ANCHOR_NONE);
 }
 
 PhysXDestructible3D::PhysXDestructible3D() {
@@ -566,6 +573,7 @@ bool PhysXDestructible3D::_load() {
 			chunk_points[i] = points[i];
 		}
 		_compute_chunk_volumes();
+		_compute_chunk_faces();
 		return true;
 	}
 
@@ -606,7 +614,74 @@ bool PhysXDestructible3D::_load() {
 	}
 
 	_compute_chunk_volumes();
+	_compute_chunk_faces();
 	return true;
+}
+
+void PhysXDestructible3D::_compute_chunk_faces() {
+	chunk_faces.resize(chunk_points.size());
+	for (uint32_t c = 0; c < chunk_faces.size(); c++) {
+		chunk_faces[c] = 0;
+	}
+	if (chunk_points.is_empty() || chunk_points[0].is_empty()) {
+		return;
+	}
+	// Chunk 0 is the whole intact mesh: its bounds are the faces.
+	const PackedVector3Array &root = chunk_points[0];
+	AABB bounds(root[0], Vector3());
+	for (int i = 1; i < root.size(); i++) {
+		bounds.expand_to(root[i]);
+	}
+	// A chunk "touches" a face when it reaches within 2% of the size along that
+	// axis (fracture cuts leave edge chunks flush with the original surface,
+	// but not always to the last float).
+	const Vector3 tol = (bounds.size * 0.02).max(Vector3(0.001, 0.001, 0.001));
+	const Vector3 lo = bounds.position;
+	const Vector3 hi = bounds.get_end();
+	for (uint32_t c = 1; c < chunk_points.size(); c++) {
+		const PackedVector3Array &points = chunk_points[c];
+		if (points.is_empty()) {
+			continue;
+		}
+		AABB box(points[0], Vector3());
+		for (int i = 1; i < points.size(); i++) {
+			box.expand_to(points[i]);
+		}
+		uint8_t faces = 0;
+		if (box.position.x <= lo.x + tol.x) {
+			faces |= ANCHOR_FACE_LEFT;
+		}
+		if (box.get_end().x >= hi.x - tol.x) {
+			faces |= ANCHOR_FACE_RIGHT;
+		}
+		if (box.position.y <= lo.y + tol.y) {
+			faces |= ANCHOR_FACE_BOTTOM;
+		}
+		if (box.get_end().y >= hi.y - tol.y) {
+			faces |= ANCHOR_FACE_TOP;
+		}
+		chunk_faces[c] = faces;
+	}
+}
+
+bool PhysXDestructible3D::_island_anchored(const LocalVector<uint32_t> &p_chunks) const {
+	uint8_t wanted = 0;
+	switch (anchor) {
+		case ANCHOR_FRAMED:
+			wanted = ANCHOR_FACE_LEFT | ANCHOR_FACE_RIGHT | ANCHOR_FACE_BOTTOM | ANCHOR_FACE_TOP;
+			break;
+		case ANCHOR_GROUNDED:
+			wanted = ANCHOR_FACE_BOTTOM;
+			break;
+		case ANCHOR_NONE:
+			return false;
+	}
+	for (uint32_t c : p_chunks) {
+		if (c < chunk_faces.size() && (chunk_faces[c] & wanted)) {
+			return true;
+		}
+	}
+	return false;
 }
 
 void PhysXDestructible3D::_compute_chunk_volumes() {
@@ -689,6 +764,7 @@ void PhysXDestructible3D::_reload() {
 	asset_bond_count = 0;
 	chunk_points.clear();
 	chunk_volumes.clear();
+	chunk_faces.clear();
 	total_leaf_volume = 0.0;
 	loaded = false;
 	fractured = false;
@@ -1094,6 +1170,11 @@ int PhysXDestructible3D::_spawn_island_piece(NvBlastActor *p_actor, PhysicsServe
 	// giving its combined hull a per-chunk kick would tear the one rigid
 	// body apart from the inside.
 	PhysicsServer3D::BodyMode child_mode = p_body_mode;
+	if (child_mode == PhysicsServer3D::BODY_MODE_STATIC && !_island_anchored(visible)) {
+		// Cut loose from everything `anchor` says holds it: it falls (no
+		// kick -- it was never hit as a piece of debris, just let go).
+		child_mode = PhysicsServer3D::BODY_MODE_RIGID;
+	}
 	Vector3 spawn_linear = piece_linear;
 	if (visible_count == 1) {
 		child_mode = PhysicsServer3D::BODY_MODE_RIGID;

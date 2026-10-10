@@ -643,7 +643,10 @@ inline bool configure_vehicle2w(Vehicle2W &v, const Vehicle2WConfig &cfg, PxPhys
 	// simulation shape (so other bodies can hit it), but deliberately
 	// low-friction so it never fights the drivetrain if suspension settling
 	// lets it graze the ground.
-	PxMaterial *chassis_material = physics.createMaterial(0.0f, 0.0f, 0.1f);
+	// Not 0, though: the scene's bodies combine friction by MIN (Godot's rule, see godot_physx_body_3d.cpp), which
+	// outranks this material's AVERAGE, so a 0 here made a flipped vehicle slide on its roof forever. 0.5 is
+	// what the roof used to get against a default (1.0) ground under AVERAGE.
+	PxMaterial *chassis_material = physics.createMaterial(0.5f, 0.5f, 0.1f);
 	if (!wheel_material || !chassis_material) {
 		ERR_PRINT("PhysX motorcycle: failed to create material.");
 		return false;

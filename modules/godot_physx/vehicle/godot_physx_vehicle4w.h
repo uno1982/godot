@@ -769,7 +769,10 @@ inline bool configure_vehicle4w(Vehicle4W &v, const Vehicle4WConfig &cfg, PxPhys
 	// just physical bulk for other objects to bump into, not a friction
 	// surface -- the wheels' own tire model is the only thing that should
 	// ever resist the car's own motion.
-	PxMaterial *chassis_material = physics.createMaterial(0.0f, 0.0f, 0.1f);
+	// Not 0, though: the scene's bodies combine friction by MIN (Godot's rule, see godot_physx_body_3d.cpp), which
+	// outranks this material's AVERAGE, so a 0 here made a flipped vehicle slide on its roof forever. 0.5 is
+	// what the roof used to get against a default (1.0) ground under AVERAGE.
+	PxMaterial *chassis_material = physics.createMaterial(0.5f, 0.5f, 0.1f);
 	if (!wheel_material || !chassis_material) {
 		ERR_PRINT("PhysX vehicle: failed to create material.");
 		return false;

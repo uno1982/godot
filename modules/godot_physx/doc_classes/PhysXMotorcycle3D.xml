@@ -156,7 +156,7 @@
 			Same meaning as [member CollisionObject3D.collision_layer]. Applies to the chassis only -- the wheels do not have their own collision shapes (their ground contact is handled entirely by the suspension, not by a physical wheel shape touching the road).
 		</member>
 		<member name="collision_mask" type="int" setter="set_collision_mask" getter="get_collision_mask" default="1">
-			Same meaning as [member CollisionObject3D.collision_mask]. Applies to the chassis only, see [member collision_layer].
+			Same meaning as [member CollisionObject3D.collision_mask]. Applies to the chassis (see [member collision_layer]) and to the wheels' ground raycasts: like a [RayCast3D], a wheel only rests on a shape whose collision layer is in this mask, and never on an [Area3D].
 		</member>
 		<member name="mass" type="float" setter="set_mass" getter="get_mass" default="220.0">
 			Total mass of the motorcycle, in kg.
@@ -172,6 +172,9 @@
 		</member>
 		<member name="moment_of_inertia" type="Vector3" setter="set_moment_of_inertia" getter="get_moment_of_inertia" default="Vector3(40, 55, 20)">
 			The vehicle's own rotational inertia around its X/Y/Z axes. Higher values resist rotation (pitch/yaw/roll) more -- a real motorcycle's roll inertia is much lower than a car's, so this defaults far smaller than [member PhysXVehicle3D.moment_of_inertia].
+		</member>
+		<member name="physics_material_override" type="PhysicsMaterial" setter="set_physics_material_override" getter="get_physics_material_override">
+			The contact material of the chassis box: what the vehicle feels like when its body, not its wheels, touches something -- on its roof or side after a flip, grinding along a wall, bottoming out. [member PhysicsMaterial.friction], [member PhysicsMaterial.rough], [member PhysicsMaterial.bounce] and [member PhysicsMaterial.absorbent] combine with the other side the same way as for any [RigidBody3D] on this module. If [code]null[/code], the chassis uses friction [code]0.5[/code] and bounce [code]0.1[/code]; lower the friction for a body that skids further after a flip. Changes (including edits to the assigned material) apply immediately, without rebuilding the vehicle. Tire grip is not affected; it comes from the wheels' tire settings.
 		</member>
 		<member name="reverse" type="bool" setter="set_reverse" getter="is_reverse" default="false">
 			Switches the drivetrain's gear between forward and reverse -- a real gear change (PxVehicle2 has no neutral-coast/instant-reverse shortcut), so [member throttle] in reverse gear still needs to first bring the bike to a stop if it was moving forward, same as a real vehicle. Check [method get_forward_speed] before engaging this from a driving script.

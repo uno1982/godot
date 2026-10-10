@@ -31,6 +31,7 @@
 #pragma once
 
 #include "../godot_physx_conversions.h"
+#include "../objects/godot_physx_material.h"
 #include "godot_physx_wheel_query_filter.h"
 
 #include "core/error/error_macros.h"
@@ -514,6 +515,10 @@ struct Vehicle2WConfig {
 
 	uint32_t collision_layer = 1;
 	uint32_t collision_mask = 1;
+	// Chassis box contact material, signed like PhysicsMaterial::computed_friction() / computed_bounce() (the
+	// node's physics_material_override, or these defaults).
+	float chassis_friction = 0.5f;
+	float chassis_bounce = 0.1f;
 };
 
 // Same role as configure_vehicle4w() (see that function's own doc comment) --
@@ -643,10 +648,14 @@ inline bool configure_vehicle2w(Vehicle2W &v, const Vehicle2WConfig &cfg, PxPhys
 	// simulation shape (so other bodies can hit it), but deliberately
 	// low-friction so it never fights the drivetrain if suspension settling
 	// lets it graze the ground.
-	// Not 0, though: the scene's bodies combine friction by MIN (Godot's rule, see godot_physx_body_3d.cpp), which
-	// outranks this material's AVERAGE, so a 0 here made a flipped vehicle slide on its roof forever. 0.5 is
-	// what the roof used to get against a default (1.0) ground under AVERAGE.
-	PxMaterial *chassis_material = physics.createMaterial(0.5f, 0.5f, 0.1f);
+	// Not 0, though: bodies combine friction by MIN (Godot's rule, see godot_physx_material.h), so a 0 here made a
+	// flipped vehicle slide on its roof forever. The default 0.5 is what the roof used to get against a default
+	// (1.0) ground under PhysX's AVERAGE; the node's physics_material_override replaces it. Combined the same
+	// way as every other body. Created per vehicle, so the node can edit it in place.
+	PxMaterial *chassis_material = physics.createMaterial(Math::abs(cfg.chassis_friction), Math::abs(cfg.chassis_friction), CLAMP(cfg.chassis_bounce, 0.0f, 1.0f));
+	if (chassis_material) {
+		godot_physx_apply_material(chassis_material, cfg.chassis_friction, cfg.chassis_bounce);
+	}
 	if (!wheel_material || !chassis_material) {
 		ERR_PRINT("PhysX motorcycle: failed to create material.");
 		return false;

@@ -31,6 +31,7 @@
 #pragma once
 
 #include "../godot_physx_conversions.h"
+#include "../objects/godot_physx_material.h"
 #include "godot_physx_wheel_query_filter.h"
 
 #include "core/error/error_macros.h"
@@ -553,6 +554,10 @@ struct Vehicle4WConfig {
 	// note on why the wheel shapes stay non-simulating).
 	uint32_t collision_layer = 1;
 	uint32_t collision_mask = 1;
+	// Chassis box contact material, signed like PhysicsMaterial::computed_friction() / computed_bounce() (the
+	// node's physics_material_override, or these defaults).
+	float chassis_friction = 0.5f;
+	float chassis_bounce = 0.1f;
 };
 
 // Fills every param struct on v from cfg, builds the real PxRigidDynamic
@@ -769,10 +774,14 @@ inline bool configure_vehicle4w(Vehicle4W &v, const Vehicle4WConfig &cfg, PxPhys
 	// just physical bulk for other objects to bump into, not a friction
 	// surface -- the wheels' own tire model is the only thing that should
 	// ever resist the car's own motion.
-	// Not 0, though: the scene's bodies combine friction by MIN (Godot's rule, see godot_physx_body_3d.cpp), which
-	// outranks this material's AVERAGE, so a 0 here made a flipped vehicle slide on its roof forever. 0.5 is
-	// what the roof used to get against a default (1.0) ground under AVERAGE.
-	PxMaterial *chassis_material = physics.createMaterial(0.5f, 0.5f, 0.1f);
+	// Not 0, though: bodies combine friction by MIN (Godot's rule, see godot_physx_material.h), so a 0 here made a
+	// flipped vehicle slide on its roof forever. The default 0.5 is what the roof used to get against a default
+	// (1.0) ground under PhysX's AVERAGE; the node's physics_material_override replaces it. Combined the same
+	// way as every other body. Created per vehicle, so the node can edit it in place.
+	PxMaterial *chassis_material = physics.createMaterial(Math::abs(cfg.chassis_friction), Math::abs(cfg.chassis_friction), CLAMP(cfg.chassis_bounce, 0.0f, 1.0f));
+	if (chassis_material) {
+		godot_physx_apply_material(chassis_material, cfg.chassis_friction, cfg.chassis_bounce);
+	}
 	if (!wheel_material || !chassis_material) {
 		ERR_PRINT("PhysX vehicle: failed to create material.");
 		return false;

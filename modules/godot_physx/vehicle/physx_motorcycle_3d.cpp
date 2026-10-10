@@ -38,6 +38,7 @@
 #include "physx_vehicle_wheel_3d.h"
 
 #include "core/config/engine.h"
+#include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/resources/3d/box_shape_3d.h"
@@ -141,6 +142,12 @@ bool PhysXMotorcycle3D::_build() {
 	cfg.max_steer_angle = max_steer_angle;
 	cfg.collision_layer = collision_layer;
 	cfg.collision_mask = collision_mask;
+	{
+		real_t friction, bounce;
+		_chassis_material(friction, bounce);
+		cfg.chassis_friction = (float)friction;
+		cfg.chassis_bounce = (float)bounce;
+	}
 
 	PhysXVehicleWheel3D *front_wheel = wheels[front_idx];
 	PhysXVehicleWheel3D *rear_wheel = wheels[rear_idx];
@@ -545,6 +552,45 @@ void PhysXMotorcycle3D::set_collision_mask(uint32_t p_mask) {
 	_rebuild_if_live();
 }
 
+void PhysXMotorcycle3D::set_physics_material_override(const Ref<PhysicsMaterial> &p_material) {
+	if (physics_material_override == p_material) {
+		return;
+	}
+	if (physics_material_override.is_valid()) {
+		physics_material_override->disconnect_changed(callable_mp(this, &PhysXMotorcycle3D::_chassis_material_changed));
+	}
+	physics_material_override = p_material;
+	if (physics_material_override.is_valid()) {
+		physics_material_override->connect_changed(callable_mp(this, &PhysXMotorcycle3D::_chassis_material_changed));
+	}
+	_chassis_material_changed();
+}
+
+void PhysXMotorcycle3D::_chassis_material(real_t &r_friction, real_t &r_bounce) const {
+	if (physics_material_override.is_valid()) {
+		r_friction = physics_material_override->computed_friction();
+		r_bounce = physics_material_override->computed_bounce();
+	} else {
+		r_friction = 0.5;
+		r_bounce = 0.1;
+	}
+}
+
+// The chassis material is the vehicle's own (see configure_*()), so it is edited in place -- no rebuild.
+void PhysXMotorcycle3D::_chassis_material_changed() {
+	if (!impl->built) {
+		return; // the next build reads it
+	}
+	real_t friction, bounce;
+	_chassis_material(friction, bounce);
+	godot_physx_apply_material_to_simulation_shapes(impl->vehicle.physxActor.rigidBody, friction, bounce);
+	// A material change doesn't wake the actor: one resting on its roof would keep sleeping on the old grip.
+	PxRigidDynamic *body = impl->vehicle.physxActor.rigidBody ? impl->vehicle.physxActor.rigidBody->is<PxRigidDynamic>() : nullptr;
+	if (body && body->getScene()) {
+		body->wakeUp();
+	}
+}
+
 void PhysXMotorcycle3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(CENTER_OF_MASS_MODE_AUTO);
 	BIND_ENUM_CONSTANT(CENTER_OF_MASS_MODE_CUSTOM);
@@ -597,6 +643,9 @@ void PhysXMotorcycle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_collision_mask"), &PhysXMotorcycle3D::get_collision_mask);
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "collision_layer", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_collision_layer", "get_collision_layer");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_collision_mask", "get_collision_mask");
+	ClassDB::bind_method(D_METHOD("set_physics_material_override", "physics_material_override"), &PhysXMotorcycle3D::set_physics_material_override);
+	ClassDB::bind_method(D_METHOD("get_physics_material_override"), &PhysXMotorcycle3D::get_physics_material_override);
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "physics_material_override", PROPERTY_HINT_RESOURCE_TYPE, PhysicsMaterial::get_class_static()), "set_physics_material_override", "get_physics_material_override");
 
 	ClassDB::bind_method(D_METHOD("get_linear_velocity"), &PhysXMotorcycle3D::get_linear_velocity);
 	ClassDB::bind_method(D_METHOD("get_forward_speed"), &PhysXMotorcycle3D::get_forward_speed);

@@ -33,6 +33,7 @@
 #include "core/math/vector3.h"
 #include "core/templates/local_vector.h"
 #include "scene/3d/node_3d.h"
+#include "scene/resources/physics_material.h"
 
 class PhysXVehicleWheel3D;
 
@@ -119,6 +120,11 @@ public:
 	void set_collision_mask(uint32_t p_mask);
 	uint32_t get_collision_mask() const { return collision_mask; }
 
+	// The chassis box's contact material (friction / rough / bounce / absorbent); null = friction 0.5, bounce 0.1.
+	// Edited live in place, no rebuild. The wheels' grip is the tire model's, not this.
+	void set_physics_material_override(const Ref<PhysicsMaterial> &p_material);
+	Ref<PhysicsMaterial> get_physics_material_override() const { return physics_material_override; }
+
 	Vector3 get_linear_velocity() const;
 	Vector3 get_angular_velocity() const;
 	real_t get_forward_speed() const;
@@ -148,6 +154,7 @@ private:
 	real_t brake = 0.0f;
 	uint32_t collision_layer = 1;
 	uint32_t collision_mask = 1;
+	Ref<PhysicsMaterial> physics_material_override;
 
 	// Opaque pointer to the real VehicleTrack composition (kept out of this
 	// header so nothing outside physx_tank_3d.cpp needs vehicle/PxVehicleAPI.h).
@@ -171,6 +178,8 @@ private:
 	// fixed it.
 	bool rebuild_scheduled = false;
 	void _rebuild_if_live();
+	void _chassis_material(real_t &r_friction, real_t &r_bounce) const;
+	void _chassis_material_changed();
 	void _do_deferred_rebuild();
 	bool _build();
 	void _destroy();

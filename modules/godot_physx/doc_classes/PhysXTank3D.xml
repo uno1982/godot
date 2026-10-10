@@ -86,7 +86,7 @@
 			Same meaning as [member CollisionObject3D.collision_layer]. Applies to the hull only -- the wheels do not have their own collision shapes (their ground contact is handled entirely by the suspension, not by a physical wheel shape touching the road).
 		</member>
 		<member name="collision_mask" type="int" setter="set_collision_mask" getter="get_collision_mask" default="1">
-			Same meaning as [member CollisionObject3D.collision_mask]. Applies to the hull only, see [member collision_layer].
+			Same meaning as [member CollisionObject3D.collision_mask]. Applies to the hull (see [member collision_layer]) and to the wheels' ground raycasts: like a [RayCast3D], a wheel only rests on a shape whose collision layer is in this mask, and never on an [Area3D].
 		</member>
 		<member name="left_ratio" type="float" setter="set_left_ratio" getter="get_left_ratio" default="0.0">
 			Drive input for the left track, [code]-1[/code] to [code]1[/code]. Scales up to [member max_engine_torque] of drive torque, split evenly across the left track's own wheels; sign is direction, not a separate reverse gear. Set every physics tick from script.
@@ -102,6 +102,9 @@
 		</member>
 		<member name="moment_of_inertia" type="Vector3" setter="set_moment_of_inertia" getter="get_moment_of_inertia" default="Vector3(8000, 9000, 9000)">
 			The vehicle's own rotational inertia around its X/Y/Z axes. Higher values resist rotation (pitch/yaw/roll) more.
+		</member>
+		<member name="physics_material_override" type="PhysicsMaterial" setter="set_physics_material_override" getter="get_physics_material_override">
+			The contact material of the hull box: what the vehicle feels like when its body, not its wheels, touches something -- on its roof or side after a flip, grinding along a wall, bottoming out. [member PhysicsMaterial.friction], [member PhysicsMaterial.rough], [member PhysicsMaterial.bounce] and [member PhysicsMaterial.absorbent] combine with the other side the same way as for any [RigidBody3D] on this module. If [code]null[/code], the hull uses friction [code]0.5[/code] and bounce [code]0.1[/code]; lower the friction for a body that skids further after a flip. Changes (including edits to the assigned material) apply immediately, without rebuilding the vehicle. Tire grip is not affected; it comes from the wheels' tire settings.
 		</member>
 		<member name="right_ratio" type="float" setter="set_right_ratio" getter="get_right_ratio" default="0.0">
 			Drive input for the right track, [code]-1[/code] to [code]1[/code]. Same convention as [member left_ratio], applied to the right track's own wheels. Setting [member left_ratio] and [member right_ratio] to opposite signs pivots the vehicle in place.

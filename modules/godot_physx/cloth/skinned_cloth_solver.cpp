@@ -354,6 +354,9 @@ void SkinnedClothSolver::_dispatch(const Callable &p_call) const {
 void SkinnedClothSolver::build(const PackedFloat32Array &p_rest, const PackedFloat32Array &p_rest_normals, const PackedInt32Array &p_skin_idx, const PackedFloat32Array &p_skin_w,
 		const PackedFloat32Array &p_constraints, const PackedInt32Array &p_batch_offsets, const PackedFloat32Array &p_tethers,
 		const PackedInt32Array &p_adj_offsets, const PackedInt32Array &p_adj_pairs, int p_bone_count) {
+	if (gpu.is_null()) {
+		return; // no device (headless): the callable below would be built on a null object
+	}
 	_dispatch(callable_mp(gpu.ptr(), &SkinnedClothSolverGPU::rt_build).bind(gpu, p_rest, p_rest_normals, p_skin_idx, p_skin_w, p_constraints, p_batch_offsets, p_tethers, p_adj_offsets, p_adj_pairs, p_bone_count));
 	if (gpu.is_valid() && !gpu->local) {
 		// Texture RIDs must exist before the caller wraps them.
@@ -362,6 +365,9 @@ void SkinnedClothSolver::build(const PackedFloat32Array &p_rest, const PackedFlo
 }
 
 void SkinnedClothSolver::step(const PackedFloat32Array &p_bones, const PackedFloat32Array &p_capsules, double p_delta, int p_substeps, const Settings &p_settings) {
+	if (gpu.is_null()) {
+		return;
+	}
 	const int substeps = MAX(p_substeps, 1);
 	const float dt = (float)(MIN(p_delta, 1.0 / 20.0) / substeps);
 	// Velocity kept per substep from a per-second damping fraction.
@@ -395,6 +401,9 @@ void SkinnedClothSolver::step(const PackedFloat32Array &p_bones, const PackedFlo
 }
 
 void SkinnedClothSolver::reset() {
+	if (gpu.is_null()) {
+		return;
+	}
 	_dispatch(callable_mp(gpu.ptr(), &SkinnedClothSolverGPU::rt_reset).bind(gpu));
 }
 

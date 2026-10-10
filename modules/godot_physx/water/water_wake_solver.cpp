@@ -249,6 +249,9 @@ void WaterWakeSolver::build(int p_cells, float p_size) {
 	n = MAX(p_cells, 16);
 	size = MAX(p_size, 1.0f);
 	have_origin = false;
+	if (gpu.is_null()) {
+		return; // no device (headless): the callable below would be built on a null object
+	}
 	_dispatch(callable_mp(gpu.ptr(), &WaterWakeSolverGPU::rt_build).bind(gpu, n));
 	if (gpu.is_valid() && !gpu->local) {
 		// The texture RID must exist before the caller wraps it.

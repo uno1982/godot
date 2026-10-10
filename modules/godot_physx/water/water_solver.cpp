@@ -1178,6 +1178,9 @@ void WaterSolver::configure(const Settings &p_settings) {
 		s = SphereSlot();
 	}
 	pending_impulses.clear();
+	if (gpu.is_null()) {
+		return; // no device (headless): the callable below would be built on a null object
+	}
 	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_build).bind(gpu, settings.grid_resolution, settings.domain_size, settings.ocean_grid_resolution, settings.ocean_domain_size, settings.wind_speed, settings.wind_direction, settings.wave_amplitude, settings.gravity, settings.caustics_enabled, settings.cell_depth, settings.depth, settings.shallow_fade_depth, settings.fetch));
 }
 
@@ -1299,10 +1302,16 @@ RID WaterSolver::get_ocean_foam_texture_rd_rid() const {
 }
 
 void WaterSolver::set_foam_settings(bool p_enabled, float p_choppiness, float p_threshold, float p_persistence, float p_shore_band, float p_shore_undertow) {
+	if (gpu.is_null()) {
+		return;
+	}
 	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_foam).bind(gpu, p_enabled, p_choppiness, p_threshold, p_persistence, p_shore_band, p_shore_undertow));
 }
 
 void WaterSolver::set_swash_settings(float p_run_up, float p_drain_speed, float p_dry_time) {
+	if (gpu.is_null()) {
+		return;
+	}
 	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_set_swash).bind(gpu, p_run_up, p_drain_speed, p_dry_time));
 }
 

@@ -431,7 +431,7 @@ void PhysXChunkEmitter3D::_bind_methods() {
 	ADD_GROUP("Motion", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impulse_min", PROPERTY_HINT_RANGE, "0,40,0.1"), "set_impulse_min", "get_impulse_min");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "impulse_max", PROPERTY_HINT_RANGE, "0,40,0.1"), "set_impulse_max", "get_impulse_max");
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spread_degrees", PROPERTY_HINT_RANGE, "0,180,0.5,radians_as_degrees"), "set_spread_degrees", "get_spread_degrees");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spread_degrees", PROPERTY_HINT_RANGE, "0,180,0.5,degrees"), "set_spread_degrees", "get_spread_degrees");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "spin_impulse", PROPERTY_HINT_RANGE, "0,30,0.1"), "set_spin_impulse", "get_spin_impulse");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "density", PROPERTY_HINT_RANGE, "1,20000,1,suffix:kg/m³"), "set_density", "get_density");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "friction", PROPERTY_HINT_RANGE, "0,3,0.01,or_greater"), "set_friction", "get_friction");

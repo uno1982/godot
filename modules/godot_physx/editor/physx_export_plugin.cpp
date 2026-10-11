@@ -42,7 +42,7 @@ namespace {
 
 struct ModuleLibrary {
 	const char *windows;
-	const char *linux;
+	const char *linuxbsd;
 	// What the game loses without it -- shown in the export warning.
 	const char *missing;
 };
@@ -51,8 +51,8 @@ struct ModuleLibrary {
 
 void PhysXExportPlugin::_export_begin(const HashSet<String> &p_features, bool p_debug, const String &p_path, int p_flags) {
 	const bool windows = p_features.has("windows");
-	const bool linux = p_features.has("linux");
-	if (!windows && !linux) {
+	const bool linuxbsd = p_features.has("linux");
+	if (!windows && !linuxbsd) {
 		return; // The module's libraries are only built for Windows and Linux.
 	}
 
@@ -91,7 +91,7 @@ void PhysXExportPlugin::_export_begin(const HashSet<String> &p_features, bool p_
 	LocalVector<String> missing_effects;
 	LocalVector<PackedStringArray> missing_files;
 	for (const ModuleLibrary &library : libraries) {
-		const String path = template_dir.path_join(windows ? library.windows : library.linux);
+		const String path = template_dir.path_join(windows ? library.windows : library.linuxbsd);
 		if (FileAccess::exists(path)) {
 			add_shared_object(path, Vector<String>(), String());
 			continue;

@@ -6,10 +6,11 @@ This script clones NVIDIA's PhysX repository at a pinned revision, drops in a
 build preset tuned to match Godot, runs PhysX's own project generation and
 CMake build, and prints the path to pass to scons as physx_sdk=.
 
-    python modules/godot_physx/misc/build_physx.py [--gpu] [--blast] [--flow]
+    python modules/godot_physx/misc/build_physx.py [--gpu] [--blast] [--flow] [--msvc-version {auto,14.3,14.5}]
     scons platform=windows target=editor physx_sdk=<printed path> [physx_gpu=yes] [blast_sdk=<printed path>] [flow_sdk=<printed path>]
 
-The GPU build also needs the CUDA Toolkit (CUDA_PATH set or nvcc on PATH).
+The GPU build also needs the CUDA Toolkit (CUDA_PATH set or nvcc on PATH);
+VS 2026/v145 requires CUDA 13.2 or newer.
 SCsub copies the GPU library next to the Godot binary for you.
 
 --blast additionally builds the Blast SDK (runtime mesh fracture/destruction,
@@ -34,6 +35,7 @@ defaults to the host OS (windows / linuxbsd).
 import argparse
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -46,10 +48,89 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PRESET_DIR = os.path.join(HERE, "physx_presets")
 PATCH_DIR = os.path.join(HERE, "physx_patches")
 
+WINDOWS_MSVC_PRESETS = {
+    "14.3": "vc17",  # Visual Studio 2022 / v143.
+    "14.5": "vc18",  # Visual Studio 2026 / v145.
+}
 
-def run(cmd, cwd):
+
+def run(cmd, cwd, env=None):
     print("+ " + " ".join(cmd) + "  (in %s)" % cwd)
-    subprocess.check_call(cmd, cwd=cwd)
+    subprocess.check_call(cmd, cwd=cwd, env=env)
+
+
+def find_cmake():
+    cmake = shutil.which("cmake")
+    if cmake:
+        return cmake
+
+    if os.name == "nt":
+        program_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+        vswhere = os.path.join(program_files_x86, "Microsoft Visual Studio", "Installer", "vswhere.exe")
+        if os.path.isfile(vswhere):
+            try:
+                install_dir = subprocess.check_output(
+                    [vswhere, "-latest", "-products", "*", "-property", "installationPath"], text=True
+                ).strip()
+                bundled_cmake = os.path.join(
+                    install_dir, "Common7", "IDE", "CommonExtensions", "Microsoft", "CMake", "CMake", "bin", "cmake.exe"
+                )
+                if os.path.isfile(bundled_cmake):
+                    return bundled_cmake
+            except (OSError, subprocess.CalledProcessError):
+                pass
+
+    sys.exit("CMake was not found on PATH or in the latest Visual Studio installation")
+
+
+def find_nvcc():
+    cuda_path = os.environ.get("CUDA_PATH")
+    if cuda_path:
+        nvcc = os.path.join(cuda_path, "bin", "nvcc.exe" if os.name == "nt" else "nvcc")
+        if os.path.isfile(nvcc):
+            return nvcc
+    return shutil.which("nvcc")
+
+
+def get_cuda_version(nvcc):
+    try:
+        output = subprocess.check_output([nvcc, "--version"], text=True, stderr=subprocess.STDOUT)
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    match = re.search(r"release\s+(\d+)\.(\d+)", output)
+    return (int(match.group(1)), int(match.group(2))) if match else None
+
+
+def detect_windows_msvc_version():
+    """Return the SCons MSVC version for the newest supported VS install."""
+    program_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+    vswhere = os.path.join(program_files_x86, "Microsoft Visual Studio", "Installer", "vswhere.exe")
+    if not os.path.isfile(vswhere):
+        sys.exit("could not find vswhere.exe; pass --msvc-version=14.3 or --msvc-version=14.5")
+
+    try:
+        version = subprocess.check_output(
+            [
+                vswhere,
+                "-latest",
+                "-products",
+                "*",
+                "-requires",
+                "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                "-property",
+                "installationVersion",
+            ],
+            text=True,
+        ).strip()
+        major = int(version.split(".", 1)[0])
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        sys.exit("could not detect a supported Visual Studio C++ installation; pass --msvc-version explicitly")
+
+    if major >= 18:
+        return "14.5"
+    if major >= 17:
+        return "14.3"
+    sys.exit("Visual Studio 2022 or newer with the C++ workload is required")
 
 
 def main():
@@ -72,6 +153,12 @@ def main():
         help="target platform / scons platform= value (default: autodetected from the host)",
     )
     ap.add_argument(
+        "--msvc-version",
+        choices=["auto", "14.3", "14.5"],
+        default="auto",
+        help="Windows toolset: 14.3=VS 2022/v143, 14.5=VS 2026/v145 (default: newest installed)",
+    )
+    ap.add_argument(
         "--src",
         metavar="DIR",
         help="PhysX checkout to build in; cloned here if absent (default: a 'physx-sdk' directory beside the Godot repo)",
@@ -81,13 +168,32 @@ def main():
     ap.add_argument("--config", default="release", choices=["release", "checked", "profile", "debug"])
     args = ap.parse_args()
 
-    preset_base = "vc17win64-godot" if args.platform == "windows" else "linux64-godot"
+    if args.platform == "windows":
+        msvc_version = detect_windows_msvc_version() if args.msvc_version == "auto" else args.msvc_version
+        preset_base = WINDOWS_MSVC_PRESETS[msvc_version] + "win64-godot"
+        print("using MSVC %s (%s)" % (msvc_version, "VS 2026/v145" if msvc_version == "14.5" else "VS 2022/v143"))
+    else:
+        msvc_version = ""
+        preset_base = "linux64-godot"
     preset = preset_base + "-gpu" if args.gpu else preset_base
     preset_file = os.path.join(PRESET_DIR, preset + ".xml")
     if not os.path.isfile(preset_file):
         sys.exit("missing preset: " + preset_file)
-    if args.gpu and not (os.environ.get("CUDA_PATH") or shutil.which("nvcc")):
-        sys.exit("--gpu needs the CUDA Toolkit (set CUDA_PATH or put nvcc on PATH)")
+    if args.gpu:
+        nvcc = find_nvcc()
+        if not nvcc:
+            sys.exit("--gpu needs the CUDA Toolkit (set CUDA_PATH or put nvcc on PATH)")
+        cuda_version = get_cuda_version(nvcc)
+        if args.platform == "windows" and msvc_version == "14.5":
+            if not cuda_version:
+                sys.exit("could not determine the CUDA version; VS 2026/v145 GPU builds require CUDA 13.2+")
+            if cuda_version < (13, 2):
+                sys.exit(
+                    "VS 2026/v145 GPU builds require CUDA 13.2 or newer; detected CUDA %d.%d"
+                    % cuda_version
+                )
+
+    cmake = find_cmake()
 
     # Locate / create the PhysX source tree.
     src = args.src
@@ -129,7 +235,9 @@ def main():
     is_windows = os.name == "nt"
     gen = "generate_projects.bat" if is_windows else "generate_projects.sh"
     gen_path = os.path.join(physx, gen)
-    run([gen_path, preset] if is_windows else ["bash", gen_path, preset], cwd=physx)
+    build_env = os.environ.copy()
+    build_env["PATH"] = os.path.dirname(cmake) + os.pathsep + build_env.get("PATH", "")
+    run([gen_path, preset] if is_windows else ["bash", gen_path, preset], cwd=physx, env=build_env)
 
     # Visual Studio is a multi-config generator (one build dir, config picked at
     # build time); on Linux PhysX generates one Makefile build dir per config.
@@ -137,8 +245,9 @@ def main():
     if not os.path.isdir(build_dir):
         sys.exit("project generation did not produce " + build_dir)
     run(
-        ["cmake", "--build", build_dir, "--config", args.config, "--target", "install", "--parallel", str(args.jobs)],
+        [cmake, "--build", build_dir, "--config", args.config, "--target", "install", "--parallel", str(args.jobs)],
         cwd=physx,
+        env=build_env,
     )
 
     sdk = os.path.join(physx, "install", preset, "PhysX")
@@ -147,6 +256,8 @@ def main():
 
     # Extra scons options from each optional SDK, printed as one command at the end.
     scons_args = ["physx_sdk=" + sdk.replace("\\", "/")]
+    if args.platform == "windows":
+        scons_args.append("msvc_version=" + msvc_version)
     if args.gpu:
         scons_args.append("physx_gpu=yes")
 

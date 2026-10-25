@@ -1,0 +1,23 @@
+diff --git a/physx/source/compiler/cmakegpu/CMakeLists.txt b/physx/source/compiler/cmakegpu/CMakeLists.txt
+index 3c9e82f37..bd6195c33 100644
+--- a/physx/source/compiler/cmakegpu/CMakeLists.txt
++++ b/physx/source/compiler/cmakegpu/CMakeLists.txt
+@@ -105,8 +105,17 @@ set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_INCLUDES 0)
+ set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_LIBRARIES 0)
+ set(CMAKE_CUDA_USE_RESPONSE_FILE_FOR_OBJECTS 0)
+ 
++# CUDA 13.2's front end warns when the VS 2026 STL's float copysign overload
++# calls the host intrinsic __copysignf. PhysX promotes every CUDA warning to an
++# error, although CUDA otherwise compiles the header and generated device code
++# successfully. Suppress only that front-end compatibility diagnostic.
++SET(PHYSX_CUDA_COMPAT_FLAGS "")
++IF(MSVC_VERSION GREATER_EQUAL 1950 AND CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 13.2)
++	SET(PHYSX_CUDA_COMPAT_FLAGS "-diag-suppress 20011")
++ENDIF()
++
+ # Cuda setup that is the same for all platforms and sub-projects
+-SET(PHYSX_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Werror=all-warnings -use_fast_math -ftz=true -prec-div=false -prec-sqrt=false -t0 -D_CONSOLE" CACHE INTERNAL "PhysX CUDA")
++SET(PHYSX_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} ${PHYSX_CUDA_COMPAT_FLAGS} -Werror=all-warnings -use_fast_math -ftz=true -prec-div=false -prec-sqrt=false -t0 -D_CONSOLE" CACHE INTERNAL "PhysX CUDA")
+ # Include the platform specific CMakeLists (The other CUDA flags that are specific to each platform are defined there)
+ INCLUDE(${PHYSX_ROOT_DIR}/${PROJECT_CMAKE_FILES_DIR}/${TARGET_BUILD_PLATFORM}/CMakeLists.txt)
+ 

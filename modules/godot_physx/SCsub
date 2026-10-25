@@ -2,6 +2,7 @@
 from misc.utility.scons_hints import *
 
 import os
+import glob
 
 Import("env")
 Import("env_modules")
@@ -41,8 +42,16 @@ physx_static_libs = [
 ]
 
 if env["platform"] == "windows":
-    # TODO: parameterize for target/arch/config.
-    physx_lib = os.path.join(physx_sdk, "bin", "win.x86_64.vc143.mt", "release")
+    # PhysX names this directory after the compiler that produced the SDK.
+    # Discover it instead of assuming vc143 so the same module supports both
+    # VS 2022/v143 and VS 2026/v145 SDK installations.
+    physx_lib_matches = glob.glob(os.path.join(physx_sdk, "bin", "win.x86_64.vc*.mt", "release"))
+    if len(physx_lib_matches) != 1:
+        raise SystemExit(
+            "godot_physx: expected exactly one Windows PhysX library directory under '%s', found: %s"
+            % (os.path.join(physx_sdk, "bin"), physx_lib_matches)
+        )
+    physx_lib = physx_lib_matches[0]
     physx_libs = list(physx_static_libs)
     if physx_gpu:
         physx_libs.append("PhysXGpu_64")  # import lib for PhysXGpu_64.dll

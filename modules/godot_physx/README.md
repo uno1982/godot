@@ -32,13 +32,12 @@ On top of everything a normal Godot Windows editor build needs (Python, SCons,
 Visual Studio with the C++ workload and Windows SDK, the D3D12 Agility SDK):
 
 - **CMake** and **git** — the PhysX SDK builds with its own CMake.
-- **CUDA Toolkit** — only for a GPU build (`--gpu`); built and tested against
-  12.8. On Windows: `winget install Nvidia.CUDA --version 12.8` (installs to
-  `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8` and sets
-  `CUDA_PATH`; open a fresh terminal afterwards). The end-user machine only
-  needs an NVIDIA driver (`nvcuda.dll` / `libcuda.so.1`), not the toolkit.
-  CUDA 13 works too, but needs a newer driver (R580+) and drops `sm_70`, so
-  stick with 12.8.
+- **CUDA Toolkit** — only for a GPU build (`--gpu`). VS 2022/v143 works with
+  CUDA 12.8 or newer; VS 2026/v145 requires CUDA 13.2 or newer. `CUDA_PATH`
+  must point at the selected toolkit; open a fresh terminal after installing
+  it. The end-user machine only needs an NVIDIA driver (`nvcuda.dll` /
+  `libcuda.so.1`), not the toolkit. CUDA 13 needs a newer driver (R580+) and
+  drops `sm_70`.
 
 On **Linux**, on top of a normal Godot Linux editor build: **CMake**, **git**
 and **clang** (the PhysX SDK is built with clang even when Godot itself is built
@@ -59,13 +58,19 @@ and Blast builds.
 ### Step 1 — build the PhysX SDK
 
 ```
-python modules/godot_physx/misc/build_physx.py            # CPU only
-python modules/godot_physx/misc/build_physx.py --gpu      # + GPU dynamics / fluid
+python modules/godot_physx/misc/build_physx.py                       # CPU only
+python modules/godot_physx/misc/build_physx.py --gpu                 # GPU dynamics / fluid
+python modules/godot_physx/misc/build_physx.py --gpu --blast --flow  # everything
 ```
 
 `--platform` defaults to the host OS (`windows` on Windows, `linuxbsd`
 elsewhere) — pass it explicitly to be sure, e.g. `--platform linuxbsd --gpu`.
 Run it on the machine you're building for.
+
+On Windows, `--msvc-version` defaults to `auto`, selecting VS 2026/v145 when
+installed and otherwise VS 2022/v143. The script prints the matching
+`msvc_version=` option for the Godot build. Use `--msvc-version 14.3` or
+`--msvc-version 14.5` to make the selection reproducible.
 
 This clones NVIDIA's PhysX repo (pinned) into a `physx-sdk/` folder next to the
 Godot repo, applies the Godot-tuned preset, builds and installs it, then prints

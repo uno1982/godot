@@ -1,0 +1,88 @@
+diff --git a/physx/dependencies.xml b/physx/dependencies.xml
+--- a/physx/dependencies.xml
++++ b/physx/dependencies.xml
+@@ -4,11 +4,11 @@
+ 	</dependency>
+ 
+ 	<dependency name="vswhere">
+-		<package name="VsWhere" version="2.7.3111.17308_1.0"  platforms="vc15win64* vc16win64* vc17win64* linux-crosscompile linux-aarch64-crosscompile "/>
++		<package name="VsWhere" version="2.7.3111.17308_1.0"  platforms="vc15win64* vc16win64* vc17win64* vc18win64* linux-crosscompile linux-aarch64-crosscompile "/>
+ 	</dependency>
+ 
+ 	<dependency name="freeglut">
+-		<package name="freeglut-windows" version="3.4_1.1"  platforms="vc15win64* vc16win64* vc17win64*"/>
++		<package name="freeglut-windows" version="3.4_1.1"  platforms="vc15win64* vc16win64* vc17win64* vc18win64*"/>
+ 	</dependency>
+ 
+     <dependency name="rapidjson">
+diff --git a/physx/generate_projects.bat b/physx/generate_projects.bat
+--- a/physx/generate_projects.bat
++++ b/physx/generate_projects.bat
+@@ -43,6 +43,12 @@ for /f "usebackq tokens=*" %%i in (`"%PM_vswhere_PATH%\VsWhere.exe  -version
+   set "VS170COMNTOOLS=%%i\Common7\Tools\"
+ )
+ 
++for /f "usebackq tokens=*" %%i in (`"%PM_vswhere_PATH%\VsWhere.exe  -version [18.0,19.0) -latest -property installationPath"`) do (
++	set "Install2026Dir=%%i"
++	set "VS180PATH=%%i"
++  set "VS180COMNTOOLS=%%i\Common7\Tools\"
++)
++
+ if exist "%Install2017Dir%\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt" (
+   pushd "%Install2017Dir%\VC\Auxiliary\Build\"
+   set /p Version=<Microsoft.VCToolsVersion.default.txt
+@@ -79,6 +85,18 @@ if exist "%Install2022Dir%\VC\Auxiliary\Build\Microsoft.VCToolsVersion.def
+   popd
+ )
+ 
++if exist "%Install2026Dir%\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt" (
++  pushd "%Install2026Dir%\VC\Auxiliary\Build\"
++  set /p Version=<Microsoft.VCToolsVersion.default.txt
++  for /f "delims=" %%x in (Microsoft.VCToolsVersion.default.txt) do (
++	if not "%%x"=="" (
++	  rem Example hardcodes x64 as the host and target architecture, but you could parse it from arguments
++	  set "VS180CLPATH=%Install2026Dir%\VC\Tools\MSVC\%%x\bin\HostX64\x64\cl.exe"
++	)
++  )
++  popd
++)
++
+ :ADDITIONAL_PARAMS_MISSING
+ call "%PM_PYTHON%" "%PHYSX_ROOT_DIR%buildtools/cmake_generate_projects.py" %1
+ if %ERRORLEVEL% neq 0 (
+diff --git a/physx/buildtools/cmake_generate_projects.py b/physx/buildtools/cmake_generate_projects.py
+--- a/physx/buildtools/cmake_generate_projects.py
++++ b/physx/buildtools/cmake_generate_projects.py
+@@ -215,7 +215,7 @@ class CMakePreset:
+                 if os.path.isfile(nvcc_path):
+                     outString = outString + ' -DCMAKE_CUDA_COMPILER=' + nvcc_path
+ 
+-                if self.compiler in ['vc15', 'vc16', 'vc17'] and self.generator != 'ninja':
++                if self.compiler in ['vc15', 'vc16', 'vc17', 'vc18'] and self.generator != 'ninja':
+                     outString = outString + ' -T cuda=' + cuda_path
+                 # TODO: Need to do the same for gcc (aarch64) when we package it with Packman
+                 elif self.compiler == 'clang':
+@@ -238,7 +238,8 @@ class CMakePreset:
+         vs_versions = {
+             'vc15': '\"Visual Studio 15 2017\"',
+             'vc16': '\"Visual Studio 16 2019\"',
+-            'vc17': '\"Visual Studio 17 2022\"'
++            'vc17': '\"Visual Studio 17 2022\"',
++            'vc18': '\"Visual Studio 18 2026\"'
+         }
+ 
+         # Visual studio
+diff --git a/physx/source/compiler/cmake/modules/GetCompilerAndPlatform.cmake b/physx/source/compiler/cmake/modules/GetCompilerAndPlatform.cmake
+--- a/physx/source/compiler/cmake/modules/GetCompilerAndPlatform.cmake
++++ b/physx/source/compiler/cmake/modules/GetCompilerAndPlatform.cmake
+@@ -49,7 +49,9 @@ FUNCTION(GetCompiler _ret)
+ 		ENDIF()
+ 	ELSEIF (GHSMULTI)
+ 		SET(COMPILER_SUFFIX "ghs")
+-	ELSEIF(MSVC_VERSION GREATER_EQUAL 1930)
++	ELSEIF(MSVC_VERSION GREATER_EQUAL 1950)
++		SET(COMPILER_SUFFIX "vc145")
++	ELSEIF(MSVC_VERSION GREATER_EQUAL 1930)
+ 		SET(COMPILER_SUFFIX "vc143")
+ 	ELSEIF (MSVC_VERSION GREATER_EQUAL 1920)
+ 		SET(COMPILER_SUFFIX "vc142")

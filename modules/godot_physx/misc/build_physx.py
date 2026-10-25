@@ -6,11 +6,10 @@ This script clones NVIDIA's PhysX repository at a pinned revision, drops in a
 build preset tuned to match Godot, runs PhysX's own project generation and
 CMake build, and prints the path to pass to scons as physx_sdk=.
 
-    python modules/godot_physx/misc/build_physx.py [--gpu] [--blast] [--flow] [--msvc-version {auto,14.3,14.5}]
+    python modules/godot_physx/misc/build_physx.py [--gpu] [--blast] [--flow]
     scons platform=windows target=editor physx_sdk=<printed path> [physx_gpu=yes] [blast_sdk=<printed path>] [flow_sdk=<printed path>]
 
-The GPU build also needs the CUDA Toolkit (CUDA_PATH set or nvcc on PATH);
-VS 2026/v145 requires CUDA 13.2 or newer.
+The GPU build also needs the CUDA Toolkit (CUDA_PATH set or nvcc on PATH); VS 2026/v145 requires CUDA 13.2 or newer.
 SCsub copies the GPU library next to the Godot binary for you.
 
 --blast additionally builds the Blast SDK (runtime mesh fracture/destruction,

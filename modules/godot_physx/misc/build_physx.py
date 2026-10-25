@@ -52,23 +52,6 @@ def run(cmd, cwd, env=None):
     print("+ " + " ".join(cmd) + "  (in %s)" % cwd)
     subprocess.check_call(cmd, cwd=cwd, env=env)
 
-def find_cmake():
-    cmake = shutil.which("cmake")
-    if cmake:
-        return cmake
-    if os.name == "nt":
-        program_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
-        vswhere = os.path.join(program_files_x86, "Microsoft Visual Studio", "Installer", "vswhere.exe")
-        if os.path.isfile(vswhere):
-            try:
-                install_dir = subprocess.check_output([vswhere, "-latest", "-products", "*", "-property", "installationPath"], text=True).strip()
-                bundled_cmake = os.path.join(install_dir, "Common7", "IDE", "CommonExtensions", "Microsoft", "CMake", "CMake", "bin", "cmake.exe")
-                if os.path.isfile(bundled_cmake):
-                    return bundled_cmake
-            except (OSError, subprocess.CalledProcessError):
-                pass
-    sys.exit("CMake was not found on PATH or in the latest Visual Studio installation")
-
 def find_nvcc():
     cuda_path = os.environ.get("CUDA_PATH")
     if cuda_path:
@@ -164,7 +147,9 @@ def main():
                     % cuda_version
                 )
 
-    cmake = find_cmake()
+    cmake = shutil.which("cmake")
+    if not cmake:
+        sys.exit("CMake was not found on PATH")
 
     # Locate / create the PhysX source tree.
     src = args.src

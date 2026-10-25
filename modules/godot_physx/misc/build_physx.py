@@ -142,10 +142,7 @@ def main():
             if not cuda_version:
                 sys.exit("could not determine the CUDA version; VS 2026/v145 GPU builds require CUDA 13.2+")
             if cuda_version < (13, 2):
-                sys.exit(
-                    "VS 2026/v145 GPU builds require CUDA 13.2 or newer; detected CUDA %d.%d"
-                    % cuda_version
-                )
+                sys.exit("VS 2026/v145 GPU builds require CUDA 13.2 or newer; detected CUDA %d.%d" % cuda_version)
 
     cmake = shutil.which("cmake")
     if not cmake:

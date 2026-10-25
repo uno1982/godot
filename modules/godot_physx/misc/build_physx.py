@@ -48,40 +48,26 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PRESET_DIR = os.path.join(HERE, "physx_presets")
 PATCH_DIR = os.path.join(HERE, "physx_patches")
 
-WINDOWS_MSVC_PRESETS = {
-    "14.3": "vc17",  # Visual Studio 2022 / v143.
-    "14.5": "vc18",  # Visual Studio 2026 / v145.
-}
-
-
 def run(cmd, cwd, env=None):
     print("+ " + " ".join(cmd) + "  (in %s)" % cwd)
     subprocess.check_call(cmd, cwd=cwd, env=env)
-
 
 def find_cmake():
     cmake = shutil.which("cmake")
     if cmake:
         return cmake
-
     if os.name == "nt":
         program_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
         vswhere = os.path.join(program_files_x86, "Microsoft Visual Studio", "Installer", "vswhere.exe")
         if os.path.isfile(vswhere):
             try:
-                install_dir = subprocess.check_output(
-                    [vswhere, "-latest", "-products", "*", "-property", "installationPath"], text=True
-                ).strip()
-                bundled_cmake = os.path.join(
-                    install_dir, "Common7", "IDE", "CommonExtensions", "Microsoft", "CMake", "CMake", "bin", "cmake.exe"
-                )
+                install_dir = subprocess.check_output([vswhere, "-latest", "-products", "*", "-property", "installationPath"], text=True).strip()
+                bundled_cmake = os.path.join(install_dir, "Common7", "IDE", "CommonExtensions", "Microsoft", "CMake", "CMake", "bin", "cmake.exe")
                 if os.path.isfile(bundled_cmake):
                     return bundled_cmake
             except (OSError, subprocess.CalledProcessError):
                 pass
-
     sys.exit("CMake was not found on PATH or in the latest Visual Studio installation")
-
 
 def find_nvcc():
     cuda_path = os.environ.get("CUDA_PATH")
@@ -91,7 +77,6 @@ def find_nvcc():
             return nvcc
     return shutil.which("nvcc")
 
-
 def get_cuda_version(nvcc):
     try:
         output = subprocess.check_output([nvcc, "--version"], text=True, stderr=subprocess.STDOUT)
@@ -100,38 +85,22 @@ def get_cuda_version(nvcc):
     match = re.search(r"release\s+(\d+)\.(\d+)", output)
     return (int(match.group(1)), int(match.group(2))) if match else None
 
-
 def detect_windows_msvc_version():
     """Return the SCons MSVC version for the newest supported VS install."""
     program_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
     vswhere = os.path.join(program_files_x86, "Microsoft Visual Studio", "Installer", "vswhere.exe")
     if not os.path.isfile(vswhere):
         sys.exit("could not find vswhere.exe; pass --msvc-version=14.3 or --msvc-version=14.5")
-
     try:
-        version = subprocess.check_output(
-            [
-                vswhere,
-                "-latest",
-                "-products",
-                "*",
-                "-requires",
-                "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-                "-property",
-                "installationVersion",
-            ],
-            text=True,
-        ).strip()
+        version = subprocess.check_output([vswhere, "-latest", "-products", "*", "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationVersion", ], text=True,).strip()
         major = int(version.split(".", 1)[0])
     except (OSError, subprocess.CalledProcessError, ValueError):
         sys.exit("could not detect a supported Visual Studio C++ installation; pass --msvc-version explicitly")
-
     if major >= 18:
         return "14.5"
     if major >= 17:
         return "14.3"
     sys.exit("Visual Studio 2022 or newer with the C++ workload is required")
-
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -169,8 +138,10 @@ def main():
     args = ap.parse_args()
 
     if args.platform == "windows":
+        preset_base = "vc17" + "win64-godot"
         msvc_version = detect_windows_msvc_version() if args.msvc_version == "auto" else args.msvc_version
-        preset_base = WINDOWS_MSVC_PRESETS[msvc_version] + "win64-godot"
+        if msvc_version == "14.5":
+            preset_base = "vc18" + "win64-godot"
         print("using MSVC %s (%s)" % (msvc_version, "VS 2026/v145" if msvc_version == "14.5" else "VS 2022/v143"))
     else:
         msvc_version = ""

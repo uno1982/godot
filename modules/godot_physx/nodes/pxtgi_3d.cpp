@@ -1144,7 +1144,7 @@ bool PXTGI3D::_shape_frame(int p_index, Transform3D &r_to_world, float &r_type, 
 		to_world = mesh->get_global_transform() * Transform3D(Basis(), bounds.get_center());
 	} else {
 		CollisionShape3D *cs = ObjectDB::get_instance<CollisionShape3D>(entry.shape_node);
-		if (cs == nullptr || cs->is_disabled() || !cs->is_inside_tree() || cs->get_shape().is_null()) {
+		if (cs == nullptr || cs->is_disabled() || !cs->is_inside_tree() || !cs->is_visible_in_tree() || cs->get_shape().is_null()) {
 			return false;
 		}
 		to_world = cs->get_global_transform();

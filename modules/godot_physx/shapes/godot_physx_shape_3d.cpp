@@ -314,14 +314,22 @@ bool GodotPhysXShape3D::set_data(const Variant &p_data) {
 			ERR_FAIL_COND_V_MSG(heights.size() != width * depth, true,
 					vformat("PhysX: height map has %d samples, expected width*depth = %d.", heights.size(), width * depth));
 
+			const real_t *h_ptr = heights.ptr();
 			real_t min_h = d.get("min_height", 0.0);
 			real_t max_h = d.get("max_height", 0.0);
-			if (min_h >= max_h) { // stale/unset -> derive from the data
+			// Stale/unset -> derive from the data. HeightMapShape3D sends NaN for both when its first sample is a hole.
+			if (!(min_h < max_h)) {
 				min_h = FLT_MAX;
 				max_h = -FLT_MAX;
 				for (int i = 0; i < heights.size(); i++) {
-					min_h = MIN(min_h, heights[i]);
-					max_h = MAX(max_h, heights[i]);
+					if (!Math::is_nan(h_ptr[i])) {
+						min_h = MIN(min_h, h_ptr[i]);
+						max_h = MAX(max_h, h_ptr[i]);
+					}
+				}
+				if (min_h > max_h) { // all holes
+					min_h = 0.0;
+					max_h = 0.0;
 				}
 			}
 			// PhysX samples are PxI16. Map [min_h, max_h] onto the full signed
@@ -335,15 +343,48 @@ bool GodotPhysXShape3D::set_data(const Variant &p_data) {
 			// PhysX sample(row, col) = samples[row * nbColumns + col], at local
 			// position (row * rowScale, height * heightScale, col * columnScale).
 			// row = x, col = z; the shape's local pose centers and flips it.
+			bool any_hole = false;
 			for (int z = 0; z < depth; z++) {
 				for (int x = 0; x < width; x++) {
-					const float h = (float)heights[z * width + x];
-					int q = (int)Math::round((h - (float)min_h) * inv_scale) - 32768;
-					q = CLAMP(q, -32768, 32767);
+					const float h = (float)h_ptr[z * width + x];
+					int q;
+					if (Math::is_nan(h)) {
+						q = -32768;
+						any_hole = true;
+					} else {
+						q = CLAMP((int)Math::round((h - (float)min_h) * inv_scale) - 32768, -32768, 32767);
+					}
 					PxHeightFieldSample &s = samples[(uint32_t)(x * depth + z)];
 					s.height = (PxI16)q;
 					s.materialIndex0 = 0;
 					s.materialIndex1 = 0;
+				}
+			}
+			// A NaN height is a hole (Jolt's rule): every triangle with a NaN corner is left out. The sample at
+			// (x, z) carries the materials of its cell's two triangles, which (tess flag off) are
+			// 0: (x, z) (x, z+1) (x+1, z) and 1: (x+1, z+1) (x+1, z) (x, z+1).
+			if (any_hole) {
+				auto mark = [&](int p_x, int p_z, bool p_first, bool p_second) {
+					if (p_x >= 0 && p_z >= 0 && p_x < width - 1 && p_z < depth - 1) {
+						PxHeightFieldSample &s = samples[(uint32_t)(p_x * depth + p_z)];
+						if (p_first) {
+							s.materialIndex0 = PxHeightFieldMaterial::eHOLE;
+						}
+						if (p_second) {
+							s.materialIndex1 = PxHeightFieldMaterial::eHOLE;
+						}
+					}
+				};
+				for (int z = 0; z < depth; z++) {
+					for (int x = 0; x < width; x++) {
+						if (Math::is_nan(h_ptr[z * width + x])) {
+							// The four cells around the sample, and which of their triangles have it as a corner.
+							mark(x, z, true, false);
+							mark(x - 1, z, true, true);
+							mark(x, z - 1, true, true);
+							mark(x - 1, z - 1, false, true);
+						}
+					}
 				}
 			}
 

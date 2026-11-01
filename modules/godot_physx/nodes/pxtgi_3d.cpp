@@ -866,16 +866,19 @@ const PXTGI3D::GeometryBlock *PXTGI3D::_geometry_for(const Ref<Shape3D> &p_shape
 			auto corner = [&](int x, int z) {
 				return Vector3(x - (w - 1) * 0.5f, heights[z * w + x], z - (d - 1) * 0.5f);
 			};
-			corners.resize((w - 1) * (d - 1) * 6);
-			Vector3 *c = corners.ptrw();
+			// A triangle with a NaN corner is a hole in the collision too.
+			corners.reserve((w - 1) * (d - 1) * 6);
+			auto triangle = [&](const Vector3 &p_a, const Vector3 &p_b, const Vector3 &p_c) {
+				if (!Math::is_nan(p_a.y) && !Math::is_nan(p_b.y) && !Math::is_nan(p_c.y)) {
+					corners.push_back(p_a);
+					corners.push_back(p_b);
+					corners.push_back(p_c);
+				}
+			};
 			for (int z = 0; z < d - 1; z++) {
 				for (int x = 0; x < w - 1; x++) {
-					*c++ = corner(x, z);
-					*c++ = corner(x + 1, z);
-					*c++ = corner(x, z + 1);
-					*c++ = corner(x + 1, z);
-					*c++ = corner(x + 1, z + 1);
-					*c++ = corner(x, z + 1);
+					triangle(corner(x, z), corner(x + 1, z), corner(x, z + 1));
+					triangle(corner(x + 1, z), corner(x + 1, z + 1), corner(x, z + 1));
 				}
 			}
 		}

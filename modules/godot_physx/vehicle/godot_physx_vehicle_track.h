@@ -453,6 +453,9 @@ public:
 	}
 
 	void initComponentSequence() {
+		// From empty: a live rebuild configures the same object again, and adding to the old sequence ran every
+		// component once more per step for each rebuild.
+		componentSequence = PxVehicleComponentSequence();
 		componentSequence.add(static_cast<PxVehiclePhysXActorBeginComponent *>(this));
 		componentSequence.add(static_cast<PxVehicleDirectDriveCommandResponseComponent *>(this));
 		componentSequence.add(static_cast<PxVehicleDirectDriveActuationStateComponent *>(this));

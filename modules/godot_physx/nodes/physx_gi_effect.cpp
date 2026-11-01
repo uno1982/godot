@@ -83,11 +83,12 @@ layout(set = 0, binding = 9, std140) uniform Frame {
 	vec4 spot_color[8]; // w: attenuation exponent
 	vec4 spot_cone[8]; // x: the cone edge's falloff exponent
 	vec4 reflect; // x: mode (0 Godot's own, 1 screen space, 2 and the shapes, 3 and the probes), y: roughness cutoff, z: emissives, w: the light sources just changed
-	vec4 emit_center[16];
-	vec4 emit_x[16]; // half axes
-	vec4 emit_y[16];
-	vec4 emit_z[16];
-	vec4 emit_color[16];
+	vec4 emit_center[64]; // w: its shape's slot in the records (-1: none)
+	vec4 emit_x[64]; // half axes; the three w: which way a one-sided glow faces (zero: all round)
+	vec4 emit_y[64];
+	vec4 emit_z[64];
+	vec4 emit_color[64];
+	vec4 emit_cdf[16]; // how often each is picked, as running totals (four to a vec4)
 	uvec4 cache; // x: frame, y: slot mask, z: on, w: rays a texel
 	// Reflection probes whose light replaces this pass's inside their box (Godot's scene shader overrides the GI
 	// buffers there): world-to-local rows, and the box's inner half extents where the override is whole (w: 1 the
@@ -955,7 +956,20 @@ vec3 direct_light(vec3 x, vec3 n) {
 // which shows the point itself) takes the cells around it blended, as a cell is a quarter metre or more across, too
 // coarse to show as it is; a mirror's (mirror_hit) lights the point directly and takes only their bounce light (a
 // glossy surface's rays land somewhere new each frame, and lit directly they'd flicker between light and shadow).
+// Whether the shape in record slot p_hit is one of the emissives sampled directly.
+bool sampled_emissive(int p_hit) {
+	for (int i = 0; i < int(f.reflect.z); i++) {
+		if (int(f.emit_center[i].w) == p_hit) {
+			return true;
+		}
+	}
+	return false;
+}
+
 vec3 world_light(vec3 x, vec3 n, int hit, sampler2D depth_tex, sampler2D color_tex, bool from_pixels, bool with_glow, bool sharp) {
+	// Without with_glow only the emissives sampled directly go without their glow here (it would count them twice);
+	// every other one glows as it is hit.
+	bool glows = with_glow || !sampled_emissive(hit);
 	vec3 v = (f.world_to_view * vec4(x, 1.0)).xyz;
 	if (v.z < -f.clip.x) {
 		vec2 sp = pixel_from_view(v, f.proj_info);
@@ -967,7 +981,7 @@ vec3 world_light(vec3 x, vec3 n, int hit, sampler2D depth_tex, sampler2D color_t
 				vec2 pp = prev_pixel(v, pd);
 				if (on_screen(pp)) {
 					vec3 seen = texture(color_tex, (pp + 0.5) / vec2(f.sizes.xy)).rgb;
-					return with_glow ? seen : max(seen - prims.p[hit].emission.rgb * f.sun_color.w, vec3(0.0));
+					return glows ? seen : max(seen - prims.p[hit].emission.rgb * f.sun_color.w, vec3(0.0));
 				}
 			}
 		}
@@ -982,7 +996,7 @@ vec3 world_light(vec3 x, vec3 n, int hit, sampler2D depth_tex, sampler2D color_t
 	}
 #endif
 	vec3 albedo = prims.p[hit].albedo.rgb;
-	vec3 glow = with_glow ? prims.p[hit].emission.rgb * f.sun_color.w : vec3(0.0);
+	vec3 glow = glows ? prims.p[hit].emission.rgb * f.sun_color.w : vec3(0.0);
 	if (f.cache.z != 0u) {
 		bool claimed;
 		int slot = cache_slot(x, n, from_pixels, claimed);
@@ -1012,6 +1026,162 @@ vec3 world_light(vec3 x, vec3 n, int hit, sampler2D depth_tex, sampler2D color_t
 	}
 	return glow + albedo * direct_light(x, n);
 }
+
+// The emissive whose box holds world point w (a little grown), or -1.
+int emissive_at(vec3 w) {
+	for (int i = 0; i < int(f.reflect.z); i++) {
+		vec3 d = w - f.emit_center[i].xyz;
+		vec3 ax = f.emit_x[i].xyz;
+		vec3 ay = f.emit_y[i].xyz;
+		vec3 az = f.emit_z[i].xyz;
+		if (abs(dot(d, ax)) <= dot(ax, ax) + 0.03 * length(ax) && abs(dot(d, ay)) <= dot(ay, ay) + 0.03 * length(ay) && abs(dot(d, az)) <= dot(az, az) + 0.03 * length(az)) {
+			return i;
+		}
+	}
+	return -1;
+}
+
+// How far along l from x a ray enters the box (centre c, half axes ax, ay, az) grown by p_grow; 0 from inside it. A box
+// flat along one axis (a panel) takes that axis from the other two.
+float emissive_entry(vec3 x, vec3 l, vec3 c, vec3 ax, vec3 ay, vec3 az, float p_grow) {
+	vec3 lens = vec3(length(ax), length(ay), length(az));
+	vec3 ux = lens.x > 1e-5 ? ax / lens.x : normalize(cross(ay, az));
+	vec3 uy = lens.y > 1e-5 ? ay / lens.y : normalize(cross(az, ax));
+	vec3 uz = lens.z > 1e-5 ? az / lens.z : normalize(cross(ax, ay));
+	vec3 h = lens + p_grow;
+	vec3 o = vec3(dot(x - c, ux), dot(x - c, uy), dot(x - c, uz));
+	vec3 d = vec3(dot(l, ux), dot(l, uy), dot(l, uz));
+	d = mix(d, vec3(1e-6), lessThan(abs(d), vec3(1e-6)));
+	vec3 t1 = (-h - o) / d;
+	vec3 t2 = (h - o) / d;
+	vec3 lo = min(t1, t2);
+	return max(max(lo.x, max(lo.y, lo.z)), 0.0);
+}
+
+// One emissive (picked uniformly), one point on the faces of its box that look toward x (a face pair chosen by its
+// area), a shadow ray: the light it gives x, as the GI buffer holds light (irradiance / pi).
+vec3 sample_emissive(vec3 x, vec3 n, vec2 xi, float pick, int count) {
+	// The emissive whose share of the running totals holds pick (a binary search), and its share.
+	int lo = 0;
+	int hi = count - 1;
+	while (lo < hi) {
+		int mid = (lo + hi) >> 1;
+		if (pick < f.emit_cdf[mid >> 2][mid & 3]) {
+			hi = mid;
+		} else {
+			lo = mid + 1;
+		}
+	}
+	int i = lo;
+	float share = f.emit_cdf[i >> 2][i & 3] - (i > 0 ? f.emit_cdf[(i - 1) >> 2][(i - 1) & 3] : 0.0);
+	if (share <= 0.0) {
+		return vec3(0.0);
+	}
+	vec3 c = f.emit_center[i].xyz;
+	vec3 ax = f.emit_x[i].xyz;
+	vec3 ay = f.emit_y[i].xyz;
+	vec3 az = f.emit_z[i].xyz;
+	float lx = length(ax);
+	float ly = length(ay);
+	float lz = length(az);
+	float a0 = ly * lz;
+	float a1 = lx * lz;
+	float a2 = lx * ly;
+	float total = a0 + a1 + a2;
+	if (total <= 0.0) {
+		return vec3(0.0);
+	}
+	vec3 face;
+	vec3 u;
+	vec3 v;
+	vec3 face_n;
+	// The area the point was picked over (a quarter of it: the axes are half axes).
+	float area;
+	vec3 facing = vec3(f.emit_x[i].w, f.emit_y[i].w, f.emit_z[i].w);
+	if (dot(facing, facing) > 0.5) {
+		// One-sided (a panel, a strip): only its front face glows, and only toward what is in front of it. The front
+		// face: the box face whose axis lines up best with the way it faces (for a flat box, its flat axis).
+		if (dot(x - c, facing) <= 0.0) {
+			return vec3(0.0);
+		}
+		vec3 al = abs(vec3(dot(facing, ax) / max(lx, 1e-6), dot(facing, ay) / max(ly, 1e-6), dot(facing, az) / max(lz, 1e-6)));
+		if (lx < 1e-5) {
+			al.x = 2.0;
+		} else if (ly < 1e-5) {
+			al.y = 2.0;
+		} else if (lz < 1e-5) {
+			al.z = 2.0;
+		}
+		if (al.x >= al.y && al.x >= al.z) {
+			face_n = lx > 1e-5 ? ax / lx : normalize(cross(ay, az));
+			face = face_n * lx;
+			u = ay;
+			v = az;
+			area = a0;
+		} else if (al.y >= al.z) {
+			face_n = ly > 1e-5 ? ay / ly : normalize(cross(az, ax));
+			face = face_n * ly;
+			u = ax;
+			v = az;
+			area = a1;
+		} else {
+			face_n = lz > 1e-5 ? az / lz : normalize(cross(ax, ay));
+			face = face_n * lz;
+			u = ax;
+			v = ay;
+			area = a2;
+		}
+		if (dot(face_n, facing) < 0.0) {
+			face = -face;
+			face_n = -face_n;
+		}
+		if (area <= 0.0) {
+			return vec3(0.0);
+		}
+	} else {
+		float r = xi.x * total;
+		if (r < a0) {
+			face = ax;
+			u = ay;
+			v = az;
+			xi.x = r / a0;
+		} else if (r < a0 + a1) {
+			face = ay;
+			u = ax;
+			v = az;
+			xi.x = (r - a0) / a1;
+		} else {
+			face = az;
+			u = ax;
+			v = ay;
+			xi.x = (r - a0 - a1) / a2;
+		}
+		face_n = normalize(face);
+		if (dot(x - c, face_n) < 0.0) {
+			face = -face;
+			face_n = -face_n;
+		}
+		area = total;
+	}
+	vec3 point = c + face + u * (2.0 * xi.x - 1.0) + v * (2.0 * xi.y - 1.0);
+	vec3 to = point - x;
+	float d2 = max(dot(to, to), 1e-2);
+	float dist = sqrt(d2);
+	vec3 l = to / dist;
+	float cos_x = dot(n, l);
+	float cos_e = dot(face_n, -l);
+	// The shadow ray stops where it enters the emissive's box (a little grown): collision is often coarser than what
+	// is drawn, and a lamp mounted on a wall or ceiling sits partly inside it. That collision would hide part of the
+	// lamp from its own sample points, a different part each frame (a flicker); a real occluder lies outside the box.
+	float reach = min(dist - 0.05, emissive_entry(x, l, c, ax, ay, az, 0.05) - 0.01);
+	if (cos_x <= 0.0 || cos_e <= 0.0 || (reach > 0.0 && blocked(x + n * 0.03, l, reach))) {
+		return vec3(0.0);
+	}
+	// pdf over the area picked from: 1 / (4 * area); this emissive picked with its share.
+	vec3 e = f.emit_color[i].rgb * cos_x * cos_e * (4.0 * area) / d2 / share / 3.14159265;
+	float lum = dot(e, vec3(0.2126, 0.7152, 0.0722));
+	return e * min(1.0, 8.0 / max(lum, 1e-4));
+}
 )";
 
 const char *SHADERS[8] = {
@@ -1029,79 +1199,6 @@ layout(set = 0, binding = 2) uniform sampler2D color_tex;
 layout(rgba16f, set = 0, binding = 3) uniform restrict writeonly image2D dst;
 
 @WORLD@
-
-// The emissive whose box holds world point w (a little grown), or -1.
-int emissive_at(vec3 w) {
-	for (int i = 0; i < int(f.reflect.z); i++) {
-		vec3 d = w - f.emit_center[i].xyz;
-		vec3 ax = f.emit_x[i].xyz;
-		vec3 ay = f.emit_y[i].xyz;
-		vec3 az = f.emit_z[i].xyz;
-		if (abs(dot(d, ax)) <= dot(ax, ax) + 0.03 * length(ax) && abs(dot(d, ay)) <= dot(ay, ay) + 0.03 * length(ay) && abs(dot(d, az)) <= dot(az, az) + 0.03 * length(az)) {
-			return i;
-		}
-	}
-	return -1;
-}
-
-// One emissive (picked uniformly), one point on the faces of its box that look toward x (a face pair chosen by its
-// area), a shadow ray: the light it gives x, as the GI buffer holds light (irradiance / pi).
-vec3 sample_emissive(vec3 x, vec3 n, vec2 xi, float pick, int count) {
-	int i = min(int(pick * float(count)), count - 1);
-	vec3 c = f.emit_center[i].xyz;
-	vec3 ax = f.emit_x[i].xyz;
-	vec3 ay = f.emit_y[i].xyz;
-	vec3 az = f.emit_z[i].xyz;
-	float lx = length(ax);
-	float ly = length(ay);
-	float lz = length(az);
-	float a0 = ly * lz;
-	float a1 = lx * lz;
-	float a2 = lx * ly;
-	float total = a0 + a1 + a2;
-	if (total <= 0.0) {
-		return vec3(0.0);
-	}
-	float r = xi.x * total;
-	vec3 face;
-	vec3 u;
-	vec3 v;
-	if (r < a0) {
-		face = ax;
-		u = ay;
-		v = az;
-		xi.x = r / a0;
-	} else if (r < a0 + a1) {
-		face = ay;
-		u = ax;
-		v = az;
-		xi.x = (r - a0) / a1;
-	} else {
-		face = az;
-		u = ax;
-		v = ay;
-		xi.x = (r - a0 - a1) / a2;
-	}
-	vec3 face_n = normalize(face);
-	if (dot(x - c, face_n) < 0.0) {
-		face = -face;
-		face_n = -face_n;
-	}
-	vec3 point = c + face + u * (2.0 * xi.x - 1.0) + v * (2.0 * xi.y - 1.0);
-	vec3 to = point - x;
-	float d2 = max(dot(to, to), 1e-2);
-	float dist = sqrt(d2);
-	vec3 l = to / dist;
-	float cos_x = dot(n, l);
-	float cos_e = dot(face_n, -l);
-	if (cos_x <= 0.0 || cos_e <= 0.0 || blocked(x + n * 0.03, l, dist - 0.05)) {
-		return vec3(0.0);
-	}
-	// pdf over the facing faces' area: 1 / (4 * total); one emissive of count.
-	vec3 e = f.emit_color[i].rgb * cos_x * cos_e * (4.0 * total) / d2 * float(count) / 3.14159265;
-	float lum = dot(e, vec3(0.2126, 0.7152, 0.0722));
-	return e * min(1.0, 8.0 / max(lum, 1e-4));
-}
 
 // Interleaved gradient noise: neighbouring texels get evenly spread values (blue-ish noise), which a small filter and
 // a few frames average out far faster than white noise. Each dimension of a ray's sample (its direction's two angles,
@@ -1613,11 +1710,20 @@ void main() {
 	vec3 arriving = vec3(0.0);
 	float far = f.ambient.w;
 	vec3 wn;
+	int emissives = int(f.reflect.z);
 	int hit = trace_world(origin, dir, far, wn);
 	if (hit >= 0) {
-		arriving = clamp_firefly(world_light(origin + dir * far, wn, hit, depth_tex, color_tex, false, true, false));
+		arriving = clamp_firefly(world_light(origin + dir * far, wn, hit, depth_tex, color_tex, false, emissives == 0, false));
 	} else if (escapes(origin, dir, f.ambient.w)) {
 		arriving = background_light(dir);
+	}
+	// The emissives, sampled directly as the texels' rays sample them: the cell's own ray would find a small bright lamp
+	// only now and then, and each find would light the whole cell for a while (a flicker).
+	if (emissives > 0) {
+		uint h = hash_u(slot ^ 0x27d4eb2du);
+		vec2 xi = vec2(fract(float(h & 0xffffu) / 65536.0 + float(f.cache.x) * 0.7548776662), fract(float(h >> 16u) / 65536.0 + float(f.cache.x) * 0.5698402910));
+		float pick = fract(float(hash_u(slot ^ 0x165667b1u) & 0xffffu) / 65536.0 + float(f.cache.x) * 0.6180339887);
+		arriving += sample_emissive(cell.pos.xyz, n, xi, pick, emissives);
 	}
 	// A cell averages its last 32 samples; while the light sources have just changed (a lamp switched off, an emitter
 	// gone) only its last 4, so the old light doesn't linger for seconds.
@@ -1932,11 +2038,12 @@ struct FrameData {
 	float spot_color[8][4];
 	float spot_cone[8][4];
 	float reflect[4];
-	float emit_center[16][4];
-	float emit_x[16][4];
-	float emit_y[16][4];
-	float emit_z[16][4];
-	float emit_color[16][4];
+	float emit_center[64][4];
+	float emit_x[64][4];
+	float emit_y[64][4];
+	float emit_z[64][4];
+	float emit_color[64][4];
+	float emit_cdf[16][4];
 	uint32_t cache[4];
 	float probe_x[8][4];
 	float probe_y[8][4];
@@ -2381,16 +2488,21 @@ void PhysXGIEffect::_render(int p_callback_type, const RenderData *p_render_data
 	data.reflect[1] = s.reflection_cutoff;
 	data.reflect[2] = (float)s.emissive_count;
 	data.reflect[3] = s.light_changed ? 1.0f : 0.0f;
+	float running = 0.0f;
 	for (int i = 0; i < s.emissive_count; i++) {
 		const Vector3 c = s.emissive_center[i];
 		data.emit_center[i][0] = c.x;
 		data.emit_center[i][1] = c.y;
 		data.emit_center[i][2] = c.z;
+		data.emit_center[i][3] = (float)s.emissive_slot[i];
+		running += s.emissive_pick[i];
+		data.emit_cdf[i / 4][i % 4] = i == s.emissive_count - 1 ? 1.0f : running;
 		float *axes[3] = { data.emit_x[i], data.emit_y[i], data.emit_z[i] };
 		for (int k = 0; k < 3; k++) {
 			axes[k][0] = s.emissive_axis[i][k].x;
 			axes[k][1] = s.emissive_axis[i][k].y;
 			axes[k][2] = s.emissive_axis[i][k].z;
+			axes[k][3] = s.emissive_facing[i][k]; // the axes' w: which way a one-sided glow faces
 		}
 		data.emit_color[i][0] = s.emissive_color[i].r * exposure;
 		data.emit_color[i][1] = s.emissive_color[i].g * exposure;

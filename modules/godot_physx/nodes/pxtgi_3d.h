@@ -145,6 +145,11 @@ class PXTGI3D : public Node3D {
 	bool mesh_shapes = false;
 	bool tree_mesh_walk = false;
 	LocalVector<int> emissive_entries; // shapes that give off light: sampled directly
+	// A mesh resource's surfaces' area-weighted mean normals (their length: how much of the surface faces that way),
+	// for which way a flat glow faces.
+	HashMap<ObjectID, Vector<Vector3>> surface_normals;
+	HashSet<int> chosen_emissives; // the emissives sampled directly last frame (shape indices): a head start this one
+	Vector3 _emissive_facing(int p_index);
 	LocalVector<float> ordered_floats; // the records in the tree's leaf order
 	LocalVector<float> tree_nodes;
 	LocalVector<int> leaf_order; // leaf slot -> shape

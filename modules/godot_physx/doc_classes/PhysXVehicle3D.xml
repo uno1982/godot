@@ -204,6 +204,9 @@
 		<member name="clutch" type="float" setter="set_clutch" getter="get_clutch" default="0.0">
 			A control, read every physics tick: 0 engaged, 1 fully pressed (the engine turns freely of the wheels). Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
 		</member>
+		<member name="clutch_assist" type="bool" setter="set_clutch_assist" getter="is_clutch_assist" default="true">
+			A control, read every physics tick. If [code]true[/code], a manual gearbox changes gear as soon as [member gear] (or [member reverse]) asks, disconnecting the engine for the shift by itself. If [code]false[/code], it changes gear only while [member clutch] is pressed past halfway, and otherwise stays in the gear it has. The automatic gearbox ignores it. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+		</member>
 		<member name="clutch_strength" type="float" setter="set_clutch_strength" getter="get_clutch_strength" default="10.0">
 			How strongly the engaged clutch couples the engine to the wheels. A weak clutch slips longer before the engine and wheels match speed. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
 		</member>

@@ -197,13 +197,16 @@ public:
 	bool is_reverse() const { return reverse; }
 	// Engine drive controls, read every tick. automatic_transmission: the autobox picks forward gears (reverse
 	// still selects the reverse gear); off, the gearbox goes to `gear` (-1 reverse, 0 neutral, 1.. forward), and
-	// reverse = true still means the reverse gear. clutch: 0 engaged .. 1 pressed.
+	// reverse = true still means the reverse gear. clutch: 0 engaged .. 1 pressed. clutch_assist off: a manual
+	// gearbox changes gear (reverse too) only while the clutch is pressed past halfway, and otherwise holds its gear.
 	void set_automatic_transmission(bool p_v) { automatic_transmission = p_v; }
 	bool is_automatic_transmission() const { return automatic_transmission; }
 	void set_gear(int p_gear) { gear = p_gear; }
 	int get_gear() const { return gear; }
 	void set_clutch(real_t p_v) { clutch = p_v; }
 	real_t get_clutch() const { return clutch; }
+	void set_clutch_assist(bool p_v) { clutch_assist = p_v; }
+	bool is_clutch_assist() const { return clutch_assist; }
 	// The gear engaged now, numbered as `gear` (0 while a shift is under way). Direct drive: 1 or -1.
 	int get_current_gear() const;
 	// The gear the gearbox is shifting to (the current one when not shifting), numbered as `gear`.
@@ -287,6 +290,7 @@ private:
 	bool automatic_transmission = true;
 	int gear = 1;
 	real_t clutch = 0.0f;
+	bool clutch_assist = true;
 	uint32_t collision_layer = 1;
 	uint32_t collision_mask = 1;
 	Ref<PhysicsMaterial> physics_material_override;

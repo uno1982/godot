@@ -816,7 +816,8 @@ sits at the right height in the editor. Wheels carry the suspension
     (`autobox_up_ratio` / `_down_ratio` of max RPM, `autobox_latency`).
     Otherwise the gearbox goes to `gear` (−1 reverse, 0 neutral, 1..). `reverse`
     selects the reverse gear either way, and `clutch` (0 engaged .. 1 pressed)
-    is read every tick. `differential` is **Open** (the torque is split evenly)
+    is read every tick. With `clutch_assist` off, a manual gearbox only changes
+    gear while the clutch is pressed past halfway. `differential` is **Open** (the torque is split evenly)
     or **Limited Slip** (torque moves off a wheel spinning faster than its
     partner; `limited_slip_*` biases per axle and between axles).
     `get_current_gear()`, `get_target_gear()` and `get_engine_rpm()` report the

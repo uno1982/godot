@@ -310,6 +310,10 @@ void PhysXVehicle3D::_notification(int p_what) {
 				} else if (!automatic_transmission) {
 					target = (PxU32)CLAMP(gear + 1, 0, (int)v.gearboxParams.nbRatios - 1);
 				}
+				if (!clutch_assist && !automatic_transmission && clutch < 0.5f) {
+					// No clutch, no shift: the gearbox stays in (or keeps shifting to) the gear it has.
+					target = v.gearboxState.targetGear;
+				}
 				v.engineTransmissionCommandState.targetGear = target;
 				v.engineTransmissionCommandState.clutch = (PxReal)CLAMP(clutch, (real_t)0.0, (real_t)1.0);
 			}
@@ -652,7 +656,7 @@ void PhysXVehicle3D::_validate_property(PropertyInfo &p_property) const {
 	const String name = p_property.name;
 	const bool engine_setting = name.begins_with("engine_") || name.begins_with("gear_") || name.begins_with("autobox_") ||
 			name.begins_with("limited_slip_") || name == "reverse_gear_ratio" || name == "final_drive_ratio" ||
-			name == "clutch_strength" || name == "differential" || name == "automatic_transmission" || name == "gear" || name == "clutch";
+			name == "clutch_strength" || name == "differential" || name == "automatic_transmission" || name == "gear" || name == "clutch" || name == "clutch_assist";
 	if ((drivetrain == DRIVETRAIN_ENGINE && name == "max_engine_torque") || (drivetrain != DRIVETRAIN_ENGINE && engine_setting) ||
 			(differential != DIFFERENTIAL_LIMITED_SLIP && name.begins_with("limited_slip_"))) {
 		p_property.usage = PROPERTY_USAGE_NO_EDITOR;
@@ -777,6 +781,9 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_clutch", "value"), &PhysXVehicle3D::set_clutch);
 	ClassDB::bind_method(D_METHOD("get_clutch"), &PhysXVehicle3D::get_clutch);
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "clutch", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_clutch", "get_clutch");
+	ClassDB::bind_method(D_METHOD("set_clutch_assist", "value"), &PhysXVehicle3D::set_clutch_assist);
+	ClassDB::bind_method(D_METHOD("is_clutch_assist"), &PhysXVehicle3D::is_clutch_assist);
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "clutch_assist"), "set_clutch_assist", "is_clutch_assist");
 	ClassDB::bind_method(D_METHOD("get_current_gear"), &PhysXVehicle3D::get_current_gear);
 	ClassDB::bind_method(D_METHOD("get_target_gear"), &PhysXVehicle3D::get_target_gear);
 	ClassDB::bind_method(D_METHOD("get_engine_rpm"), &PhysXVehicle3D::get_engine_rpm);

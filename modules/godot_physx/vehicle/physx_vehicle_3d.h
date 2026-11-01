@@ -173,6 +173,9 @@ public:
 	real_t get_front_anti_roll_stiffness() const { return front_anti_roll_stiffness; }
 	void set_rear_anti_roll_stiffness(real_t p_v);
 	real_t get_rear_anti_roll_stiffness() const { return rear_anti_roll_stiffness; }
+	// Where the tires push the chassis: 0 at the suspension mount (default), 1 at the contact patch.
+	void set_tire_force_point(real_t p_v);
+	real_t get_tire_force_point() const { return tire_force_point; }
 
 	// Runtime control inputs, same convention as PxVehicleCommandState: throttle/
 	// brake in [0,1], steer in [-1,1]. Set every tick from script, same pattern
@@ -199,6 +202,7 @@ public:
 	// still selects the reverse gear); off, the gearbox goes to `gear` (-1 reverse, 0 neutral, 1.. forward), and
 	// reverse = true still means the reverse gear. clutch: 0 engaged .. 1 pressed. clutch_assist off: a manual
 	// gearbox changes gear (reverse too) only while the clutch is pressed past halfway, and otherwise holds its gear.
+	// The automatic holds its gear while the clutch is pressed past halfway (revving for a launch).
 	void set_automatic_transmission(bool p_v) { automatic_transmission = p_v; }
 	bool is_automatic_transmission() const { return automatic_transmission; }
 	void set_gear(int p_gear) { gear = p_gear; }
@@ -281,6 +285,7 @@ private:
 	real_t ackermann_strength = 1.0f;
 	real_t front_anti_roll_stiffness = 0.0f;
 	real_t rear_anti_roll_stiffness = 0.0f;
+	real_t tire_force_point = 0.0f;
 
 	real_t throttle = 0.0f;
 	real_t brake = 0.0f;

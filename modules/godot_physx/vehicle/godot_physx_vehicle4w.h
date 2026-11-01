@@ -775,6 +775,11 @@ struct Vehicle4WConfig {
 	real_t front_anti_roll_stiffness = 0.0f;
 	real_t rear_anti_roll_stiffness = 0.0f;
 
+	// Where the tires push the chassis: 0 at the suspension mount (the wheel's top of travel), 1 at the tire's
+	// contact patch on the ground, following the suspension. Low in the car, as a real tire does, drive and
+	// braking forces pitch the body (squat, dive, a wheelie with enough grip) and cornering rolls it.
+	real_t tire_force_point = 0.0f;
+
 	// Same meaning as RigidBody3D/VehicleBody3D's own collision_layer/mask --
 	// applies to the chassis box shape only (see configure_vehicle4w()'s own
 	// note on why the wheel shapes stay non-simulating).
@@ -1073,7 +1078,14 @@ inline bool configure_vehicle4w(Vehicle4W &v, const Vehicle4WConfig &cfg, PxPhys
 		v.suspensionParams[i].suspensionTravelDist = (PxReal)w.suspension_travel;
 		v.suspensionParams[i].wheelAttachment = PxTransform(PxIdentity);
 
-		v.suspensionComplianceParams[i] = PxVehicleSuspensionComplianceParams(); // no toe/camber/force-offset curves
+		v.suspensionComplianceParams[i] = PxVehicleSuspensionComplianceParams(); // no toe/camber curves
+		if (cfg.tire_force_point > 0.0) {
+			// The contact patch from the mount (the attachment, in its own frame): travel_dist - jounce + radius
+			// down the travel direction, i.e. travel + radius fully extended (0) and radius fully compressed (1).
+			const PxVec3 down = v.suspensionParams[i].suspensionAttachment.q.rotateInv(to_px(travel_dir_local)) * (PxReal)CLAMP(cfg.tire_force_point, (real_t)0.0, (real_t)1.0);
+			v.suspensionComplianceParams[i].tireForceAppPoint.addPair(0.0f, down * (PxReal)(w.suspension_travel + w.radius));
+			v.suspensionComplianceParams[i].tireForceAppPoint.addPair(1.0f, down * (PxReal)w.radius);
+		}
 
 		v.tireForceParams[i].latStiffX = 0.01f;
 		v.tireForceParams[i].latStiffY = (PxReal)w.tire_lateral_stiffness;

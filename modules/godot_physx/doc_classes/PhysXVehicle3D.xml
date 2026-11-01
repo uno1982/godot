@@ -187,7 +187,7 @@
 			The automatic gearbox shifts up when the engine passes this fraction of [member engine_max_rpm]. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
 		</member>
 		<member name="automatic_transmission" type="bool" setter="set_automatic_transmission" getter="is_automatic_transmission" default="true">
-			A control, read every physics tick. If [code]true[/code], the automatic gearbox picks the forward gears. If [code]false[/code], the gearbox goes to [member gear]. Either way, [member reverse] selects the reverse gear. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+			A control, read every physics tick. If [code]true[/code], the automatic gearbox picks the forward gears. While [member clutch] is pressed past halfway it holds its gear, so revving against the clutch for a launch doesn't shift up standing still. If [code]false[/code], the gearbox goes to [member gear]. Either way, [member reverse] selects the reverse gear. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
 		</member>
 		<member name="brake" type="float" setter="set_brake" getter="get_brake" default="0.0">
 			Brake pedal input, [code]0[/code] to [code]1[/code]. Scales up to [member max_brake_torque] of braking torque at each wheel. Set every physics tick from script; does not persist on its own the way a real pedal would.
@@ -317,6 +317,9 @@
 		</member>
 		<member name="throttle" type="float" setter="set_throttle" getter="get_throttle" default="0.0">
 			Throttle input, [code]0[/code] to [code]1[/code]. Scales up to [member max_engine_torque] of drive torque at each traction wheel, in whichever direction [member reverse] currently selects. Set every physics tick from script.
+		</member>
+		<member name="tire_force_point" type="float" setter="set_tire_force_point" getter="get_tire_force_point" default="0.0">
+			Where the tire forces push on the chassis, from [code]0[/code] to [code]1[/code]. At [code]0[/code] (PhysX's own default) they act at the suspension mount, usually above the center of mass, so the body barely pitches or rolls under them. At [code]1[/code] they act at the tire's contact patch on the ground, like [VehicleWheel3D]'s: hard acceleration squats the rear and can lift the front wheels (a wheelie, with a high, rear-set [member center_of_mass] and grippy driven tires), and braking dives the nose. In between, the point moves down by that fraction of the way. Cornering forces get the same lever, so a grippy car with a high center of mass can roll over in a hard turn; less front grip than rear, a lower center of mass or stiffer anti-roll bars keep it on its wheels. Changing it while playing rebuilds the vehicle.
 		</member>
 		<member name="tire_grip" type="float" setter="set_tire_grip" getter="get_tire_grip" default="1.0">
 			A live multiplier on every tire's grip: below [code]1[/code] for ice, mud or wet roads, above for sticky tires. It takes effect at once, without rebuilding the vehicle (the wheels' own [code]tire_*[/code] properties rebuild it), so it can follow the ground the vehicle is on every frame.

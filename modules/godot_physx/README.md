@@ -813,7 +813,9 @@ sits at the right height in the editor. Wheels carry the suspension
     drives the traction wheels through a clutch and a gearbox (`gear_ratios`
     first to top, `reverse_gear_ratio`, `final_drive_ratio`, `gear_switch_time`).
     With `automatic_transmission` on, the autobox shifts up and down
-    (`autobox_up_ratio` / `_down_ratio` of max RPM, `autobox_latency`).
+    (`autobox_up_ratio` / `_down_ratio` of max RPM, `autobox_latency`), and
+    holds its gear while the clutch is pressed past halfway, so revving
+    against the clutch for a launch doesn't climb the gears standing still.
     Otherwise the gearbox goes to `gear` (−1 reverse, 0 neutral, 1..). `reverse`
     selects the reverse gear either way, and `clutch` (0 engaged .. 1 pressed)
     is read every tick. With `clutch_assist` off, a manual gearbox only changes
@@ -823,6 +825,16 @@ sits at the right height in the editor. Wheels carry the suspension
     `get_current_gear()`, `get_target_gear()` and `get_engine_rpm()` report the
     state. Every setting defaults to PhysX's own vehicle samples, which make a
     quick car; `engine_peak_torque` and the gear ratios tame it.
+
+  `tire_force_point` (0..1) sets the height where the tires push on the
+  chassis. At 0 (the default, PhysX's own) that's the suspension mount, usually
+  above the center of mass, so the body barely pitches or rolls under the tire
+  forces. At 1 it's the contact patch on the ground, like `VehicleBody3D`'s
+  wheels: hard acceleration squats the rear and can lift the front (a wheelie
+  with a high, rear-set center of mass and rear grip), and braking dives the
+  nose. Cornering gets the same lever, so a grippy car with a high center of
+  mass can roll over in a hard turn. Less front grip than rear, a lower center
+  of mass, or anti-roll bars keep it on its wheels.
 - **`PhysXMotorcycle3D`** — 2 wheels, front steering, rear traction. `PxVehicle2`
   has no balance mechanism, so staying upright is the script's job: read
   `get_roll_angle()` / `get_angular_velocity()` each tick and correct with

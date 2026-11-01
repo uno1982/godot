@@ -187,6 +187,7 @@ bool PhysXVehicle3D::_build() {
 	cfg.ackermann_strength = ackermann_strength;
 	cfg.front_anti_roll_stiffness = front_anti_roll_stiffness;
 	cfg.rear_anti_roll_stiffness = rear_anti_roll_stiffness;
+	cfg.tire_force_point = tire_force_point;
 	cfg.collision_layer = collision_layer;
 	cfg.collision_mask = collision_mask;
 	{
@@ -312,6 +313,10 @@ void PhysXVehicle3D::_notification(int p_what) {
 				}
 				if (!clutch_assist && !automatic_transmission && clutch < 0.5f) {
 					// No clutch, no shift: the gearbox stays in (or keeps shifting to) the gear it has.
+					target = v.gearboxState.targetGear;
+				} else if (automatic_transmission && !reverse && clutch >= 0.5f) {
+					// The autobox shifts on engine speed alone, so a car revved against the clutch would climb
+					// through the gears standing still. Hold the gear while the clutch is down (a launch).
 					target = v.gearboxState.targetGear;
 				}
 				v.engineTransmissionCommandState.targetGear = target;
@@ -557,6 +562,7 @@ PHYSX_VEHICLE_SETTER(max_steer_angle, max_steer_angle)
 PHYSX_VEHICLE_SETTER(ackermann_strength, ackermann_strength)
 PHYSX_VEHICLE_SETTER(front_anti_roll_stiffness, front_anti_roll_stiffness)
 PHYSX_VEHICLE_SETTER(rear_anti_roll_stiffness, rear_anti_roll_stiffness)
+PHYSX_VEHICLE_SETTER(tire_force_point, tire_force_point)
 
 #undef PHYSX_VEHICLE_SETTER
 
@@ -755,6 +761,10 @@ void PhysXVehicle3D::_bind_methods() {
 	ADD_GROUP("Anti-Roll", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "front_anti_roll_stiffness", PROPERTY_HINT_RANGE, "-50000,50000,100,or_less,or_greater"), "set_front_anti_roll_stiffness", "get_front_anti_roll_stiffness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "rear_anti_roll_stiffness", PROPERTY_HINT_RANGE, "-50000,50000,100,or_less,or_greater"), "set_rear_anti_roll_stiffness", "get_rear_anti_roll_stiffness");
+	ADD_GROUP("Tires", "");
+	ClassDB::bind_method(D_METHOD("set_tire_force_point", "value"), &PhysXVehicle3D::set_tire_force_point);
+	ClassDB::bind_method(D_METHOD("get_tire_force_point"), &PhysXVehicle3D::get_tire_force_point);
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "tire_force_point", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_tire_force_point", "get_tire_force_point");
 
 	ClassDB::bind_method(D_METHOD("set_throttle", "value"), &PhysXVehicle3D::set_throttle);
 	ClassDB::bind_method(D_METHOD("get_throttle"), &PhysXVehicle3D::get_throttle);

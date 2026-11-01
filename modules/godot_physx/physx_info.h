@@ -28,13 +28,16 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-
 #pragma once
 
+#include "core/math/transform_3d.h"
 #include "core/object/object.h"
+#include "core/templates/rid.h"
 
-// Script-side queries about the PhysX backend itself (not tied to any node):
-// PhysX.is_gpu_available(), PhysX.get_gpu_device_name().
+class PhysicalBone3D;
+
+// Script-side access to the PhysX backend itself (not tied to any node): PhysX.is_gpu_available(),
+// PhysX.get_gpu_device_name(), and the joint drives Godot's API has no room for (active ragdolls).
 class PhysX : public Object {
 	GDCLASS(PhysX, Object);
 
@@ -44,4 +47,17 @@ protected:
 public:
 	static bool is_gpu_available();
 	static String get_gpu_device_name();
+
+	static void joint_set_slerp_drive(const RID &p_joint, bool p_enabled, real_t p_stiffness, real_t p_damping, real_t p_torque_limit);
+	static bool joint_is_slerp_drive_enabled(const RID &p_joint);
+	static void joint_set_drive_acceleration(const RID &p_joint, bool p_enabled);
+	static bool joint_is_drive_acceleration(const RID &p_joint);
+	static void joint_set_linear_spring_force_limit(const RID &p_joint, Vector3::Axis p_axis, real_t p_limit);
+	static real_t joint_get_linear_spring_force_limit(const RID &p_joint, Vector3::Axis p_axis);
+	static void joint_set_angular_spring_torque_limit(const RID &p_joint, Vector3::Axis p_axis, real_t p_limit);
+	static real_t joint_get_angular_spring_torque_limit(const RID &p_joint, Vector3::Axis p_axis);
+	static void joint_set_drive_target(const RID &p_joint, const Transform3D &p_target);
+	static void joint_set_drive_target_from_poses(const RID &p_joint, const Transform3D &p_pose_a, const Transform3D &p_pose_b);
+	static Transform3D joint_get_drive_target(const RID &p_joint);
+	static RID physical_bone_get_joint(PhysicalBone3D *p_bone);
 };

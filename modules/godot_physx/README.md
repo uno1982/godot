@@ -1019,6 +1019,53 @@ so they work with whichever physics engine is selected, Jolt included.
 
 The demo boat is `demo/common/boat/boat.tscn`, on the beach.
 
+## Active ragdolls — joint drives
+
+Godot's joint API has no room for the drives an active ragdoll needs, so the
+`PhysX` singleton adds them. Each call takes a joint's RID
+(`Joint3D.get_rid()`, or `PhysX.physical_bone_get_joint(bone)` for a
+`PhysicalBone3D`) and works on pin, hinge, cone twist and Generic6DOF joints:
+
+| Call | What it does |
+| --- | --- |
+| `joint_set_slerp_drive(joint, enabled, stiffness, damping, torque_limit = INF)` | One spring that turns body B toward the drive target's rotation along the shortest path, all three angles at once, in place of the 6DOF's per-axis angular springs and motors. It works through the joint's angular limits (a 6DOF axis without a valid limit range is freed, as for its springs). On a hinge it drives the hinge angle; the hinge is rebuilt as a PhysX D6 joint the first time, with the same limits and motor. |
+| `joint_set_drive_acceleration(joint, enabled)` | The joint's spring stiffness and damping are accelerations, not forces: the same gains drive a light and a heavy bone alike. Motors keep their force units. |
+| `joint_set_linear_spring_force_limit(joint, axis, limit)`, `joint_set_angular_spring_torque_limit(joint, axis, limit)` | The most force or torque a 6DOF spring may use (infinite by default), so a stiff spring can't snap a body around. |
+| `joint_set_drive_target(joint, target)` | The pose the drives pull toward: body B's joint frame relative to body A's. One call that only moves the target, cheap enough for every bone every frame. A 6DOF joint's springs pull toward their equilibrium points until it's set; setting a new equilibrium point takes over again. |
+| `joint_set_drive_target_from_poses(joint, pose_a, pose_b)` | The target that puts body A at global transform `pose_a` and body B at `pose_b`; no need to know the joint's frames. |
+| `physical_bone_get_joint(bone)` | The RID of the joint between a `PhysicalBone3D` and its parent bone (empty for the root bone or `JOINT_TYPE_NONE`). |
+
+The settings read back with matching getters (`joint_is_slerp_drive_enabled`,
+`joint_get_drive_target`, …). To make a simulated skeleton follow an animation,
+drive each bone toward the pose an animated copy of the skeleton is in (a
+`PhysicalBone3D`'s body sits at `bone pose * body_offset`):
+
+```gdscript
+func _physics_process(_delta: float) -> void:
+	for bone: PhysicalBone3D in bones:
+		var joint := PhysX.physical_bone_get_joint(bone)
+		if joint.is_valid():
+			var parent: PhysicalBone3D = parent_of[bone]
+			PhysX.joint_set_drive_target_from_poses(joint,
+					animated.get_bone_global_pose(parent.get_bone_id()) * parent.body_offset,
+					animated.get_bone_global_pose(bone.get_bone_id()) * bone.body_offset)
+```
+
+with `PhysX.joint_set_slerp_drive(joint, true, 2000.0, 80.0)` and
+`PhysX.joint_set_drive_acceleration(joint, true)` once at the start. Only the
+two poses relative to each other matter, so skeleton-space poses do. An
+acceleration drive only counts the two bones at its joint, so a joint that
+carries more of the body (the spine holds up the torso, arms and head) needs
+its stiffness scaled up by about the mass it carries over its own bone's mass,
+or it sags to its limit. The drives act at the joints only: they hold the
+limbs' shape, while keeping the whole body upright (balance) stays up to the
+game, as in other engines. A pose a joint can't reach (past its limits, or a
+knee bent about another axis than its hinge's) is held as close as it goes.
+
+The example project's `demo/editor/joints/active_ragdoll.tscn` does this with
+the demo mannequin, its hips held where the animation has them by a
+`Generic6DOFJoint3D` to a static anchor (whose target is set the same way).
+
 ## Determinism and multiplayer
 
 - **GPU dynamics is never deterministic** — GPU solver scheduling varies run to
@@ -1040,7 +1087,9 @@ For deterministic lockstep multiplayer, use the Jolt backend.
 - **Not yet implemented:** joint softness / bias / restitution parameters.
   (6DOF linear and angular springs and motors are supported, mapped onto PhysX
   joint drives; a motor's force limit is a force or torque, as in Jolt, and a
-  running motor keeps its bodies awake.)
+  running motor keeps its bodies awake. SLERP and acceleration drives, spring
+  force limits and drive targets are on the `PhysX` singleton, see
+  [Active ragdolls](#active-ragdolls--joint-drives).)
   Unsupported shapes are treated as having no collision and log a warning once.
 - **Bounce between two bouncy bodies.** Godot Physics and Jolt combine two
   bodies' `bounce` as their sum, clamped to 0..1. PhysX can only pick one
@@ -1086,7 +1135,8 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   ragdolls) and the per-step transform sync all work. The Bullet-era joint
   softness / bias / relaxation / ERP parameters are ignored (as they are on
   Jolt), so joint stiffness itself can't be dialed in; PhysX's `PxD6` cone
-  defaults sit a little softer than Jolt's. `SkeletonModifier3D` spring bones
+  defaults sit a little softer than Jolt's. For bones driven toward a pose
+  (active ragdolls), see [Active ragdolls](#active-ragdolls--joint-drives). `SkeletonModifier3D` spring bones
   (`SpringBoneSimulator3D`,
   for hair and clothing) are engine-side and unaffected — they work identically
   on any backend.

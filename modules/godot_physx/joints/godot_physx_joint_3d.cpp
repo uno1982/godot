@@ -34,6 +34,7 @@
 #include "../objects/godot_physx_body_3d.h"
 #include "../spaces/godot_physx_space_3d.h"
 
+#include "core/config/engine.h"
 #include "core/error/error_macros.h"
 
 #include <PxPhysicsAPI.h>
@@ -46,6 +47,11 @@ using namespace physx;
 
 // Rotation mapping the frame's +Z (Godot hinge axis) onto PhysX's +X.
 static const PxQuat HINGE_Z_TO_X(-PxHalfPi, PxVec3(0, 1, 0));
+
+// A drive's force / torque limit; infinite (or a negative value) for none.
+static PxReal _drive_limit(real_t p_limit) {
+	return (Math::is_finite(p_limit) && p_limit >= 0.0) ? (PxReal)MIN(p_limit, (real_t)PX_MAX_F32) : PX_MAX_F32;
+}
 
 GodotPhysXJoint3D::~GodotPhysXJoint3D() {
 	clear();
@@ -124,6 +130,13 @@ PxJoint *GodotPhysXJoint3D::_create() const {
 					actor_b, PxTransform(to_px(frame_b.origin)));
 		}
 		case JointType::JOINT_TYPE_HINGE: {
+			if (hinge_d6) {
+				// A D6 with only the twist free can drive the hinge angle toward a target (an active ragdoll's knees
+				// and elbows); the revolute joint's drive is a velocity motor only.
+				return PxD6JointCreate(*physics,
+						actor_a, PxTransform(to_px(frame_a)) * PxTransform(HINGE_Z_TO_X),
+						actor_b, PxTransform(to_px(frame_b)) * PxTransform(HINGE_Z_TO_X));
+			}
 			return PxRevoluteJointCreate(*physics,
 					actor_a, PxTransform(to_px(frame_a)) * PxTransform(HINGE_Z_TO_X),
 					actor_b, PxTransform(to_px(frame_b)) * PxTransform(HINGE_Z_TO_X));
@@ -157,6 +170,18 @@ void GodotPhysXJoint3D::_apply_params() {
 	px_joint->setConstraintFlag(PxConstraintFlag::eCOLLISION_ENABLED, !collisions_disabled);
 	const PxTolerancesScale scale = px_joint->getScene() ? px_joint->getScene()->getPhysics().getTolerancesScale() : PxTolerancesScale();
 
+	PxD6Joint *d6 = _is_px_d6() ? static_cast<PxD6Joint *>(px_joint) : nullptr;
+	if (d6) {
+		// Start from no drives: a spring or motor switched off at runtime must stop acting (a left-over velocity
+		// drive braked the axis instead of letting it turn freely). The per-axis drives only exist outside SLERP.
+		d6->setAngularDriveConfig(PxD6AngularDriveConfig::eSWING_TWIST);
+		for (int d = PxD6Drive::eX; d <= PxD6Drive::eSWING2; d++) {
+			d6->setDrive((PxD6Drive::Enum)d, PxD6JointDrive());
+		}
+	}
+	PxVec3 lin_vel_target(0.0f);
+	PxVec3 ang_vel_target(0.0f);
+
 	switch (type) {
 		case JointType::JOINT_TYPE_PIN: {
 			PxD6Joint *j = static_cast<PxD6Joint *>(px_joint);
@@ -169,6 +194,30 @@ void GodotPhysXJoint3D::_apply_params() {
 		} break;
 
 		case JointType::JOINT_TYPE_HINGE: {
+			if (d6) {
+				d6->setMotion(PxD6Axis::eX, PxD6Motion::eLOCKED);
+				d6->setMotion(PxD6Axis::eY, PxD6Motion::eLOCKED);
+				d6->setMotion(PxD6Axis::eZ, PxD6Motion::eLOCKED);
+				d6->setMotion(PxD6Axis::eSWING1, PxD6Motion::eLOCKED);
+				d6->setMotion(PxD6Axis::eSWING2, PxD6Motion::eLOCKED);
+				d6->setMotion(PxD6Axis::eTWIST, hinge_use_limit ? (hinge_upper > hinge_lower ? PxD6Motion::eLIMITED : PxD6Motion::eLOCKED) : PxD6Motion::eFREE);
+				if (hinge_use_limit && hinge_upper > hinge_lower) {
+					const double twist_max = Math::TAU - 0.001;
+					d6->setTwistLimit(PxJointAngularLimitPair((PxReal)CLAMP(-hinge_upper, -twist_max, twist_max), (PxReal)CLAMP(-hinge_lower, -twist_max, twist_max)));
+				}
+				if (hinge_motor) {
+					// Godot's limit is an impulse per step; the D6's drive limits are forces (see below).
+					const GodotPhysXSpace3D *space = body_a ? body_a->get_space() : (body_b ? body_b->get_space() : nullptr);
+					const real_t step = (space && space->get_last_step() > 0.0) ? space->get_last_step() : 1.0 / Engine::get_singleton()->get_physics_ticks_per_second();
+					d6->setDrive(PxD6Drive::eTWIST, PxD6JointDrive(0.0f, 1.0e6f, hinge_motor_max_impulse > 0.0 ? _drive_limit(hinge_motor_max_impulse / step) : PX_MAX_F32));
+					// Not negated as for the revolute drive: the D6's drive velocity runs the other way (see the 6DOF motors).
+					ang_vel_target.x = (PxReal)hinge_motor_velocity;
+				} else if (slerp_drive) {
+					// The hinge's one angle is its SLERP: the twist drive turns it toward the target's.
+					d6->setDrive(PxD6Drive::eTWIST, PxD6JointDrive((PxReal)slerp_stiffness, (PxReal)slerp_damping, _drive_limit(slerp_torque_limit), drive_acceleration));
+				}
+				break;
+			}
 			PxRevoluteJoint *j = static_cast<PxRevoluteJoint *>(px_joint);
 			j->setRevoluteJointFlag(PxRevoluteJointFlag::eLIMIT_ENABLED, hinge_use_limit);
 			if (hinge_use_limit) {
@@ -208,11 +257,6 @@ void GodotPhysXJoint3D::_apply_params() {
 
 		case JointType::JOINT_TYPE_6DOF: {
 			PxD6Joint *j = static_cast<PxD6Joint *>(px_joint);
-			// Start from no drives: a spring or motor switched off at runtime must stop acting (a left-over
-			// velocity drive braked the axis instead of letting it turn freely).
-			for (int d = PxD6Drive::eX; d <= PxD6Drive::eSWING2; d++) {
-				j->setDrive((PxD6Drive::Enum)d, PxD6JointDrive());
-			}
 			const PxD6Axis::Enum lin_axes[3] = { PxD6Axis::eX, PxD6Axis::eY, PxD6Axis::eZ };
 			const PxD6Axis::Enum ang_axes[3] = { PxD6Axis::eTWIST, PxD6Axis::eSWING1, PxD6Axis::eSWING2 };
 			for (int a = 0; a < 3; a++) {
@@ -245,8 +289,6 @@ void GodotPhysXJoint3D::_apply_params() {
 
 			// Linear drives: a spring (stiffness toward an equilibrium point) and a
 			// velocity motor share the per-axis drive slot.
-			PxVec3 drive_pos(0.0f);
-			PxVec3 lin_vel_target(0.0f);
 			for (int a = 0; a < 3; a++) {
 				const Axis6DOF &ax = axis6[a];
 				if (!ax.lin_spring && !ax.lin_motor) {
@@ -254,11 +296,9 @@ void GodotPhysXJoint3D::_apply_params() {
 				}
 				const PxReal k = ax.lin_spring ? (PxReal)ax.lin_spring_stiffness : 0.0f;
 				const PxReal d = ax.lin_spring ? (PxReal)ax.lin_spring_damping : 1.0e6f;
-				const PxReal f = (ax.lin_motor && ax.lin_motor_force > 0.0) ? (PxReal)ax.lin_motor_force : PX_MAX_F32;
-				j->setDrive((PxD6Drive::Enum)(PxD6Drive::eX + a), PxD6JointDrive(k, d, f));
-				if (ax.lin_spring) {
-					(&drive_pos.x)[a] = (PxReal)ax.lin_spring_eq;
-				}
+				const PxReal f = (ax.lin_motor && ax.lin_motor_force > 0.0) ? (PxReal)ax.lin_motor_force : _drive_limit(ax.lin_spring_force_limit);
+				// A motor keeps its force units: its limit is Godot's force limit.
+				j->setDrive((PxD6Drive::Enum)(PxD6Drive::eX + a), PxD6JointDrive(k, d, f, drive_acceleration && !ax.lin_motor));
 				if (ax.lin_motor) {
 					(&lin_vel_target.x)[a] = (PxReal)ax.lin_motor_target;
 				}
@@ -270,17 +310,17 @@ void GodotPhysXJoint3D::_apply_params() {
 			}
 
 			// Angular springs: axis X -> twist drive, axis Y -> swing1, axis Z ->
-			// swing2. The drive target rotation is built from the equilibrium angles.
+			// swing2, toward the equilibrium angles (see _equilibrium_target()). A SLERP drive replaces them and the
+			// motors, and needs all three angles unlocked.
 			const PxD6Drive::Enum ang_drives[3] = { PxD6Drive::eTWIST, PxD6Drive::eSWING1, PxD6Drive::eSWING2 };
-			const PxVec3 ang_drive_axis[3] = { PxVec3(1, 0, 0), PxVec3(0, 1, 0), PxVec3(0, 0, 1) };
-			PxQuat drive_rot(PxIdentity);
 			for (int a = 0; a < 3; a++) {
 				const Axis6DOF &ax = axis6[a];
-				if (!ax.ang_spring) {
+				if (!ax.ang_spring && !slerp_drive) {
 					continue;
 				}
-				j->setDrive(ang_drives[a], PxD6JointDrive((PxReal)ax.ang_spring_stiffness, (PxReal)ax.ang_spring_damping, PX_MAX_F32));
-				drive_rot = drive_rot * PxQuat((PxReal)-ax.ang_spring_eq, ang_drive_axis[a]); // (the other way round too)
+				if (!slerp_drive) {
+					j->setDrive(ang_drives[a], PxD6JointDrive((PxReal)ax.ang_spring_stiffness, (PxReal)ax.ang_spring_damping, _drive_limit(ax.ang_spring_torque_limit), drive_acceleration));
+				}
 				if (!(ax.ang_limit && ax.ang_upper > ax.ang_lower)) {
 					j->setMotion(ang_axes[a], PxD6Motion::eFREE);
 				}
@@ -288,10 +328,9 @@ void GodotPhysXJoint3D::_apply_params() {
 
 			// Angular motors: a velocity drive on the axis (no stiffness; the damping is the velocity gain, the force
 			// limit the motor's torque). Like Jolt, a motor takes the axis over from a spring.
-			PxVec3 ang_vel_target(0.0f);
 			for (int a = 0; a < 3; a++) {
 				const Axis6DOF &ax = axis6[a];
-				if (!ax.ang_motor) {
+				if (!ax.ang_motor || slerp_drive) {
 					continue;
 				}
 				const PxReal f = ax.ang_motor_force > 0.0 ? (PxReal)ax.ang_motor_force : PX_MAX_F32;
@@ -303,18 +342,62 @@ void GodotPhysXJoint3D::_apply_params() {
 					j->setMotion(ang_axes[a], PxD6Motion::eFREE);
 				}
 			}
-
-			// Motor limits are a force / torque, as Godot Physics and Jolt read them (PhysX's default is an impulse
-			// per step, which made a linear motor ~60x stronger at 60 Hz).
-			j->setConstraintFlag(PxConstraintFlag::eDRIVE_LIMITS_ARE_FORCES, true);
-			// Always set (zero without drives): it also wakes the bodies, so a change made while they sleep acts.
-			j->setDrivePosition(PxTransform(drive_pos, drive_rot), true);
-			j->setDriveVelocity(lin_vel_target, ang_vel_target, true);
 		} break;
 
 		default:
 			break;
 	}
+
+	if (d6) {
+		if (slerp_drive && type != JointType::JOINT_TYPE_HINGE) {
+			d6->setAngularDriveConfig(PxD6AngularDriveConfig::eSLERP);
+			d6->setDrive(PxD6Drive::eSLERP, PxD6JointDrive((PxReal)slerp_stiffness, (PxReal)slerp_damping, _drive_limit(slerp_torque_limit), drive_acceleration));
+		}
+		// Motor limits are a force / torque, as Godot Physics and Jolt read them (PhysX's default is an impulse
+		// per step, which made a linear motor ~60x stronger at 60 Hz).
+		d6->setConstraintFlag(PxConstraintFlag::eDRIVE_LIMITS_ARE_FORCES, true);
+		// Always set (zero without drives): it also wakes the bodies, so a change made while they sleep acts.
+		d6->setDrivePosition(to_px(_px_drive_target()), true);
+		d6->setDriveVelocity(lin_vel_target, ang_vel_target, true);
+	}
+}
+
+bool GodotPhysXJoint3D::has_drives() const {
+	return type == JointType::JOINT_TYPE_PIN || type == JointType::JOINT_TYPE_HINGE || type == JointType::JOINT_TYPE_CONE_TWIST || type == JointType::JOINT_TYPE_6DOF;
+}
+
+bool GodotPhysXJoint3D::_is_px_d6() const {
+	return has_drives() && (type != JointType::JOINT_TYPE_HINGE || hinge_d6);
+}
+
+Transform3D GodotPhysXJoint3D::_px_drive_target() const {
+	const Transform3D target = get_drive_target();
+	if (type == JointType::JOINT_TYPE_HINGE) {
+		// The hinge's PhysX frames are turned so its axis is X (see _create()).
+		const Transform3D z_to_x(Basis(to_godot(HINGE_Z_TO_X)));
+		return z_to_x.affine_inverse() * target * z_to_x;
+	}
+	return target;
+}
+
+Transform3D GodotPhysXJoint3D::_equilibrium_target() const {
+	Transform3D target;
+	if (type != JointType::JOINT_TYPE_6DOF) {
+		return target;
+	}
+	const Vector3 axes[3] = { Vector3(1, 0, 0), Vector3(0, 1, 0), Vector3(0, 0, 1) };
+	Quaternion rot;
+	for (int a = 0; a < 3; a++) {
+		const Axis6DOF &ax = axis6[a];
+		if (ax.lin_spring) {
+			target.origin[a] = ax.lin_spring_eq;
+		}
+		if (ax.ang_spring) {
+			rot = rot * Quaternion(axes[a], -ax.ang_spring_eq); // (the other way round, as the limits)
+		}
+	}
+	target.basis = Basis(rot);
+	return target;
 }
 
 void GodotPhysXJoint3D::rebuild() {
@@ -322,6 +405,9 @@ void GodotPhysXJoint3D::rebuild() {
 		return;
 	}
 	_destroy();
+	if (type == JointType::JOINT_TYPE_HINGE && slerp_drive) {
+		hinge_d6 = true; // for good: a hinge that was driven once stays a D6
+	}
 	px_joint = _create();
 	if (px_joint) {
 		_apply_params();
@@ -580,6 +666,8 @@ void GodotPhysXJoint3D::set_6dof_param(Vector3::Axis p_axis, PhysicsServer3D::G6
 			ax.lin_spring_damping = p_value;
 			break;
 		case PhysicsServer3D::G6DOF_JOINT_LINEAR_SPRING_EQUILIBRIUM_POINT:
+			// A new equilibrium point takes over from a drive target (the joint nodes resend the same value).
+			has_drive_target = has_drive_target && ax.lin_spring_eq == p_value;
 			ax.lin_spring_eq = p_value;
 			break;
 		case PhysicsServer3D::G6DOF_JOINT_ANGULAR_SPRING_STIFFNESS:
@@ -589,6 +677,7 @@ void GodotPhysXJoint3D::set_6dof_param(Vector3::Axis p_axis, PhysicsServer3D::G6
 			ax.ang_spring_damping = p_value;
 			break;
 		case PhysicsServer3D::G6DOF_JOINT_ANGULAR_SPRING_EQUILIBRIUM_POINT:
+			has_drive_target = has_drive_target && ax.ang_spring_eq == p_value;
 			ax.ang_spring_eq = p_value;
 			break;
 		default: {
@@ -692,4 +781,53 @@ bool GodotPhysXJoint3D::get_6dof_flag(Vector3::Axis p_axis, PhysicsServer3D::G6D
 		default:
 			return false;
 	}
+}
+
+/* --- active-ragdoll drives (PhysX.joint_*) --------------------------------- */
+
+void GodotPhysXJoint3D::set_spring_force_limit(Vector3::Axis p_axis, bool p_angular, real_t p_limit) {
+	Axis6DOF &ax = axis6[p_axis];
+	(p_angular ? ax.ang_spring_torque_limit : ax.lin_spring_force_limit) = p_limit;
+	_apply_params();
+}
+
+real_t GodotPhysXJoint3D::get_spring_force_limit(Vector3::Axis p_axis, bool p_angular) const {
+	const Axis6DOF &ax = axis6[p_axis];
+	return p_angular ? ax.ang_spring_torque_limit : ax.lin_spring_force_limit;
+}
+
+void GodotPhysXJoint3D::set_slerp_drive(bool p_enabled, real_t p_stiffness, real_t p_damping, real_t p_torque_limit) {
+	slerp_drive = p_enabled;
+	slerp_stiffness = MAX(p_stiffness, (real_t)0.0);
+	slerp_damping = MAX(p_damping, (real_t)0.0);
+	slerp_torque_limit = p_torque_limit;
+	if (slerp_drive && type == JointType::JOINT_TYPE_HINGE && !hinge_d6) {
+		rebuild(); // as a D6
+		return;
+	}
+	_apply_params();
+}
+
+void GodotPhysXJoint3D::set_drive_acceleration(bool p_enabled) {
+	drive_acceleration = p_enabled;
+	_apply_params();
+}
+
+void GodotPhysXJoint3D::set_drive_target(const Transform3D &p_target) {
+	drive_target = p_target.orthonormalized();
+	has_drive_target = true;
+	if (px_joint && _is_px_d6()) {
+		static_cast<PxD6Joint *>(px_joint)->setDrivePosition(to_px(_px_drive_target()), true);
+	}
+}
+
+void GodotPhysXJoint3D::set_drive_target_from_poses(const Transform3D &p_pose_a, const Transform3D &p_pose_b) {
+	// A missing body's frame is already in world space.
+	const Transform3D joint_a = body_a ? p_pose_a.orthonormalized() * frame_a : frame_a;
+	const Transform3D joint_b = body_b ? p_pose_b.orthonormalized() * frame_b : frame_b;
+	set_drive_target(joint_a.affine_inverse() * joint_b);
+}
+
+Transform3D GodotPhysXJoint3D::get_drive_target() const {
+	return has_drive_target ? drive_target : _equilibrium_target();
 }

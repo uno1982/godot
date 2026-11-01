@@ -121,6 +121,7 @@ public:
 	// Lookups for the direct space state (scene queries).
 	GodotPhysXShape3D *get_shape(RID p_rid) const { return shape_owner.get_or_null(p_rid); }
 	GodotPhysXBody3D *get_body(RID p_rid) const { return body_owner.get_or_null(p_rid); }
+	GodotPhysXJoint3D *get_joint(RID p_rid) const { return joint_owner.get_or_null(p_rid); }
 	// Lets code inside this module (e.g. the PxVehicle2 probe) reach a space's
 	// real PxScene/PxPhysics directly, same access level get_body() already
 	// gives to a body's PxRigidActor.

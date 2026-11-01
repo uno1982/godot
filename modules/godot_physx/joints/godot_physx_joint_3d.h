@@ -58,6 +58,8 @@ class GodotPhysXJoint3D {
 	// Per-type parameters (defaults chosen to be inert).
 	real_t hinge_lower = 0.0, hinge_upper = 0.0;
 	bool hinge_use_limit = false, hinge_motor = false;
+	// Built as a PhysX D6 (the twist free) once a SLERP drive is on: a PxRevoluteJoint can't drive to an angle.
+	bool hinge_d6 = false;
 	real_t hinge_motor_velocity = 0.0, hinge_motor_max_impulse = 0.0;
 
 	real_t slider_lower = 0.0, slider_upper = 0.0;
@@ -77,11 +79,28 @@ class GodotPhysXJoint3D {
 		bool lin_spring = false, ang_spring = false;
 		real_t lin_spring_stiffness = 0.0, lin_spring_damping = 0.0, lin_spring_eq = 0.0;
 		real_t ang_spring_stiffness = 0.0, ang_spring_damping = 0.0, ang_spring_eq = 0.0;
+		// Beyond Godot's API (PhysX.joint_set_*): a spring's own force / torque limit.
+		real_t lin_spring_force_limit = Math::INF, ang_spring_torque_limit = Math::INF;
 	} axis6[3];
+
+	// Active-ragdoll drives (PhysX.joint_set_*), on pin, hinge, cone twist and 6DOF joints. A SLERP drive turns
+	// body B toward the drive target's rotation along the shortest path, in place of the per-axis angular drives.
+	bool slerp_drive = false;
+	real_t slerp_stiffness = 0.0, slerp_damping = 0.0, slerp_torque_limit = Math::INF;
+	// Drive stiffness / damping as accelerations: the same gains drive a light and a heavy body alike.
+	bool drive_acceleration = false;
+	// Body B's joint frame relative to body A's, the pose the drives pull toward; until set, the 6DOF springs'
+	// equilibrium points build it.
+	bool has_drive_target = false;
+	Transform3D drive_target;
 
 	void _destroy();
 	physx::PxJoint *_create() const;
 	void _apply_params();
+	Transform3D _equilibrium_target() const;
+	bool _is_px_d6() const;
+	// The drive target in the PhysX joint frames.
+	Transform3D _px_drive_target() const;
 
 public:
 	void set_self(const RID &p_self) { self = p_self; }
@@ -126,6 +145,24 @@ public:
 	real_t get_6dof_param(Vector3::Axis p_axis, PhysicsServer3D::G6DOFJointAxisParam p_param) const;
 	void set_6dof_flag(Vector3::Axis p_axis, PhysicsServer3D::G6DOFJointAxisFlag p_flag, bool p_enable);
 	bool get_6dof_flag(Vector3::Axis p_axis, PhysicsServer3D::G6DOFJointAxisFlag p_flag) const;
+
+	// The PhysX.joint_* drives work on pin, hinge, cone twist and 6DOF joints (all PhysX D6 joints once driven).
+	bool has_drives() const;
+	GodotPhysXBody3D *get_body_a() const { return body_a; }
+	GodotPhysXBody3D *get_body_b() const { return body_b; }
+
+	void set_spring_force_limit(Vector3::Axis p_axis, bool p_angular, real_t p_limit);
+	real_t get_spring_force_limit(Vector3::Axis p_axis, bool p_angular) const;
+	void set_slerp_drive(bool p_enabled, real_t p_stiffness, real_t p_damping, real_t p_torque_limit);
+	bool is_slerp_drive_enabled() const { return slerp_drive; }
+	void set_drive_acceleration(bool p_enabled);
+	bool is_drive_acceleration() const { return drive_acceleration; }
+	// Only moves the drive target: no other joint state is rewritten (an active ragdoll sets it on every bone, every
+	// frame).
+	void set_drive_target(const Transform3D &p_target);
+	// The target that puts the bodies at these global transforms.
+	void set_drive_target_from_poses(const Transform3D &p_pose_a, const Transform3D &p_pose_b);
+	Transform3D get_drive_target() const;
 
 	~GodotPhysXJoint3D();
 };

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="PhysX" inherits="Object" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
 	<brief_description>
-		Script queries about the PhysX physics backend.
+		Script access to the PhysX physics backend: GPU queries and active-ragdoll joint drives.
 	</brief_description>
 	<description>
 		Static queries about the PhysX backend as a whole, for a game that adapts to the machine it runs on, e.g. choosing [PhysXParticleFluid3D]'s solver or how much debris to spawn:
@@ -9,6 +9,7 @@
 		if PhysX.is_gpu_available():
 		    print("GPU physics on ", PhysX.get_gpu_device_name())
 		[/codeblock]
+		It also carries the joint drives Godot's joint API has no room for, the ones an active ragdoll needs: a SLERP drive, acceleration drives, spring force limits and a drive target set in one call. They take a joint's [RID] ([method Joint3D.get_rid], or [method physical_bone_get_joint] for a [PhysicalBone3D]) and work on pin, hinge, cone twist and Generic6DOF joints. Like other physics server calls they may be made at any time, also with [member ProjectSettings.physics/3d/run_on_separate_thread] on; a getter then waits for the physics thread.
 	</description>
 	<tutorials>
 	</tutorials>
@@ -23,6 +24,110 @@
 			<return type="bool" />
 			<description>
 				Returns [code]true[/code] when PhysX is the active physics engine and is running GPU dynamics on a CUDA device. It is [code]false[/code] in a build without GPU support, on a machine without a usable NVIDIA GPU or without [code]PhysXGpu[/code] shipped next to the executable, with [code]physics/physx_3d/simulation/enhanced_determinism[/code] on or [code]physics/physx_3d/simulation/gpu_dynamics[/code] off, or when another physics engine is selected. Without it, GPU-only features fall back or stay inert: [PhysXParticleFluid3D] with the PBD solver, GPU cloth and so on. Valid once the physics server has started (from any node's [code]_ready[/code] on).
+			</description>
+		</method>
+		<method name="joint_get_angular_spring_torque_limit" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="joint" type="RID" />
+			<param index="1" name="axis" type="int" enum="Vector3.Axis" />
+			<description>
+				Returns the torque limit of the Generic6DOF joint's angular spring about [param axis] (see [method joint_set_angular_spring_torque_limit]).
+			</description>
+		</method>
+		<method name="joint_get_drive_target" qualifiers="static">
+			<return type="Transform3D" />
+			<param index="0" name="joint" type="RID" />
+			<description>
+				Returns the pose the joint's drives pull toward (see [method joint_set_drive_target]); until one is set, the pose a Generic6DOF joint's spring equilibrium points make.
+			</description>
+		</method>
+		<method name="joint_get_linear_spring_force_limit" qualifiers="static">
+			<return type="float" />
+			<param index="0" name="joint" type="RID" />
+			<param index="1" name="axis" type="int" enum="Vector3.Axis" />
+			<description>
+				Returns the force limit of the Generic6DOF joint's linear spring along [param axis] (see [method joint_set_linear_spring_force_limit]).
+			</description>
+		</method>
+		<method name="joint_is_drive_acceleration" qualifiers="static">
+			<return type="bool" />
+			<param index="0" name="joint" type="RID" />
+			<description>
+				Returns [code]true[/code] if the joint's drives are acceleration drives (see [method joint_set_drive_acceleration]).
+			</description>
+		</method>
+		<method name="joint_is_slerp_drive_enabled" qualifiers="static">
+			<return type="bool" />
+			<param index="0" name="joint" type="RID" />
+			<description>
+				Returns [code]true[/code] if the joint's SLERP drive is on (see [method joint_set_slerp_drive]).
+			</description>
+		</method>
+		<method name="joint_set_angular_spring_torque_limit" qualifiers="static">
+			<return type="void" />
+			<param index="0" name="joint" type="RID" />
+			<param index="1" name="axis" type="int" enum="Vector3.Axis" />
+			<param index="2" name="limit" type="float" />
+			<description>
+				Sets the most torque (N m) the Generic6DOF joint's angular spring about [param axis] may apply, so a stiff spring can't snap a bone around. [code]INF[/code] (the default) or a negative value is no limit. The SLERP drive has its own limit (see [method joint_set_slerp_drive]).
+			</description>
+		</method>
+		<method name="joint_set_drive_acceleration" qualifiers="static">
+			<return type="void" />
+			<param index="0" name="joint" type="RID" />
+			<param index="1" name="enabled" type="bool" />
+			<description>
+				If [code]true[/code], the joint's spring stiffness and damping (the 6DOF springs and the SLERP drive) are accelerations rather than forces: the same gains turn a light and a heavy body alike, so one set suits every bone of a ragdoll. It only counts the two bodies at the joint, though: a joint that carries more of the body (a spine under the torso) needs its stiffness scaled up by about the mass it carries over its own bone's. Motors keep their force units.
+			</description>
+		</method>
+		<method name="joint_set_drive_target" qualifiers="static">
+			<return type="void" />
+			<param index="0" name="joint" type="RID" />
+			<param index="1" name="target" type="Transform3D" />
+			<description>
+				Sets the pose the joint's drives pull toward: body B's joint frame relative to body A's (identity is the pose the joint was made in). The rotation is what [method joint_set_slerp_drive] and the 6DOF angular springs turn toward, the origin where the 6DOF linear springs pull. Only the target moves, nothing else about the joint is rewritten, so it's cheap enough to call for every bone every physics frame. It replaces a Generic6DOF joint's spring equilibrium points until one of those is changed.
+			</description>
+		</method>
+		<method name="joint_set_drive_target_from_poses" qualifiers="static">
+			<return type="void" />
+			<param index="0" name="joint" type="RID" />
+			<param index="1" name="pose_a" type="Transform3D" />
+			<param index="2" name="pose_b" type="Transform3D" />
+			<description>
+				Sets the drive target (see [method joint_set_drive_target]) that puts body A at global transform [param pose_a] and body B at [param pose_b], without needing the joint's frames. Only the two poses relative to each other matter, so poses in any common space do, e.g. a skeleton's bone poses. For a [PhysicalBone3D] the body sits at its bone's pose times [member PhysicalBone3D.body_offset]:
+				[codeblock]
+				var joint := PhysX.physical_bone_get_joint(bone)
+				PhysX.joint_set_drive_target_from_poses(joint,
+				        animated.get_bone_global_pose(parent.get_bone_id()) * parent.body_offset,
+				        animated.get_bone_global_pose(bone.get_bone_id()) * bone.body_offset)
+				[/codeblock]
+			</description>
+		</method>
+		<method name="joint_set_linear_spring_force_limit" qualifiers="static">
+			<return type="void" />
+			<param index="0" name="joint" type="RID" />
+			<param index="1" name="axis" type="int" enum="Vector3.Axis" />
+			<param index="2" name="limit" type="float" />
+			<description>
+				Sets the most force (N) the Generic6DOF joint's linear spring along [param axis] may apply. [code]INF[/code] (the default) or a negative value is no limit. A linear motor on the same axis uses its own force limit.
+			</description>
+		</method>
+		<method name="joint_set_slerp_drive" qualifiers="static">
+			<return type="void" />
+			<param index="0" name="joint" type="RID" />
+			<param index="1" name="enabled" type="bool" />
+			<param index="2" name="stiffness" type="float" default="0.0" />
+			<param index="3" name="damping" type="float" default="0.0" />
+			<param index="4" name="torque_limit" type="float" default="inf" />
+			<description>
+				Turns the joint's SLERP drive on or off: one spring that turns body B toward the drive target's rotation (see [method joint_set_drive_target]) along the shortest path, all three angles at once, with [param stiffness] (N m per radian), [param damping] (N m s per radian) and at most [param torque_limit] (N m). It replaces a Generic6DOF joint's per-axis angular springs and motors while on, and works within the joint's angular limits; a 6DOF axis without a valid limit range is freed, as for its springs. On a hinge it drives the hinge angle: the hinge is rebuilt as a PhysX D6 joint the first time, with the same limits and motor.
+			</description>
+		</method>
+		<method name="physical_bone_get_joint" qualifiers="static">
+			<return type="RID" />
+			<param index="0" name="bone" type="PhysicalBone3D" />
+			<description>
+				Returns the RID of the joint between [param bone] and its parent bone, for the [code]joint_*[/code] drive calls. Empty for a bone without one: the root bone, or [constant PhysicalBone3D.JOINT_TYPE_NONE]. The joint exists once the bone is in the tree; the RID stays the same, and keeps its drive settings, when the bone's joint properties change.
 			</description>
 		</method>
 	</methods>

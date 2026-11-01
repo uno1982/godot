@@ -345,6 +345,7 @@ public:
 		_apply_solver_iterations();
 		update_motor_driven();
 	}
+	const HashSet<GodotPhysXJoint3D *> &get_joints() const { return joints; }
 	void remove_joint(GodotPhysXJoint3D *p_joint) {
 		joints.erase(p_joint);
 		_apply_solver_iterations();

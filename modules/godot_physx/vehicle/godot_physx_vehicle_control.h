@@ -224,6 +224,7 @@ public:
 				impl->vehicle.wheelRigidBody1dStates[i].setToDefault(); \
 				impl->vehicle.tireStickyStates[i].setToDefault(); \
 			} \
+			impl->vehicle.stop_drivetrain(); /* an engine drops to idle, or the wheels spin back up */ \
 		} \
 		set_global_transform(to_godot(pose)); \
 	} \

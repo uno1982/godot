@@ -81,6 +81,18 @@
 				The bodies and vehicles this car has collision exceptions with.
 			</description>
 		</method>
+		<method name="get_current_gear" qualifiers="const">
+			<return type="int" />
+			<description>
+				The gear engaged now, numbered as [member gear]: -1 reverse, 0 neutral, 1 and up forward. It reads 0 while a shift is under way. With [constant DRIVETRAIN_DIRECT], 1, or -1 with [member reverse].
+			</description>
+		</method>
+		<method name="get_engine_rpm" qualifiers="const">
+			<return type="float" />
+			<description>
+				The engine speed in revolutions per minute. 0 with [constant DRIVETRAIN_DIRECT].
+			</description>
+		</method>
 		<method name="get_forward" qualifiers="const">
 			<return type="Vector3" />
 			<description>
@@ -103,6 +115,12 @@
 			<return type="RID" />
 			<description>
 				The car's identity in the physics server: a raycast or shape query that hits it, or a [CharacterBody3D] that bumps into it, reports this RID as the collider's (and the car node as the collider). Put it in a query's [code]exclude[/code] list to see past the car, or pass it to [method PhysicsServer3D.body_add_collision_exception] to make a body ignore it. It stands for the car only: setting its state through [PhysicsServer3D] doesn't move the car.
+			</description>
+		</method>
+		<method name="get_target_gear" qualifiers="const">
+			<return type="int" />
+			<description>
+				The gear the gearbox is shifting to, numbered as [member gear] (the current gear when no shift is under way). A new gear is taken only once the current shift has finished ([member gear_switch_time]).
 			</description>
 		</method>
 		<method name="get_wheel_jounce" qualifiers="const">
@@ -159,6 +177,18 @@
 		<member name="ackermann_strength" type="float" setter="set_ackermann_strength" getter="get_ackermann_strength" default="1.0">
 			How much Ackermann steering correction to apply to the front (steering) axle, from [code]0[/code] (both front wheels always turn by the same angle, like [VehicleWheel3D]) to [code]1[/code] (full correction: the inside wheel of a turn steers more sharply than the outside wheel, matching how a real front axle is geometrically linked).
 		</member>
+		<member name="autobox_down_ratio" type="float" setter="set_autobox_down_ratio" getter="get_autobox_down_ratio" default="0.5">
+			The automatic gearbox shifts down when the engine falls below this fraction of [member engine_max_rpm]. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+		</member>
+		<member name="autobox_latency" type="float" setter="set_autobox_latency" getter="get_autobox_latency" default="2.0">
+			The least time, in seconds, between two shifts the automatic gearbox makes. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+		</member>
+		<member name="autobox_up_ratio" type="float" setter="set_autobox_up_ratio" getter="get_autobox_up_ratio" default="0.65">
+			The automatic gearbox shifts up when the engine passes this fraction of [member engine_max_rpm]. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+		</member>
+		<member name="automatic_transmission" type="bool" setter="set_automatic_transmission" getter="is_automatic_transmission" default="true">
+			A control, read every physics tick. If [code]true[/code], the automatic gearbox picks the forward gears. If [code]false[/code], the gearbox goes to [member gear]. Either way, [member reverse] selects the reverse gear. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+		</member>
 		<member name="brake" type="float" setter="set_brake" getter="get_brake" default="0.0">
 			Brake pedal input, [code]0[/code] to [code]1[/code]. Scales up to [member max_brake_torque] of braking torque at each wheel. Set every physics tick from script; does not persist on its own the way a real pedal would.
 		</member>
@@ -171,17 +201,86 @@
 		<member name="center_of_mass_mode" type="int" setter="set_center_of_mass_mode" getter="get_center_of_mass_mode" enum="PhysXVehicle3D.CenterOfMassMode" default="0">
 			Whether to derive the center of mass from the chassis [CollisionShape3D] position ([code]Auto[/code]) or use [member center_of_mass] directly ([code]Custom[/code]).
 		</member>
+		<member name="clutch" type="float" setter="set_clutch" getter="get_clutch" default="0.0">
+			A control, read every physics tick: 0 engaged, 1 fully pressed (the engine turns freely of the wheels). Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+		</member>
+		<member name="clutch_strength" type="float" setter="set_clutch_strength" getter="get_clutch_strength" default="10.0">
+			How strongly the engaged clutch couples the engine to the wheels. A weak clutch slips longer before the engine and wheels match speed. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+		</member>
 		<member name="collision_layer" type="int" setter="set_collision_layer" getter="get_collision_layer" default="1">
 			Same meaning as [member CollisionObject3D.collision_layer]. Applies to the chassis only -- the wheels do not have their own collision shapes (their ground contact is handled entirely by the suspension, not by a physical wheel shape touching the road).
 		</member>
 		<member name="collision_mask" type="int" setter="set_collision_mask" getter="get_collision_mask" default="1">
 			Same meaning as [member CollisionObject3D.collision_mask]. Applies to the chassis (see [member collision_layer]) and to the wheels' ground raycasts: like a [RayCast3D], a wheel only rests on a shape whose collision layer is in this mask, and never on an [Area3D].
 		</member>
+		<member name="differential" type="int" setter="set_differential" getter="get_differential" enum="PhysXVehicle3D.Differential" default="0">
+			How the engine's torque is shared between the wheels with [member PhysXVehicleWheel3D.use_as_traction]. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+		</member>
+		<member name="drivetrain" type="int" setter="set_drivetrain" getter="get_drivetrain" enum="PhysXVehicle3D.Drivetrain" default="0">
+			How [member throttle] reaches the wheels. [constant DRIVETRAIN_DIRECT] is wheel torque up to [member max_engine_torque]. [constant DRIVETRAIN_ENGINE] is PhysX's engine drive: an engine, clutch, gearbox and differential, set up with the engine, gearbox and differential properties, which the inspector shows only in that mode. Changing it while playing rebuilds the vehicle.
+		</member>
+		<member name="engine_damping_full_throttle" type="float" setter="set_engine_damping_full_throttle" getter="get_engine_damping_full_throttle" default="0.15">
+			How quickly the engine slows on its own at full throttle. The damping eases between this and the zero-throttle rates as the throttle moves. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+		</member>
+		<member name="engine_damping_zero_throttle_clutch_disengaged" type="float" setter="set_engine_damping_zero_throttle_clutch_disengaged" getter="get_engine_damping_zero_throttle_clutch_disengaged" default="0.35">
+			How quickly the engine slows on its own with no throttle and the clutch pressed. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+		</member>
+		<member name="engine_damping_zero_throttle_clutch_engaged" type="float" setter="set_engine_damping_zero_throttle_clutch_engaged" getter="get_engine_damping_zero_throttle_clutch_engaged" default="2.0">
+			How quickly the engine slows on its own with no throttle and the clutch engaged (engine braking). Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+		</member>
+		<member name="engine_idle_rpm" type="float" setter="set_engine_idle_rpm" getter="get_engine_idle_rpm" default="0.0">
+			The engine's idle speed, in revolutions per minute. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+		</member>
+		<member name="engine_max_rpm" type="float" setter="set_engine_max_rpm" getter="get_engine_max_rpm" default="6000.0">
+			The engine's top speed, in revolutions per minute: it can't rev past it. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+		</member>
+		<member name="engine_moment_of_inertia" type="float" setter="set_engine_moment_of_inertia" getter="get_engine_moment_of_inertia" default="1.0">
+			The engine's rotational inertia. Lower revs up and down faster. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+		</member>
+		<member name="engine_peak_torque" type="float" setter="set_engine_peak_torque" getter="get_engine_peak_torque" default="500.0">
+			The engine's torque at the top of [member engine_torque_curve], in newton-meters, before the gearing multiplies it. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+		</member>
+		<member name="engine_torque_curve" type="Curve" setter="set_engine_torque_curve" getter="get_engine_torque_curve">
+			The engine's torque (as a fraction of [member engine_peak_torque]) against its speed (as a fraction of [member engine_max_rpm]): the curve's domain is mapped to 0..1 of the engine speed. PhysX takes 8 points; a curve with more is sampled at 8 even speeds. If [code]null[/code], the torque is flat. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+		</member>
+		<member name="final_drive_ratio" type="float" setter="set_final_drive_ratio" getter="get_final_drive_ratio" default="4.0">
+			The ratio applied after every gear, between the gearbox and the wheels. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+		</member>
 		<member name="front_anti_roll_stiffness" type="float" setter="set_front_anti_roll_stiffness" getter="get_front_anti_roll_stiffness" default="0.0">
 			Anti-roll bar stiffness connecting the front-left and front-right wheels. A positive value is a real anti-roll bar: it resists the difference in suspension compression between the two wheels, reducing body roll during cornering. A negative value does the opposite -- it amplifies that difference, exaggerating roll instead of resisting it, which is a cheaper and more targeted way to get a more dramatic cornering lean than lowering [member PhysXVehicleWheel3D.suspension_stiffness] further (that also softens straight-line bump absorption; this only affects side-to-side compression difference). [code]0[/code] disables the bar entirely.
 		</member>
+		<member name="gear" type="int" setter="set_gear" getter="get_gear" default="1">
+			A control, read every physics tick when [member automatic_transmission] is [code]false[/code]: the gear the gearbox goes to. -1 is reverse, 0 neutral, 1 first gear, up to the number of [member gear_ratios]. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+		</member>
+		<member name="gear_ratios" type="PackedFloat32Array" setter="set_gear_ratios" getter="get_gear_ratios" default="PackedFloat32Array(4, 2, 1.5, 1.1, 1)">
+			The forward gears' ratios, first gear to top. They must be positive and descending. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+		</member>
+		<member name="gear_switch_time" type="float" setter="set_gear_switch_time" getter="get_gear_switch_time" default="0.5">
+			How long a shift takes, in seconds. The engine is disconnected from the wheels meanwhile. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+		</member>
 		<member name="handbrake" type="float" setter="set_handbrake" getter="get_handbrake" default="0.0">
 			Brake input for the rear wheels only, from [code]0[/code] to [code]1[/code], on top of [member brake] (up to [member max_brake_torque]): a parking brake, or to lock the rear wheels into a slide.
+		</member>
+		<member name="limited_slip_center_bias" type="float" setter="set_limited_slip_center_bias" getter="get_limited_slip_center_bias" default="1.3">
+			With [constant DIFFERENTIAL_LIMITED_SLIP] and both axles driven: the largest ratio between the front and rear wheels' speeds before torque moves to the slower axle. 0 leaves it open; otherwise it must be greater than [member limited_slip_center_target].
+		</member>
+		<member name="limited_slip_center_target" type="float" setter="set_limited_slip_center_target" getter="get_limited_slip_center_target" default="1.29">
+			With [constant DIFFERENTIAL_LIMITED_SLIP]: the speed ratio between the axles that moving torque aims for once [member limited_slip_center_bias] is passed. Between 1 and the bias.
+		</member>
+		<member name="limited_slip_front_bias" type="float" setter="set_limited_slip_front_bias" getter="get_limited_slip_front_bias" default="1.3">
+			With [constant DIFFERENTIAL_LIMITED_SLIP] and both front wheels driven: the largest ratio between their speeds before torque moves to the slower wheel. 0 leaves the front axle open; otherwise it must be greater than [member limited_slip_front_target].
+		</member>
+		<member name="limited_slip_front_target" type="float" setter="set_limited_slip_front_target" getter="get_limited_slip_front_target" default="1.29">
+			With [constant DIFFERENTIAL_LIMITED_SLIP]: the front wheels' speed ratio that moving torque aims for once [member limited_slip_front_bias] is passed. Between 1 and the bias.
+		</member>
+		<member name="limited_slip_rate" type="float" setter="set_limited_slip_rate" getter="get_limited_slip_rate" default="10.0">
+			With [constant DIFFERENTIAL_LIMITED_SLIP]: how quickly a wheel speed ratio is brought to its target.
+		</member>
+		<member name="limited_slip_rear_bias" type="float" setter="set_limited_slip_rear_bias" getter="get_limited_slip_rear_bias" default="1.3">
+			With [constant DIFFERENTIAL_LIMITED_SLIP] and both rear wheels driven: the largest ratio between their speeds before torque moves to the slower wheel. 0 leaves the rear axle open; otherwise it must be greater than [member limited_slip_rear_target].
+		</member>
+		<member name="limited_slip_rear_target" type="float" setter="set_limited_slip_rear_target" getter="get_limited_slip_rear_target" default="1.29">
+			With [constant DIFFERENTIAL_LIMITED_SLIP]: the rear wheels' speed ratio that moving torque aims for once [member limited_slip_rear_bias] is passed. Between 1 and the bias.
 		</member>
 		<member name="mass" type="float" setter="set_mass" getter="get_mass" default="1500.0">
 			Total mass of the vehicle, in kg.
@@ -190,7 +289,7 @@
 			The braking torque applied to each wheel when [member brake] is [code]1[/code]. Higher values stop the wheel's own rotation faster, but do not by themselves determine whether the tire skids once locked -- see [member PhysXVehicleWheel3D.tire_friction] for that.
 		</member>
 		<member name="max_engine_torque" type="float" setter="set_max_engine_torque" getter="get_max_engine_torque" default="700.0">
-			The drive torque applied to every wheel with [member PhysXVehicleWheel3D.use_as_traction] enabled when [member throttle] is [code]1[/code] (a real direct-drive response, unlike [member VehicleBody3D.engine_force] which is a raw force value with no torque curve).
+			The drive torque applied to every wheel with [member PhysXVehicleWheel3D.use_as_traction] enabled when [member throttle] is [code]1[/code] (a real direct-drive response, unlike [member VehicleBody3D.engine_force] which is a raw force value with no torque curve). Only with [member drivetrain] set to [constant DRIVETRAIN_DIRECT]; the engine drive uses [member engine_peak_torque] and the gearing instead.
 		</member>
 		<member name="max_steer_angle" type="float" setter="set_max_steer_angle" getter="get_max_steer_angle" default="0.6">
 			The steering angle, in radians, applied to the front axle when [member steer] is [code]1[/code] or [code]-1[/code]. The default (~34°) is a realistic maximum for a real car's front wheels.
@@ -207,6 +306,9 @@
 		<member name="reverse" type="bool" setter="set_reverse" getter="is_reverse" default="false">
 			Switches the drivetrain's gear between forward and reverse -- a real gear change (PxVehicle2 has no neutral-coast/instant-reverse shortcut), so [member throttle] in reverse gear still needs to first bring the car to a stop if it was moving forward, same as a real car. Check [method get_forward_speed] before engaging this from a driving script.
 		</member>
+		<member name="reverse_gear_ratio" type="float" setter="set_reverse_gear_ratio" getter="get_reverse_gear_ratio" default="4.0">
+			The reverse gear's ratio, as a positive number. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].
+		</member>
 		<member name="steer" type="float" setter="set_steer" getter="get_steer" default="0.0">
 			Steering input, [code]-1[/code] to [code]1[/code]. Scales up to [member max_steer_angle] on the front (steering) axle, modified by [member ackermann_strength]. Set every physics tick from script.
 		</member>
@@ -221,6 +323,18 @@
 		<constant name="CENTER_OF_MASS_MODE_AUTO" value="0" enum="CenterOfMassMode">
 		</constant>
 		<constant name="CENTER_OF_MASS_MODE_CUSTOM" value="1" enum="CenterOfMassMode">
+		</constant>
+		<constant name="DRIVETRAIN_DIRECT" value="0" enum="Drivetrain">
+			Throttle is wheel torque, up to [member max_engine_torque], forward or in reverse.
+		</constant>
+		<constant name="DRIVETRAIN_ENGINE" value="1" enum="Drivetrain">
+			PhysX's engine drive: an engine with a torque curve drives the traction wheels through a clutch, a gearbox (automatic or manual) and a differential.
+		</constant>
+		<constant name="DIFFERENTIAL_OPEN" value="0" enum="Differential">
+			The engine's torque is split evenly between the traction wheels, whatever each one does: a wheel on ice spins and the others get no more.
+		</constant>
+		<constant name="DIFFERENTIAL_LIMITED_SLIP" value="1" enum="Differential">
+			PhysX's four-wheel-drive differential: torque moves away from a wheel spinning faster than its partner on the same axle, or from the faster axle, past the [code]limited_slip_*[/code] biases.
 		</constant>
 	</constants>
 </class>

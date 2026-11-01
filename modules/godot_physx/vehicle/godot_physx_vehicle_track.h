@@ -159,6 +159,9 @@ public:
 	PxVehicleComponentSequence componentSequence;
 	PxU8 componentSequenceSubstepGroupHandle = 0;
 
+	// Direct drive only: nothing beyond the wheels to stop (see Vehicle4W::stop_drivetrain()).
+	void stop_drivetrain() {}
+
 	void setToDefault() {
 		for (PxU32 i = 0; i < numWheels; i++) {
 			actuationStates[i].setToDefault();

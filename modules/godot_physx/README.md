@@ -805,6 +805,23 @@ sits at the right height in the editor. Wheels carry the suspension
 - **`PhysXVehicle3D`** — 4 wheels, exactly 2 with `use_as_steering` (the front
   axle). Drive with `throttle` / `brake` (0..1), `steer` (−1..1) and `reverse`.
   Front/rear anti-roll bars, `ackermann_strength`, custom `center_of_mass`.
+  `drivetrain` picks how throttle reaches the wheels:
+  - **Direct** (the default): throttle is wheel torque up to `max_engine_torque`,
+    forward or in reverse.
+  - **Engine**: PhysX's engine drive. An engine (`engine_peak_torque`,
+    `engine_max_rpm`, `engine_idle_rpm`, an optional `engine_torque_curve`)
+    drives the traction wheels through a clutch and a gearbox (`gear_ratios`
+    first to top, `reverse_gear_ratio`, `final_drive_ratio`, `gear_switch_time`).
+    With `automatic_transmission` on, the autobox shifts up and down
+    (`autobox_up_ratio` / `_down_ratio` of max RPM, `autobox_latency`).
+    Otherwise the gearbox goes to `gear` (−1 reverse, 0 neutral, 1..). `reverse`
+    selects the reverse gear either way, and `clutch` (0 engaged .. 1 pressed)
+    is read every tick. `differential` is **Open** (the torque is split evenly)
+    or **Limited Slip** (torque moves off a wheel spinning faster than its
+    partner; `limited_slip_*` biases per axle and between axles).
+    `get_current_gear()`, `get_target_gear()` and `get_engine_rpm()` report the
+    state. Every setting defaults to PhysX's own vehicle samples, which make a
+    quick car; `engine_peak_torque` and the gear ratios tame it.
 - **`PhysXMotorcycle3D`** — 2 wheels, front steering, rear traction. `PxVehicle2`
   has no balance mechanism, so staying upright is the script's job: read
   `get_roll_angle()` / `get_angular_velocity()` each tick and correct with

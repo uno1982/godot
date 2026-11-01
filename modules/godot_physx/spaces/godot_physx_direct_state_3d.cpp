@@ -402,14 +402,24 @@ const GodotPhysXShape3D *godot_shape_of(const PxRigidActor *p_actor, const PxSha
 
 // Ray queries: a trimesh back face only counts when the shape has
 // backface_collision on AND the query asks for back faces (Jolt's rule).
-// eMESH_BOTH_SIDES (needed for hit_back_faces on height fields) would let a
-// ray hit any mesh from behind, and a back-face mesh's flipped copies would
-// let any ray hit it from behind -- this sorts those hits out.
+// eMESH_BOTH_SIDES (needed for hit_back_faces on height fields) is cleared for
+// triangle meshes: PhysX hands a mesh's one closest hit to postFilter, so
+// letting it see back faces there would hide a front face behind them, and on a
+// back-face mesh it ties each triangle with its coplanar flipped copy (half the
+// normals then point away from the ray). One-sided, a ray meets the original
+// from the front and the flipped copy from behind -- always facing the ray.
 class RayQueryFilter : public QueryFilter {
 public:
-	PxVec3 ray_dir;
 	bool hit_back_faces = true;
 	bool hit_from_inside = false;
+
+	virtual PxQueryHitType::Enum preFilter(const PxFilterData &p_data, const PxShape *p_shape, const PxRigidActor *p_actor, PxHitFlags &r_flags) override {
+		const PxQueryHitType::Enum type = QueryFilter::preFilter(p_data, p_shape, p_actor, r_flags);
+		if (type != PxQueryHitType::eNONE && p_shape->getGeometry().getType() == PxGeometryType::eTRIANGLEMESH) {
+			r_flags.clear(PxHitFlag::eMESH_BOTH_SIDES);
+		}
+		return type;
+	}
 
 	virtual PxQueryHitType::Enum postFilter(const PxFilterData &, const PxQueryHit &p_hit, const PxShape *p_shape, const PxRigidActor *p_actor) override {
 		// A ray that STARTS inside a solid shape: PhysX reports it at distance 0. Godot (and Jolt) skip that shape
@@ -429,23 +439,13 @@ public:
 		if (!shape) {
 			return PxQueryHitType::eBLOCK;
 		}
-		if (shape->has_backface_collision()) {
-			if (hit_back_faces) {
-				return PxQueryHitType::eBLOCK;
-			}
-			bool back = false;
-			shape->source_face_index(p_hit.faceIndex, back);
-			return back ? PxQueryHitType::eNONE : PxQueryHitType::eBLOCK;
+		if (!shape->has_backface_collision() || hit_back_faces) {
+			return PxQueryHitType::eBLOCK; // one-sided (see preFilter): only faces toward the ray are hit
 		}
-		if (!hit_back_faces) {
-			return PxQueryHitType::eBLOCK; // one-sided query: PhysX only reported front hits
-		}
-		PxTriangle tri;
-		PxMeshQuery::getTriangle(static_cast<const PxTriangleMeshGeometry &>(p_shape->getGeometry()),
-				p_actor->getGlobalPose() * p_shape->getLocalPose(), p_hit.faceIndex, tri);
-		PxVec3 face_n;
-		tri.normal(face_n);
-		return face_n.dot(ray_dir) > 0.0f ? PxQueryHitType::eNONE : PxQueryHitType::eBLOCK;
+		// A flipped copy is a back face of the source triangle.
+		bool back = false;
+		shape->source_face_index(p_hit.faceIndex, back);
+		return back ? PxQueryHitType::eNONE : PxQueryHitType::eBLOCK;
 	}
 };
 
@@ -476,7 +476,6 @@ bool GodotPhysXDirectSpaceState3D::intersect_ray(const RayParameters &p_paramete
 	RayQueryFilter filter;
 	filter.set_from(p_parameters);
 	filter.picking = p_parameters.pick_ray;
-	filter.ray_dir = to_px(delta / dist);
 	filter.hit_back_faces = p_parameters.hit_back_faces;
 	filter.hit_from_inside = p_parameters.hit_from_inside;
 

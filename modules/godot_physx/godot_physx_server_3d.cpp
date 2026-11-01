@@ -155,7 +155,9 @@ RID GodotPhysXServer3D::custom_shape_create() {
 void GodotPhysXServer3D::shape_set_data(RID p_shape, const Variant &p_data) {
 	GodotPhysXShape3D *shape = shape_owner.get_or_null(p_shape);
 	ERR_FAIL_NULL(shape);
-	shape->set_data(p_data);
+	if (!shape->set_data(p_data)) {
+		return;
+	}
 
 	// Update the bodies + areas using this shape (in place: see GodotPhysXBody3D::_edit_shape_in_place).
 	LocalVector<GodotPhysXBody3D *> bodies;

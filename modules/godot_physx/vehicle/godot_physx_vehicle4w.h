@@ -41,6 +41,8 @@
 #include "core/templates/vector.h"
 #include "core/typedefs.h"
 
+#include "godot_physx_vehicle_engine.h"
+
 #include <PxPhysicsAPI.h>
 #include <vehicle/PxVehicleAPI.h>
 
@@ -58,9 +60,7 @@ using namespace physx;
 // would just be ~500 lines of copy-pasted boilerplate for no benefit.
 // It drives one of two ways, picked when it's configured (engine_drive): direct
 // drive (throttle straight to wheel torque, the default) or the SDK's engine
-// drive (engine torque curve, clutch, gearbox, autobox, differential). The SDK's
-// reference keeps those as two vehicle classes; here both component sets live
-// on the one class and initComponentSequence() adds only the chosen one's.
+// drive (VehicleEngineDrive, godot_physx_vehicle_engine.h).
 class Vehicle4W : public PxVehicleRigidBodyComponent,
 				  public PxVehicleSuspensionComponent,
 				  public PxVehicleTireComponent,
@@ -72,11 +72,7 @@ class Vehicle4W : public PxVehicleRigidBodyComponent,
 				  public PxVehicleDirectDriveCommandResponseComponent,
 				  public PxVehicleDirectDriveActuationStateComponent,
 				  public PxVehicleDirectDrivetrainComponent,
-				  public PxVehicleEngineDriveCommandResponseComponent,
-				  public PxVehicleMultiWheelDriveDifferentialStateComponent,
-				  public PxVehicleFourWheelDriveDifferentialStateComponent,
-				  public PxVehicleEngineDriveActuationStateComponent,
-				  public PxVehicleEngineDrivetrainComponent {
+				  public VehicleEngineDrive<Vehicle4W, 4> {
 public:
 	static constexpr PxU32 WHEEL_FL = 0;
 	static constexpr PxU32 WHEEL_FR = 1;
@@ -131,26 +127,6 @@ public:
 	PxVehicleCommandState commandState;
 	PxVehicleDirectDriveTransmissionCommandState transmissionCommandState;
 
-	// --- Engine drive (EngineDrivetrainParams/State) -----------------------
-	bool engine_drive = false;
-	bool limited_slip = false; // four-wheel-drive differential instead of the open multi-wheel one
-	PxVehicleAutoboxParams autoboxParams;
-	PxVehicleClutchCommandResponseParams clutchCommandResponseParams;
-	PxVehicleEngineParams engineParams;
-	PxVehicleGearboxParams gearboxParams;
-	PxVehicleMultiWheelDriveDifferentialParams multiWheelDifferentialParams;
-	PxVehicleFourWheelDriveDifferentialParams fourWheelDifferentialParams;
-	PxVehicleClutchParams clutchParams;
-	PxVehicleEngineDriveThrottleCommandResponseState engineThrottleResponseState;
-	PxVehicleAutoboxState autoboxState;
-	PxVehicleClutchCommandResponseState clutchCommandResponseState;
-	PxVehicleDifferentialState differentialState;
-	PxVehicleWheelConstraintGroupState wheelConstraintGroupState;
-	PxVehicleEngineState engineState;
-	PxVehicleGearboxState gearboxState;
-	PxVehicleClutchSlipState clutchSlipState;
-	PxVehicleEngineDriveTransmissionCommandState engineTransmissionCommandState;
-
 	// --- PhysX integration (PhysXIntegrationParams/State) ------------------
 	PxVehiclePhysXRoadGeometryQueryParams physxRoadGeometryQueryParams;
 	GodotPhysXWheelQueryFilter wheelQueryFilter; // physxRoadGeometryQueryParams.filterCallback points here
@@ -188,24 +164,10 @@ public:
 		antiRollTorque.setToDefault();
 		commandState.setToDefault();
 		transmissionCommandState.gear = PxVehicleDirectDriveTransmissionCommandState::eNEUTRAL;
-		stop_drivetrain();
-		gearboxState.setToDefault();
-		engineTransmissionCommandState.setToDefault();
+		reset_engine_drive();
 		physxActor.setToDefault();
 		physxSteerState.setToDefault();
 		physxConstraints.setToDefault();
-	}
-
-	// The engine idles and the drivetrain lets go (a teleport that stops the vehicle). The gear stays.
-	void stop_drivetrain() {
-		engineThrottleResponseState.setToDefault();
-		autoboxState.setToDefault();
-		clutchCommandResponseState.setToDefault();
-		differentialState.setToDefault();
-		wheelConstraintGroupState.setToDefault();
-		clutchSlipState.setToDefault();
-		engineState.setToDefault();
-		engineState.rotationSpeed = engine_drive ? engineParams.idleOmega : 0.0f;
 	}
 
 	// getDataForRigidBodyComponent (PxVehicleRigidBodyComponent)
@@ -476,126 +438,9 @@ public:
 		outWheelRigidBody1dStates.setData(wheelRigidBody1dStates);
 	}
 
-	// getDataForEngineDriveCommandResponseComponent (PxVehicleEngineDriveCommandResponseComponent)
-	virtual void getDataForEngineDriveCommandResponseComponent(
-			const PxVehicleAxleDescription *&outAxleDescription,
-			PxVehicleSizedArrayData<const PxVehicleBrakeCommandResponseParams> &outBrakeResponseParams,
-			const PxVehicleSteerCommandResponseParams *&outSteerResponseParams,
-			PxVehicleSizedArrayData<const PxVehicleAckermannParams> &outAckermannParams,
-			const PxVehicleGearboxParams *&outGearboxParams,
-			const PxVehicleClutchCommandResponseParams *&outClutchResponseParams,
-			const PxVehicleEngineParams *&outEngineParams,
-			const PxVehicleRigidBodyState *&outRigidBodyState,
-			const PxVehicleEngineState *&outEngineState,
-			const PxVehicleAutoboxParams *&outAutoboxParams,
-			const PxVehicleCommandState *&outCommands,
-			const PxVehicleEngineDriveTransmissionCommandState *&outTransmissionCommands,
-			PxVehicleArrayData<PxReal> &outBrakeResponseStates,
-			PxVehicleEngineDriveThrottleCommandResponseState *&outThrottleResponseState,
-			PxVehicleArrayData<PxReal> &outSteerResponseStates,
-			PxVehicleGearboxState *&outGearboxResponseState,
-			PxVehicleClutchCommandResponseState *&outClutchResponseState,
-			PxVehicleAutoboxState *&outAutoboxState) override {
-		outAxleDescription = &axleDescription;
-		outBrakeResponseParams.setDataAndCount(brakeResponseParams, 2);
-		outSteerResponseParams = &steerResponseParams;
-		outAckermannParams.setDataAndCount(ackermannParams, 1);
-		outGearboxParams = &gearboxParams;
-		outClutchResponseParams = &clutchCommandResponseParams;
-		outEngineParams = &engineParams;
-		outRigidBodyState = &rigidBodyState;
-		outEngineState = &engineState;
-		outAutoboxParams = &autoboxParams;
-		outCommands = &commandState;
-		outTransmissionCommands = &engineTransmissionCommandState;
-		outBrakeResponseStates.setData(brakeCommandResponseStates);
-		outThrottleResponseState = &engineThrottleResponseState;
-		outSteerResponseStates.setData(steerCommandResponseStates);
-		outGearboxResponseState = &gearboxState;
-		outClutchResponseState = &clutchCommandResponseState;
-		outAutoboxState = &autoboxState;
-	}
-
-	// getDataForMultiWheelDriveDifferentialStateComponent (PxVehicleMultiWheelDriveDifferentialStateComponent)
-	virtual void getDataForMultiWheelDriveDifferentialStateComponent(
-			const PxVehicleAxleDescription *&outAxleDescription,
-			const PxVehicleMultiWheelDriveDifferentialParams *&outDifferentialParams,
-			PxVehicleDifferentialState *&outDifferentialState) override {
-		outAxleDescription = &axleDescription;
-		outDifferentialParams = &multiWheelDifferentialParams;
-		outDifferentialState = &differentialState;
-	}
-
-	// getDataForFourWheelDriveDifferentialStateComponent (PxVehicleFourWheelDriveDifferentialStateComponent)
-	virtual void getDataForFourWheelDriveDifferentialStateComponent(
-			const PxVehicleAxleDescription *&outAxleDescription,
-			const PxVehicleFourWheelDriveDifferentialParams *&outDifferentialParams,
-			PxVehicleArrayData<const PxVehicleWheelRigidBody1dState> &outWheelRigidbody1dStates,
-			PxVehicleDifferentialState *&outDifferentialState,
-			PxVehicleWheelConstraintGroupState *&outWheelConstraintGroups) override {
-		outAxleDescription = &axleDescription;
-		outDifferentialParams = &fourWheelDifferentialParams;
-		outWheelRigidbody1dStates.setData(wheelRigidBody1dStates);
-		outDifferentialState = &differentialState;
-		outWheelConstraintGroups = &wheelConstraintGroupState;
-	}
-
-	// getDataForEngineDriveActuationStateComponent (PxVehicleEngineDriveActuationStateComponent)
-	virtual void getDataForEngineDriveActuationStateComponent(
-			const PxVehicleAxleDescription *&outAxleDescription,
-			const PxVehicleGearboxParams *&outGearboxParams,
-			PxVehicleArrayData<const PxReal> &outBrakeResponseStates,
-			const PxVehicleEngineDriveThrottleCommandResponseState *&outThrottleResponseState,
-			const PxVehicleGearboxState *&outGearboxState,
-			const PxVehicleDifferentialState *&outDifferentialState,
-			const PxVehicleClutchCommandResponseState *&outClutchResponseState,
-			PxVehicleArrayData<PxVehicleWheelActuationState> &outActuationStates) override {
-		outAxleDescription = &axleDescription;
-		outGearboxParams = &gearboxParams;
-		outBrakeResponseStates.setData(brakeCommandResponseStates);
-		outThrottleResponseState = &engineThrottleResponseState;
-		outGearboxState = &gearboxState;
-		outDifferentialState = &differentialState;
-		outClutchResponseState = &clutchCommandResponseState;
-		outActuationStates.setData(actuationStates);
-	}
-
-	// getDataForEngineDrivetrainComponent (PxVehicleEngineDrivetrainComponent)
-	virtual void getDataForEngineDrivetrainComponent(
-			const PxVehicleAxleDescription *&outAxleDescription,
-			PxVehicleArrayData<const PxVehicleWheelParams> &outWheelParams,
-			const PxVehicleEngineParams *&outEngineParams,
-			const PxVehicleClutchParams *&outClutchParams,
-			const PxVehicleGearboxParams *&outGearboxParams,
-			PxVehicleArrayData<const PxReal> &outBrakeResponseStates,
-			PxVehicleArrayData<const PxVehicleWheelActuationState> &outActuationStates,
-			PxVehicleArrayData<const PxVehicleTireForce> &outTireForces,
-			const PxVehicleEngineDriveThrottleCommandResponseState *&outThrottleResponseState,
-			const PxVehicleClutchCommandResponseState *&outClutchResponseState,
-			const PxVehicleDifferentialState *&outDifferentialState,
-			const PxVehicleWheelConstraintGroupState *&outConstraintGroupState,
-			PxVehicleArrayData<PxVehicleWheelRigidBody1dState> &outWheelRigidBody1dStates,
-			PxVehicleEngineState *&outEngineState,
-			PxVehicleGearboxState *&outGearboxState,
-			PxVehicleClutchSlipState *&outClutchState) override {
-		outAxleDescription = &axleDescription;
-		outWheelParams.setData(wheelParams);
-		outEngineParams = &engineParams;
-		outClutchParams = &clutchParams;
-		outGearboxParams = &gearboxParams;
-		outBrakeResponseStates.setData(brakeCommandResponseStates);
-		outActuationStates.setData(actuationStates);
-		outTireForces.setData(tireForces);
-		outThrottleResponseState = &engineThrottleResponseState;
-		outClutchResponseState = &clutchCommandResponseState;
-		outDifferentialState = &differentialState;
-		// The limited slip differential works through these wheel groups. (The SDK's own EngineDriveVehicle passes
-		// them only for a tank, so its four-wheel-drive differential never limits slip.)
-		outConstraintGroupState = limited_slip ? &wheelConstraintGroupState : nullptr;
-		outWheelRigidBody1dStates.setData(wheelRigidBody1dStates);
-		outEngineState = &engineState;
-		outGearboxState = &gearboxState;
-		outClutchState = &clutchSlipState;
+	// For VehicleEngineDrive's command response.
+	void get_engine_drive_ackermann(PxVehicleSizedArrayData<const PxVehicleAckermannParams> &r_params) const {
+		r_params.setDataAndCount(ackermannParams, 1);
 	}
 
 	void initComponentSequence() {
@@ -604,14 +449,7 @@ public:
 		componentSequence = PxVehicleComponentSequence();
 		componentSequence.add(static_cast<PxVehiclePhysXActorBeginComponent *>(this));
 		if (engine_drive) {
-			// The autobox may start a shift here (overriding the target gear and cutting the throttle meanwhile).
-			componentSequence.add(static_cast<PxVehicleEngineDriveCommandResponseComponent *>(this));
-			if (limited_slip) {
-				componentSequence.add(static_cast<PxVehicleFourWheelDriveDifferentialStateComponent *>(this));
-			} else {
-				componentSequence.add(static_cast<PxVehicleMultiWheelDriveDifferentialStateComponent *>(this));
-			}
-			componentSequence.add(static_cast<PxVehicleEngineDriveActuationStateComponent *>(this));
+			add_engine_drive_components(componentSequence);
 		} else {
 			componentSequence.add(static_cast<PxVehicleDirectDriveCommandResponseComponent *>(this));
 			componentSequence.add(static_cast<PxVehicleDirectDriveActuationStateComponent *>(this));
@@ -623,7 +461,7 @@ public:
 		componentSequence.add(static_cast<PxVehicleTireComponent *>(this));
 		componentSequence.add(static_cast<PxVehiclePhysXConstraintComponent *>(this));
 		if (engine_drive) {
-			componentSequence.add(static_cast<PxVehicleEngineDrivetrainComponent *>(this));
+			add_engine_drivetrain(componentSequence);
 		} else {
 			componentSequence.add(static_cast<PxVehicleDirectDrivetrainComponent *>(this));
 		}
@@ -696,30 +534,8 @@ struct Vehicle4WWheelConfig {
 	bool use_as_traction = true;
 };
 
-// The engine drive's tuning (Vehicle4WConfig::engine), in Godot-friendly units: engine speeds in RPM, gears as
-// positive ratios. Defaults are the PhysX vehicle snippets' own (EngineDrive.json), with the speeds rounded to RPM.
-struct Vehicle4WEngineConfig {
-	bool enabled = false;
-	real_t peak_torque = 500.0f; // N m
-	real_t max_rpm = 6000.0f;
-	real_t idle_rpm = 0.0f;
-	// Normalized torque (of peak_torque) against normalized engine speed (of max_rpm), at most 8 points with
-	// ascending x in [0, 1]. Empty = flat.
-	Vector<Vector2> torque_curve;
-	real_t moment_of_inertia = 1.0f;
-	real_t damping_full_throttle = 0.15f;
-	real_t damping_zero_throttle_clutch_engaged = 2.0f;
-	real_t damping_zero_throttle_clutch_disengaged = 0.35f;
-	// Forward gears, first to top: positive and descending. One reverse gear, then neutral.
-	Vector<real_t> gear_ratios = { 4.0f, 2.0f, 1.5f, 1.1f, 1.0f };
-	real_t reverse_gear_ratio = 4.0f;
-	real_t final_drive_ratio = 4.0f;
-	real_t gear_switch_time = 0.5f;
-	// The autobox shifts up above up_ratio * max_rpm and down below down_ratio * max_rpm, at most once per latency.
-	real_t autobox_up_ratio = 0.65f;
-	real_t autobox_down_ratio = 0.5f;
-	real_t autobox_latency = 2.0f;
-	real_t clutch_strength = 10.0f;
+// The engine drive's tuning (Vehicle4WConfig::engine): VehicleEngineConfig, plus the differential.
+struct Vehicle4WEngineConfig : VehicleEngineConfig {
 	// Limited slip: PhysX's four-wheel-drive differential. A bias (> 1) is the largest wheel speed ratio across an
 	// axle (front, rear) or between the axles (center) before torque moves to the slower side, until the ratio is
 	// down to the target (1 < target < bias), at `rate`. A bias of 0 leaves that one open.
@@ -792,93 +608,12 @@ struct Vehicle4WConfig {
 };
 
 // Fills v's engine drive params from cfg.engine (wheels already in canonical FL/FR/RL/RR slots; traction[i] = that
-// slot's use_as_traction). PhysX checks these only in its debug builds, so what a scene can get wrong is checked here.
+// slot's use_as_traction): VehicleEngineDrive::configure_engine(), then the four-wheel-drive differential for limited slip.
 inline bool configure_vehicle4w_engine(Vehicle4W &v, const Vehicle4WEngineConfig &e, const bool traction[4]) {
-	v.engine_drive = true;
-	v.limited_slip = e.limited_slip;
-	const PxReal rpm_to_omega = (PxReal)(Math::TAU / 60.0);
-
-	if (e.peak_torque < 0.0 || e.idle_rpm < 0.0 || e.max_rpm <= e.idle_rpm || e.moment_of_inertia <= 0.0) {
-		ERR_PRINT("PhysX vehicle: the engine needs peak_torque >= 0, 0 <= idle_rpm < max_rpm and a moment of inertia > 0.");
+	if (!v.configure_engine(e, traction)) {
 		return false;
 	}
-	PxVehicleEngineParams &engine = v.engineParams;
-	engine.torqueCurve.clear();
-	if (e.torque_curve.is_empty()) {
-		engine.torqueCurve.addPair(0.0f, 1.0f);
-		engine.torqueCurve.addPair(0.33f, 1.0f);
-		engine.torqueCurve.addPair(1.0f, 1.0f);
-	} else {
-		if (e.torque_curve.size() > PxVehicleEngineParams::eMAX_NB_ENGINE_TORQUE_CURVE_ENTRIES) {
-			ERR_PRINT(vformat("PhysX vehicle: the engine torque curve has %d points; PhysX takes at most %d.", e.torque_curve.size(), (int)PxVehicleEngineParams::eMAX_NB_ENGINE_TORQUE_CURVE_ENTRIES));
-			return false;
-		}
-		for (int i = 0; i < e.torque_curve.size(); i++) {
-			if (i > 0 && e.torque_curve[i].x <= e.torque_curve[i - 1].x) {
-				ERR_PRINT("PhysX vehicle: the engine torque curve's points need ascending engine speeds.");
-				return false;
-			}
-			engine.torqueCurve.addPair((PxReal)e.torque_curve[i].x, (PxReal)MAX(e.torque_curve[i].y, (real_t)0.0));
-		}
-	}
-	engine.moi = (PxReal)e.moment_of_inertia;
-	engine.peakTorque = (PxReal)e.peak_torque;
-	engine.idleOmega = (PxReal)e.idle_rpm * rpm_to_omega;
-	engine.maxOmega = (PxReal)e.max_rpm * rpm_to_omega;
-	engine.dampingRateFullThrottle = (PxReal)MAX(e.damping_full_throttle, (real_t)0.0);
-	engine.dampingRateZeroThrottleClutchEngaged = (PxReal)MAX(e.damping_zero_throttle_clutch_engaged, (real_t)0.0);
-	engine.dampingRateZeroThrottleClutchDisengaged = (PxReal)MAX(e.damping_zero_throttle_clutch_disengaged, (real_t)0.0);
-
-	// Gears: [0] reverse, [1] neutral, then the forward gears.
-	const int forward = e.gear_ratios.size();
-	if (forward < 1 || forward + 2 > (int)PxVehicleGearboxParams::eMAX_NB_GEARS) {
-		ERR_PRINT(vformat("PhysX vehicle: the gearbox needs 1 to %d forward gear ratios (has %d).", (int)PxVehicleGearboxParams::eMAX_NB_GEARS - 2, forward));
-		return false;
-	}
-	if (e.reverse_gear_ratio <= 0.0 || e.final_drive_ratio <= 0.0 || e.gear_switch_time < 0.0) {
-		ERR_PRINT("PhysX vehicle: the reverse gear and final drive ratios must be > 0 and the gear switch time >= 0.");
-		return false;
-	}
-	PxVehicleGearboxParams &gears = v.gearboxParams;
-	gears.neutralGear = 1;
-	gears.nbRatios = (PxU32)forward + 2;
-	gears.ratios[0] = -(PxReal)e.reverse_gear_ratio;
-	gears.ratios[1] = 0.0f;
-	for (int i = 0; i < forward; i++) {
-		if (e.gear_ratios[i] <= 0.0 || (i > 0 && e.gear_ratios[i] >= e.gear_ratios[i - 1])) {
-			ERR_PRINT("PhysX vehicle: forward gear ratios must be > 0 and descending, first gear to top.");
-			return false;
-		}
-		gears.ratios[i + 2] = (PxReal)e.gear_ratios[i];
-	}
-	gears.finalRatio = (PxReal)e.final_drive_ratio;
-	gears.switchTime = (PxReal)e.gear_switch_time;
-
-	for (PxU32 i = 0; i < PxVehicleGearboxParams::eMAX_NB_GEARS; i++) {
-		v.autoboxParams.upRatios[i] = (PxReal)MAX(e.autobox_up_ratio, (real_t)0.0);
-		v.autoboxParams.downRatios[i] = (PxReal)MAX(e.autobox_down_ratio, (real_t)0.0);
-	}
-	v.autoboxParams.latency = (PxReal)MAX(e.autobox_latency, (real_t)0.0);
-
-	v.clutchCommandResponseParams.maxResponse = (PxReal)MAX(e.clutch_strength, (real_t)0.0);
-	v.clutchParams.accuracyMode = PxVehicleClutchAccuracyMode::eBEST_POSSIBLE;
-	v.clutchParams.estimateIterations = 5;
-
-	// The engine's torque is shared evenly between the traction wheels.
-	int driven = 0;
-	for (PxU32 i = 0; i < 4; i++) {
-		driven += traction[i] ? 1 : 0;
-	}
-	if (driven == 0) {
-		ERR_PRINT("PhysX vehicle: the engine drive needs at least one wheel with use_as_traction.");
-		return false;
-	}
-	PxVehicleMultiWheelDriveDifferentialParams &multi = v.multiWheelDifferentialParams;
-	multi.setToDefault();
-	for (PxU32 i = 0; i < 4; i++) {
-		multi.torqueRatios[i] = traction[i] ? 1.0f / driven : 0.0f;
-		multi.aveWheelSpeedRatios[i] = multi.torqueRatios[i];
-	}
+	const PxVehicleMultiWheelDriveDifferentialParams &multi = v.multiWheelDifferentialParams;
 	PxVehicleFourWheelDriveDifferentialParams &four = v.fourWheelDifferentialParams;
 	four.setToDefault();
 	for (PxU32 i = 0; i < 4; i++) {
@@ -908,14 +643,7 @@ inline bool configure_vehicle4w_engine(Vehicle4W &v, const Vehicle4WEngineConfig
 		four.centerTarget = front && rear ? (PxReal)e.center_target : 0.0f;
 		four.rate = (PxReal)e.rate;
 	}
-
-	// Start idling in first gear (the PhysX snippets' start), the gearbox in automatic until told otherwise.
-	v.gearboxState.setToDefault();
-	v.gearboxState.currentGear = gears.neutralGear + 1;
-	v.gearboxState.targetGear = gears.neutralGear + 1;
-	v.engineTransmissionCommandState.setToDefault();
-	v.engineTransmissionCommandState.targetGear = PxVehicleEngineDriveTransmissionCommandState::eAUTOMATIC_GEAR;
-	v.stop_drivetrain();
+	v.limited_slip = e.limited_slip;
 	return true;
 }
 

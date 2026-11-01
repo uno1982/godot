@@ -330,17 +330,17 @@
 		</constant>
 		<constant name="CENTER_OF_MASS_MODE_CUSTOM" value="1" enum="CenterOfMassMode">
 		</constant>
-		<constant name="DRIVETRAIN_DIRECT" value="0" enum="Drivetrain">
-			Throttle is wheel torque, up to [member max_engine_torque], forward or in reverse.
-		</constant>
-		<constant name="DRIVETRAIN_ENGINE" value="1" enum="Drivetrain">
-			PhysX's engine drive: an engine with a torque curve drives the traction wheels through a clutch, a gearbox (automatic or manual) and a differential.
-		</constant>
 		<constant name="DIFFERENTIAL_OPEN" value="0" enum="Differential">
 			The engine's torque is split evenly between the traction wheels, whatever each one does: a wheel on ice spins and the others get no more.
 		</constant>
 		<constant name="DIFFERENTIAL_LIMITED_SLIP" value="1" enum="Differential">
 			PhysX's four-wheel-drive differential: torque moves away from a wheel spinning faster than its partner on the same axle, or from the faster axle, past the [code]limited_slip_*[/code] biases.
+		</constant>
+		<constant name="DRIVETRAIN_DIRECT" value="0" enum="Drivetrain">
+			Throttle is wheel torque, up to [member max_engine_torque], forward or in reverse.
+		</constant>
+		<constant name="DRIVETRAIN_ENGINE" value="1" enum="Drivetrain">
+			PhysX's engine drive: an engine with a torque curve drives the traction wheels through a clutch, a gearbox (automatic or manual) and a differential.
 		</constant>
 	</constants>
 </class>

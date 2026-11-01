@@ -838,7 +838,13 @@ sits at the right height in the editor. Wheels carry the suspension
 - **`PhysXMotorcycle3D`** — 2 wheels, front steering, rear traction. `PxVehicle2`
   has no balance mechanism, so staying upright is the script's job: read
   `get_roll_angle()` / `get_angular_velocity()` each tick and correct with
-  `apply_torque_impulse()`, like a rider would.
+  `apply_torque_impulse()`, like a rider would. `drivetrain` works as on
+  `PhysXVehicle3D` (Direct, or Engine with the same engine, gearbox, clutch and
+  `clutch_assist` settings, and no differential: one wheel is driven). The
+  engine settings default to a sport bike's: 110 N·m to 12000 RPM, six close
+  gears, about 115 km/h in first. A bike without a rider carries little load on
+  its rear tire, so it needs more `tire_friction` there than a road tire's, or
+  the engine just spins it.
 - **`PhysXTank3D`** — 2–16 wheels, skid-steer. Each wheel is assigned to the left
   or right track from the sign of its local X (+X is the left side). Drive with signed `left_ratio` /
   `right_ratio` (−1..1): the sign is the direction, so opposite signs pivot in

@@ -43,6 +43,7 @@
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/resources/3d/box_shape_3d.h"
 #include "scene/resources/3d/world_3d.h"
+#include "scene/resources/curve.h"
 
 struct PhysXMotorcycle3D::Impl {
 	Vehicle2W vehicle;
@@ -58,6 +59,21 @@ struct PhysXMotorcycle3D::Impl {
 
 PhysXMotorcycle3D::PhysXMotorcycle3D() {
 	impl = memnew(Impl);
+	// A sport bike's engine (the shared defaults are a car's): 110 N m to 12000 RPM, a light crank, six close
+	// gears and the primary drive folded into the final drive -- about 115 km/h in first, 290 in sixth on a 0.3 m
+	// wheel. No real reverse gear, but PhysX needs one. The damping rates (N m per rad/s) scale with the torque and
+	// the speed: the car's 0.15 at full throttle would take the whole 110 N m by 7000 RPM.
+	engine_peak_torque = 110.0f;
+	engine_max_rpm = 12000.0f;
+	engine_moment_of_inertia = 0.15f;
+	engine_damping_full_throttle = 0.02f;
+	engine_damping_zero_throttle_clutch_engaged = 0.25f;
+	engine_damping_zero_throttle_clutch_disengaged = 0.04f;
+	gear_ratios = { 2.6f, 1.9f, 1.55f, 1.3f, 1.15f, 1.05f };
+	reverse_gear_ratio = 2.6f;
+	final_drive_ratio = 4.5f;
+	gear_switch_time = 0.15f;
+	clutch_strength = 10.0f;
 }
 
 PhysXMotorcycle3D::~PhysXMotorcycle3D() {
@@ -139,6 +155,9 @@ bool PhysXMotorcycle3D::_build() {
 	cfg.chassis_box_center_local = chassis_shape_node->get_position();
 	cfg.chassis_com_local = center_of_mass_mode == CENTER_OF_MASS_MODE_CUSTOM ? center_of_mass : chassis_shape_node->get_position();
 	cfg.max_engine_torque = max_engine_torque;
+	if (drivetrain == DRIVETRAIN_ENGINE) {
+		_engine_config(cfg.engine);
+	}
 	cfg.max_brake_torque = max_brake_torque;
 	cfg.max_steer_angle = max_steer_angle;
 	cfg.collision_layer = collision_layer;
@@ -203,6 +222,7 @@ bool PhysXMotorcycle3D::_build() {
 }
 
 PHYSX_VEHICLE_CONTROL_DEFINE(PhysXMotorcycle3D, 2)
+PHYSX_VEHICLE_ENGINE_DEFINE(PhysXMotorcycle3D)
 
 void PhysXMotorcycle3D::_destroy() {
 	if (impl->built) {
@@ -248,6 +268,7 @@ void PhysXMotorcycle3D::_notification(int p_what) {
 			v.commandState.nbBrakes = 2;
 			v.commandState.steer = (PxReal)steer;
 			v.transmissionCommandState.gear = reverse ? PxVehicleDirectDriveTransmissionCommandState::eREVERSE : PxVehicleDirectDriveTransmissionCommandState::eFORWARD;
+			_engine_controls();
 			v.step((PxReal)get_physics_process_delta_time(), impl->simulationContext);
 			// Same CoM-vs-actor-origin frame notes as PhysXVehicle3D's own
 			// identical code -- see that class's comment for the SDK source
@@ -476,6 +497,7 @@ void PhysXMotorcycle3D::_validate_property(PropertyInfo &p_property) const {
 	if (center_of_mass_mode != CENTER_OF_MASS_MODE_CUSTOM && p_property.name == "center_of_mass") {
 		p_property.usage = PROPERTY_USAGE_NO_EDITOR;
 	}
+	_engine_validate_property(p_property);
 }
 
 #define PHYSX_MOTORCYCLE_SETTER(m_name, m_field) \
@@ -616,9 +638,11 @@ void PhysXMotorcycle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_max_steer_angle", "value"), &PhysXMotorcycle3D::set_max_steer_angle);
 	ClassDB::bind_method(D_METHOD("get_max_steer_angle"), &PhysXMotorcycle3D::get_max_steer_angle);
 	ADD_GROUP("Drivetrain", "");
+	PHYSX_VEHICLE_ENGINE_BIND_DRIVETRAIN(PhysXMotorcycle3D)
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_engine_torque", PROPERTY_HINT_RANGE, "0,2000,10,or_greater"), "set_max_engine_torque", "get_max_engine_torque");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_brake_torque", PROPERTY_HINT_RANGE, "0,5000,10,or_greater"), "set_max_brake_torque", "get_max_brake_torque");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_steer_angle", PROPERTY_HINT_RANGE, "0,1.0472,0.01"), "set_max_steer_angle", "get_max_steer_angle");
+	PHYSX_VEHICLE_ENGINE_BIND_SETTINGS(PhysXMotorcycle3D)
 
 	ClassDB::bind_method(D_METHOD("set_throttle", "value"), &PhysXMotorcycle3D::set_throttle);
 	ClassDB::bind_method(D_METHOD("get_throttle"), &PhysXMotorcycle3D::get_throttle);
@@ -636,6 +660,7 @@ void PhysXMotorcycle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_reverse", "value"), &PhysXMotorcycle3D::set_reverse);
 	ClassDB::bind_method(D_METHOD("is_reverse"), &PhysXMotorcycle3D::is_reverse);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "reverse"), "set_reverse", "is_reverse");
+	PHYSX_VEHICLE_ENGINE_BIND_CONTROLS(PhysXMotorcycle3D)
 
 	ClassDB::bind_method(D_METHOD("set_collision_layer", "layer"), &PhysXMotorcycle3D::set_collision_layer);
 	ClassDB::bind_method(D_METHOD("get_collision_layer"), &PhysXMotorcycle3D::get_collision_layer);

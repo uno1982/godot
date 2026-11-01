@@ -40,14 +40,17 @@
 #include "core/math/vector3.h"
 #include "core/typedefs.h"
 
+#include "godot_physx_vehicle_engine.h"
+
 #include <PxPhysicsAPI.h>
 #include <vehicle/PxVehicleAPI.h>
 
 using namespace physx;
 
-// A single direct-drive 2-wheel vehicle (motorcycle-style: one front steering
-// wheel, one rear driven wheel) -- same composition pattern as Vehicle4W
-// (vehicle/godot_physx_vehicle4w.h), reduced to 2 wheels instead of 4.
+// A single 2-wheel vehicle (motorcycle-style: one front steering wheel, one
+// rear driven wheel) -- same composition pattern as Vehicle4W
+// (vehicle/godot_physx_vehicle4w.h), reduced to 2 wheels instead of 4, and the
+// same two drives: direct, or the engine drive (VehicleEngineDrive).
 //
 // Vehicle4W's own composition can't represent this: configure_vehicle4w()
 // hard-requires exactly 2 steering + 2 non-steering wheels (its Ackermann
@@ -75,7 +78,8 @@ class Vehicle2W : public PxVehicleRigidBodyComponent,
 				  public PxVehiclePhysXRoadGeometrySceneQueryComponent,
 				  public PxVehicleDirectDriveCommandResponseComponent,
 				  public PxVehicleDirectDriveActuationStateComponent,
-				  public PxVehicleDirectDrivetrainComponent {
+				  public PxVehicleDirectDrivetrainComponent,
+				  public VehicleEngineDrive<Vehicle2W, 2> {
 public:
 	static constexpr PxU32 WHEEL_FRONT = 0;
 	static constexpr PxU32 WHEEL_REAR = 1;
@@ -134,9 +138,6 @@ public:
 	PxVehicleComponentSequence componentSequence;
 	PxU8 componentSequenceSubstepGroupHandle = 0;
 
-	// Direct drive only: nothing beyond the wheels to stop (see Vehicle4W::stop_drivetrain()).
-	void stop_drivetrain() {}
-
 	void setToDefault() {
 		for (PxU32 i = 0; i < 2; i++) {
 			actuationStates[i].setToDefault();
@@ -157,6 +158,7 @@ public:
 		rigidBodyState.setToDefault();
 		commandState.setToDefault();
 		transmissionCommandState.gear = PxVehicleDirectDriveTransmissionCommandState::eNEUTRAL;
+		reset_engine_drive();
 		physxActor.setToDefault();
 		physxSteerState.setToDefault();
 		physxConstraints.setToDefault();
@@ -299,11 +301,11 @@ public:
 		outPhysxConstraints = &physxConstraints;
 		outRigidBodyState = &rigidBodyState;
 		outWheelRigidBody1dStates.setData(wheelRigidBody1dStates);
-		outTransmissionCommands = nullptr;
-		outGearParams = nullptr;
-		outGearState = nullptr;
-		outEngineParams = nullptr;
-		outEngineState = nullptr;
+		outTransmissionCommands = engine_drive ? &engineTransmissionCommandState : nullptr;
+		outGearParams = engine_drive ? &gearboxParams : nullptr;
+		outGearState = engine_drive ? &gearboxState : nullptr;
+		outEngineParams = engine_drive ? &engineParams : nullptr;
+		outEngineState = engine_drive ? &engineState : nullptr;
 	}
 
 	// getDataForPhysXActorEndComponent (PxVehiclePhysXActorEndComponent)
@@ -324,7 +326,7 @@ public:
 		outWheelRigidBody1dStates.setData(wheelRigidBody1dStates);
 		outWheelLocalPoses.setData(wheelLocalPoses);
 		outPhysxActor = &physxActor;
-		outGearState = nullptr;
+		outGearState = engine_drive ? &gearboxState : nullptr;
 		outThrottle = &commandState.throttle;
 	}
 
@@ -430,20 +432,33 @@ public:
 		outWheelRigidBody1dStates.setData(wheelRigidBody1dStates);
 	}
 
+	// For VehicleEngineDrive's command response: no wheel pair to Ackermann-correct.
+	void get_engine_drive_ackermann(PxVehicleSizedArrayData<const PxVehicleAckermannParams> &r_params) const {
+		r_params.setEmpty();
+	}
+
 	void initComponentSequence() {
 		// From empty: a live rebuild configures the same object again, and adding to the old sequence ran every
 		// component once more per step for each rebuild.
 		componentSequence = PxVehicleComponentSequence();
 		componentSequence.add(static_cast<PxVehiclePhysXActorBeginComponent *>(this));
-		componentSequence.add(static_cast<PxVehicleDirectDriveCommandResponseComponent *>(this));
-		componentSequence.add(static_cast<PxVehicleDirectDriveActuationStateComponent *>(this));
+		if (engine_drive) {
+			add_engine_drive_components(componentSequence);
+		} else {
+			componentSequence.add(static_cast<PxVehicleDirectDriveCommandResponseComponent *>(this));
+			componentSequence.add(static_cast<PxVehicleDirectDriveActuationStateComponent *>(this));
+		}
 		componentSequence.add(static_cast<PxVehiclePhysXRoadGeometrySceneQueryComponent *>(this));
 
 		componentSequenceSubstepGroupHandle = componentSequence.beginSubstepGroup(3);
 		componentSequence.add(static_cast<PxVehicleSuspensionComponent *>(this));
 		componentSequence.add(static_cast<PxVehicleTireComponent *>(this));
 		componentSequence.add(static_cast<PxVehiclePhysXConstraintComponent *>(this));
-		componentSequence.add(static_cast<PxVehicleDirectDrivetrainComponent *>(this));
+		if (engine_drive) {
+			add_engine_drivetrain(componentSequence);
+		} else {
+			componentSequence.add(static_cast<PxVehicleDirectDrivetrainComponent *>(this));
+		}
 		componentSequence.add(static_cast<PxVehicleRigidBodyComponent *>(this));
 		componentSequence.endSubstepGroup();
 
@@ -498,11 +513,11 @@ struct Vehicle2WWheelConfig {
 	real_t tire_slide_grip = 0.7f;
 };
 
-// Everything a caller can tune about a direct-drive 2-wheel vehicle, in Godot
+// Everything a caller can tune about a 2-wheel vehicle, in Godot
 // units/conventions. front = steering only, rear = driven only (real
 // motorcycle convention -- no front-wheel-drive option, unlike Vehicle4WConfig's
-// per-wheel use_as_traction, since a 2-wheel direct-drive vehicle only ever
-// has one meaningful drivetrain split).
+// per-wheel use_as_traction, since a 2-wheel vehicle only ever has one
+// meaningful drivetrain split -- and so no differential to choose either).
 struct Vehicle2WConfig {
 	real_t mass = 220.0f;
 	Vector3 moment_of_inertia = Vector3(40.0f, 55.0f, 20.0f);
@@ -517,7 +532,8 @@ struct Vehicle2WConfig {
 	Vehicle2WWheelConfig front_wheel;
 	Vehicle2WWheelConfig rear_wheel;
 
-	real_t max_engine_torque = 250.0f;
+	real_t max_engine_torque = 250.0f; // direct drive only
+	VehicleEngineConfig engine;
 	real_t max_brake_torque = 1200.0f;
 	real_t max_steer_angle = 0.5f; // radians
 
@@ -573,6 +589,12 @@ inline bool configure_vehicle2w(Vehicle2W &v, const Vehicle2WConfig &cfg, PxPhys
 	v.directDriveThrottleResponseParams.maxResponse = (PxReal)cfg.max_engine_torque;
 	v.directDriveThrottleResponseParams.wheelResponseMultipliers[Vehicle2W::WHEEL_FRONT] = 0.0f;
 	v.directDriveThrottleResponseParams.wheelResponseMultipliers[Vehicle2W::WHEEL_REAR] = 1.0f;
+	v.engine_drive = false;
+	v.limited_slip = false;
+	const bool traction[2] = { false, true };
+	if (cfg.engine.enabled && !v.configure_engine(cfg.engine, traction)) {
+		return false;
+	}
 
 	v.rigidBodyParams.mass = (PxReal)cfg.mass;
 	v.rigidBodyParams.moi = to_px(cfg.moment_of_inertia);

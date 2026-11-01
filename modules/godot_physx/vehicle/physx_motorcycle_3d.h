@@ -31,6 +31,7 @@
 #pragma once
 
 #include "godot_physx_vehicle_control.h"
+#include "physx_vehicle_engine_settings.h"
 
 #include "core/math/vector3.h"
 #include "core/templates/local_vector.h"
@@ -106,6 +107,8 @@ public:
 
 	void set_max_engine_torque(real_t p_v);
 	real_t get_max_engine_torque() const { return max_engine_torque; }
+	// The engine drive, as PhysXVehicle3D's (no differential: one driven wheel), with a sport bike's defaults.
+	PHYSX_VEHICLE_ENGINE_DECLARE()
 	void set_max_brake_torque(real_t p_v);
 	real_t get_max_brake_torque() const { return max_brake_torque; }
 	void set_max_steer_angle(real_t p_v);
@@ -200,3 +203,4 @@ private:
 };
 
 VARIANT_ENUM_CAST(PhysXMotorcycle3D::CenterOfMassMode);
+VARIANT_ENUM_CAST(PhysXMotorcycle3D::Drivetrain);

@@ -136,43 +136,7 @@ bool PhysXVehicle3D::_build() {
 	cfg.max_engine_torque = max_engine_torque;
 	if (drivetrain == DRIVETRAIN_ENGINE) {
 		Vehicle4WEngineConfig &e = cfg.engine;
-		e.enabled = true;
-		e.peak_torque = engine_peak_torque;
-		e.max_rpm = engine_max_rpm;
-		e.idle_rpm = engine_idle_rpm;
-		if (engine_torque_curve.is_valid() && engine_torque_curve->get_point_count() > 0) {
-			// PhysX's table holds 8 points: a curve with more is sampled at 8 even speeds.
-			const Ref<Curve> &curve = engine_torque_curve;
-			const real_t from = curve->get_min_domain();
-			const real_t span = MAX(curve->get_max_domain() - from, (real_t)CMP_EPSILON);
-			const int count = curve->get_point_count();
-			if (count <= 8) {
-				for (int i = 0; i < count; i++) {
-					const Vector2 point = curve->get_point_position(i);
-					e.torque_curve.push_back(Vector2((point.x - from) / span, point.y));
-				}
-			} else {
-				for (int i = 0; i < 8; i++) {
-					const real_t x = i / 7.0;
-					e.torque_curve.push_back(Vector2(x, curve->sample(from + x * span)));
-				}
-			}
-		}
-		e.moment_of_inertia = engine_moment_of_inertia;
-		e.damping_full_throttle = engine_damping_full_throttle;
-		e.damping_zero_throttle_clutch_engaged = engine_damping_zero_throttle_clutch_engaged;
-		e.damping_zero_throttle_clutch_disengaged = engine_damping_zero_throttle_clutch_disengaged;
-		e.gear_ratios.clear();
-		for (float ratio : gear_ratios) {
-			e.gear_ratios.push_back(ratio);
-		}
-		e.reverse_gear_ratio = reverse_gear_ratio;
-		e.final_drive_ratio = final_drive_ratio;
-		e.gear_switch_time = gear_switch_time;
-		e.autobox_up_ratio = autobox_up_ratio;
-		e.autobox_down_ratio = autobox_down_ratio;
-		e.autobox_latency = autobox_latency;
-		e.clutch_strength = clutch_strength;
+		_engine_config(e);
 		e.limited_slip = differential == DIFFERENTIAL_LIMITED_SLIP;
 		e.front_bias = limited_slip_front_bias;
 		e.front_target = limited_slip_front_target;
@@ -248,6 +212,7 @@ bool PhysXVehicle3D::_build() {
 }
 
 PHYSX_VEHICLE_CONTROL_DEFINE(PhysXVehicle3D, 4)
+PHYSX_VEHICLE_ENGINE_DEFINE(PhysXVehicle3D)
 
 void PhysXVehicle3D::_destroy() {
 	if (impl->built) {
@@ -303,25 +268,7 @@ void PhysXVehicle3D::_notification(int p_what) {
 			v.commandState.nbBrakes = 2;
 			v.commandState.steer = (PxReal)steer;
 			v.transmissionCommandState.gear = reverse ? PxVehicleDirectDriveTransmissionCommandState::eREVERSE : PxVehicleDirectDriveTransmissionCommandState::eFORWARD;
-			if (v.engine_drive) {
-				// Gearbox gears: 0 reverse, 1 neutral, 2.. forward -- `gear` + 1.
-				PxU32 target = PxVehicleEngineDriveTransmissionCommandState::eAUTOMATIC_GEAR;
-				if (reverse) {
-					target = 0;
-				} else if (!automatic_transmission) {
-					target = (PxU32)CLAMP(gear + 1, 0, (int)v.gearboxParams.nbRatios - 1);
-				}
-				if (!clutch_assist && !automatic_transmission && clutch < 0.5f) {
-					// No clutch, no shift: the gearbox stays in (or keeps shifting to) the gear it has.
-					target = v.gearboxState.targetGear;
-				} else if (automatic_transmission && !reverse && clutch >= 0.5f) {
-					// The autobox shifts on engine speed alone, so a car revved against the clutch would climb
-					// through the gears standing still. Hold the gear while the clutch is down (a launch).
-					target = v.gearboxState.targetGear;
-				}
-				v.engineTransmissionCommandState.targetGear = target;
-				v.engineTransmissionCommandState.clutch = (PxReal)CLAMP(clutch, (real_t)0.0, (real_t)1.0);
-			}
+			_engine_controls();
 			v.step((PxReal)get_physics_process_delta_time(), impl->simulationContext);
 			// v.rigidBodyState.pose is CoM-relative, not the actor's real
 			// origin (confirmed directly by comparing it against a raw
@@ -421,27 +368,6 @@ real_t PhysXVehicle3D::get_wheel_separation(int p_wheel) const {
 	return 0.0;
 }
 
-int PhysXVehicle3D::get_current_gear() const {
-	if (!impl->built || !impl->vehicle.engine_drive) {
-		return reverse ? -1 : 1;
-	}
-	return (int)impl->vehicle.gearboxState.currentGear - 1;
-}
-
-int PhysXVehicle3D::get_target_gear() const {
-	if (!impl->built || !impl->vehicle.engine_drive) {
-		return reverse ? -1 : 1;
-	}
-	return (int)impl->vehicle.gearboxState.targetGear - 1;
-}
-
-real_t PhysXVehicle3D::get_engine_rpm() const {
-	if (!impl->built || !impl->vehicle.engine_drive) {
-		return 0.0;
-	}
-	return impl->vehicle.engineState.rotationSpeed * (real_t)(60.0 / Math::TAU);
-}
-
 Vector3 PhysXVehicle3D::get_actor_position() const {
 	if (!impl->built) {
 		return Vector3();
@@ -536,20 +462,6 @@ bool PhysXVehicle3D::is_sleeping() const {
 	return impl->built && _chassis_sleeping();
 }
 PHYSX_VEHICLE_SETTER(max_engine_torque, max_engine_torque)
-PHYSX_VEHICLE_SETTER(engine_peak_torque, engine_peak_torque)
-PHYSX_VEHICLE_SETTER(engine_max_rpm, engine_max_rpm)
-PHYSX_VEHICLE_SETTER(engine_idle_rpm, engine_idle_rpm)
-PHYSX_VEHICLE_SETTER(engine_moment_of_inertia, engine_moment_of_inertia)
-PHYSX_VEHICLE_SETTER(engine_damping_full_throttle, engine_damping_full_throttle)
-PHYSX_VEHICLE_SETTER(engine_damping_zero_throttle_clutch_engaged, engine_damping_zero_throttle_clutch_engaged)
-PHYSX_VEHICLE_SETTER(engine_damping_zero_throttle_clutch_disengaged, engine_damping_zero_throttle_clutch_disengaged)
-PHYSX_VEHICLE_SETTER(reverse_gear_ratio, reverse_gear_ratio)
-PHYSX_VEHICLE_SETTER(final_drive_ratio, final_drive_ratio)
-PHYSX_VEHICLE_SETTER(gear_switch_time, gear_switch_time)
-PHYSX_VEHICLE_SETTER(autobox_up_ratio, autobox_up_ratio)
-PHYSX_VEHICLE_SETTER(autobox_down_ratio, autobox_down_ratio)
-PHYSX_VEHICLE_SETTER(autobox_latency, autobox_latency)
-PHYSX_VEHICLE_SETTER(clutch_strength, clutch_strength)
 PHYSX_VEHICLE_SETTER(limited_slip_front_bias, limited_slip_front_bias)
 PHYSX_VEHICLE_SETTER(limited_slip_front_target, limited_slip_front_target)
 PHYSX_VEHICLE_SETTER(limited_slip_rear_bias, limited_slip_rear_bias)
@@ -566,40 +478,12 @@ PHYSX_VEHICLE_SETTER(tire_force_point, tire_force_point)
 
 #undef PHYSX_VEHICLE_SETTER
 
-void PhysXVehicle3D::set_drivetrain(Drivetrain p_drivetrain) {
-	if (drivetrain == p_drivetrain) {
-		return;
-	}
-	drivetrain = p_drivetrain;
-	notify_property_list_changed();
-	_rebuild_if_live();
-}
-
 void PhysXVehicle3D::set_differential(Differential p_differential) {
 	if (differential == p_differential) {
 		return;
 	}
 	differential = p_differential;
 	notify_property_list_changed();
-	_rebuild_if_live();
-}
-
-void PhysXVehicle3D::set_gear_ratios(const PackedFloat32Array &p_ratios) {
-	gear_ratios = p_ratios;
-	_rebuild_if_live();
-}
-
-void PhysXVehicle3D::set_engine_torque_curve(const Ref<Curve> &p_curve) {
-	if (engine_torque_curve == p_curve) {
-		return;
-	}
-	if (engine_torque_curve.is_valid()) {
-		engine_torque_curve->disconnect_changed(callable_mp(this, &PhysXVehicle3D::_rebuild_if_live));
-	}
-	engine_torque_curve = p_curve;
-	if (engine_torque_curve.is_valid()) {
-		engine_torque_curve->connect_changed(callable_mp(this, &PhysXVehicle3D::_rebuild_if_live));
-	}
 	_rebuild_if_live();
 }
 
@@ -658,13 +542,11 @@ void PhysXVehicle3D::_validate_property(PropertyInfo &p_property) const {
 	if (center_of_mass_mode != CENTER_OF_MASS_MODE_CUSTOM && p_property.name == "center_of_mass") {
 		p_property.usage = PROPERTY_USAGE_NO_EDITOR;
 	}
-	// Each drivetrain shows only its own settings.
+	_engine_validate_property(p_property);
+	// The differential is the engine drive's, and limited_slip_* only for the limited slip one.
 	const String name = p_property.name;
-	const bool engine_setting = name.begins_with("engine_") || name.begins_with("gear_") || name.begins_with("autobox_") ||
-			name.begins_with("limited_slip_") || name == "reverse_gear_ratio" || name == "final_drive_ratio" ||
-			name == "clutch_strength" || name == "differential" || name == "automatic_transmission" || name == "gear" || name == "clutch" || name == "clutch_assist";
-	if ((drivetrain == DRIVETRAIN_ENGINE && name == "max_engine_torque") || (drivetrain != DRIVETRAIN_ENGINE && engine_setting) ||
-			(differential != DIFFERENTIAL_LIMITED_SLIP && name.begins_with("limited_slip_"))) {
+	if ((drivetrain != DRIVETRAIN_ENGINE && name == "differential") ||
+			((drivetrain != DRIVETRAIN_ENGINE || differential != DIFFERENTIAL_LIMITED_SLIP) && name.begins_with("limited_slip_"))) {
 		p_property.usage = PROPERTY_USAGE_NO_EDITOR;
 	}
 }
@@ -690,12 +572,8 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_sleeping"), &PhysXVehicle3D::is_sleeping);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "can_sleep"), "set_can_sleep", "is_able_to_sleep");
 
-	BIND_ENUM_CONSTANT(DRIVETRAIN_DIRECT);
-	BIND_ENUM_CONSTANT(DRIVETRAIN_ENGINE);
 	BIND_ENUM_CONSTANT(DIFFERENTIAL_OPEN);
 	BIND_ENUM_CONSTANT(DIFFERENTIAL_LIMITED_SLIP);
-	ClassDB::bind_method(D_METHOD("set_drivetrain", "drivetrain"), &PhysXVehicle3D::set_drivetrain);
-	ClassDB::bind_method(D_METHOD("get_drivetrain"), &PhysXVehicle3D::get_drivetrain);
 	ClassDB::bind_method(D_METHOD("set_max_engine_torque", "value"), &PhysXVehicle3D::set_max_engine_torque);
 	ClassDB::bind_method(D_METHOD("get_max_engine_torque"), &PhysXVehicle3D::get_max_engine_torque);
 	ClassDB::bind_method(D_METHOD("set_max_brake_torque", "value"), &PhysXVehicle3D::set_max_brake_torque);
@@ -709,7 +587,7 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_rear_anti_roll_stiffness", "value"), &PhysXVehicle3D::set_rear_anti_roll_stiffness);
 	ClassDB::bind_method(D_METHOD("get_rear_anti_roll_stiffness"), &PhysXVehicle3D::get_rear_anti_roll_stiffness);
 	ADD_GROUP("Drivetrain", "");
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "drivetrain", PROPERTY_HINT_ENUM, "Direct,Engine"), "set_drivetrain", "get_drivetrain");
+	PHYSX_VEHICLE_ENGINE_BIND_DRIVETRAIN(PhysXVehicle3D)
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_engine_torque", PROPERTY_HINT_RANGE, "0,5000,10,or_greater"), "set_max_engine_torque", "get_max_engine_torque");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_brake_torque", PROPERTY_HINT_RANGE, "0,20000,10,or_greater"), "set_max_brake_torque", "get_max_brake_torque");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_steer_angle", PROPERTY_HINT_RANGE, "0,1.5708,0.01"), "set_max_steer_angle", "get_max_steer_angle");
@@ -720,29 +598,7 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_" #m_name), &PhysXVehicle3D::get_##m_name); \
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, #m_name, PROPERTY_HINT_RANGE, m_hint), "set_" #m_name, "get_" #m_name);
 
-	ADD_GROUP("Engine", "engine_");
-	PHYSX_VEHICLE_BIND_FLOAT(engine_peak_torque, "0,5000,1,or_greater,suffix:N\u00B7m")
-	PHYSX_VEHICLE_BIND_FLOAT(engine_max_rpm, "100,20000,10,or_greater")
-	PHYSX_VEHICLE_BIND_FLOAT(engine_idle_rpm, "0,5000,10,or_greater")
-	ClassDB::bind_method(D_METHOD("set_engine_torque_curve", "curve"), &PhysXVehicle3D::set_engine_torque_curve);
-	ClassDB::bind_method(D_METHOD("get_engine_torque_curve"), &PhysXVehicle3D::get_engine_torque_curve);
-	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "engine_torque_curve", PROPERTY_HINT_RESOURCE_TYPE, Curve::get_class_static()), "set_engine_torque_curve", "get_engine_torque_curve");
-	PHYSX_VEHICLE_BIND_FLOAT(engine_moment_of_inertia, "0.01,20,0.01,or_greater,suffix:kg\u00B7m\u00B2")
-	PHYSX_VEHICLE_BIND_FLOAT(engine_damping_full_throttle, "0,10,0.01,or_greater")
-	PHYSX_VEHICLE_BIND_FLOAT(engine_damping_zero_throttle_clutch_engaged, "0,10,0.01,or_greater")
-	PHYSX_VEHICLE_BIND_FLOAT(engine_damping_zero_throttle_clutch_disengaged, "0,10,0.01,or_greater")
-
-	ADD_GROUP("Gearbox", "");
-	ClassDB::bind_method(D_METHOD("set_gear_ratios", "ratios"), &PhysXVehicle3D::set_gear_ratios);
-	ClassDB::bind_method(D_METHOD("get_gear_ratios"), &PhysXVehicle3D::get_gear_ratios);
-	ADD_PROPERTY(PropertyInfo(Variant::PACKED_FLOAT32_ARRAY, "gear_ratios"), "set_gear_ratios", "get_gear_ratios");
-	PHYSX_VEHICLE_BIND_FLOAT(reverse_gear_ratio, "0.1,20,0.01,or_greater")
-	PHYSX_VEHICLE_BIND_FLOAT(final_drive_ratio, "0.1,20,0.01,or_greater")
-	PHYSX_VEHICLE_BIND_FLOAT(gear_switch_time, "0,5,0.01,or_greater,suffix:s")
-	PHYSX_VEHICLE_BIND_FLOAT(autobox_up_ratio, "0,1,0.01")
-	PHYSX_VEHICLE_BIND_FLOAT(autobox_down_ratio, "0,1,0.01")
-	PHYSX_VEHICLE_BIND_FLOAT(autobox_latency, "0,10,0.01,or_greater,suffix:s")
-	PHYSX_VEHICLE_BIND_FLOAT(clutch_strength, "0,100,0.1,or_greater")
+	PHYSX_VEHICLE_ENGINE_BIND_SETTINGS(PhysXVehicle3D)
 
 	ADD_GROUP("Differential", "");
 	ClassDB::bind_method(D_METHOD("set_differential", "differential"), &PhysXVehicle3D::set_differential);
@@ -782,21 +638,7 @@ void PhysXVehicle3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_reverse", "value"), &PhysXVehicle3D::set_reverse);
 	ClassDB::bind_method(D_METHOD("is_reverse"), &PhysXVehicle3D::is_reverse);
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "reverse"), "set_reverse", "is_reverse");
-	ClassDB::bind_method(D_METHOD("set_automatic_transmission", "value"), &PhysXVehicle3D::set_automatic_transmission);
-	ClassDB::bind_method(D_METHOD("is_automatic_transmission"), &PhysXVehicle3D::is_automatic_transmission);
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "automatic_transmission"), "set_automatic_transmission", "is_automatic_transmission");
-	ClassDB::bind_method(D_METHOD("set_gear", "gear"), &PhysXVehicle3D::set_gear);
-	ClassDB::bind_method(D_METHOD("get_gear"), &PhysXVehicle3D::get_gear);
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "gear", PROPERTY_HINT_RANGE, "-1,30,1"), "set_gear", "get_gear");
-	ClassDB::bind_method(D_METHOD("set_clutch", "value"), &PhysXVehicle3D::set_clutch);
-	ClassDB::bind_method(D_METHOD("get_clutch"), &PhysXVehicle3D::get_clutch);
-	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "clutch", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_clutch", "get_clutch");
-	ClassDB::bind_method(D_METHOD("set_clutch_assist", "value"), &PhysXVehicle3D::set_clutch_assist);
-	ClassDB::bind_method(D_METHOD("is_clutch_assist"), &PhysXVehicle3D::is_clutch_assist);
-	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "clutch_assist"), "set_clutch_assist", "is_clutch_assist");
-	ClassDB::bind_method(D_METHOD("get_current_gear"), &PhysXVehicle3D::get_current_gear);
-	ClassDB::bind_method(D_METHOD("get_target_gear"), &PhysXVehicle3D::get_target_gear);
-	ClassDB::bind_method(D_METHOD("get_engine_rpm"), &PhysXVehicle3D::get_engine_rpm);
+	PHYSX_VEHICLE_ENGINE_BIND_CONTROLS(PhysXVehicle3D)
 
 	ClassDB::bind_method(D_METHOD("set_collision_layer", "layer"), &PhysXVehicle3D::set_collision_layer);
 	ClassDB::bind_method(D_METHOD("get_collision_layer"), &PhysXVehicle3D::get_collision_layer);

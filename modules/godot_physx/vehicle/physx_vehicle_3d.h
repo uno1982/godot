@@ -31,6 +31,7 @@
 #pragma once
 
 #include "godot_physx_vehicle_control.h"
+#include "physx_vehicle_engine_settings.h"
 
 #include "core/math/vector3.h"
 #include "core/templates/local_vector.h"
@@ -76,13 +77,6 @@ public:
 		CENTER_OF_MASS_MODE_AUTO,
 		CENTER_OF_MASS_MODE_CUSTOM,
 	};
-	// How throttle reaches the wheels. DIRECT: straight to wheel torque (max_engine_torque), forward or reverse.
-	// ENGINE: PhysX's engine drive -- an engine with a torque curve, clutch, gearbox (automatic or manual) and
-	// differential, tuned with the engine_*, gear_*, autobox_*, clutch_* and differential properties.
-	enum Drivetrain {
-		DRIVETRAIN_DIRECT,
-		DRIVETRAIN_ENGINE,
-	};
 	// Engine drive: how the engine's torque is shared between the traction wheels. OPEN: evenly, whatever each wheel
 	// does. LIMITED_SLIP: torque moves away from a wheel spinning faster than its partner (limited_slip_*).
 	enum Differential {
@@ -108,45 +102,10 @@ public:
 	bool is_able_to_sleep() const { return can_sleep; }
 	bool is_sleeping() const;
 
-	void set_drivetrain(Drivetrain p_drivetrain);
-	Drivetrain get_drivetrain() const { return drivetrain; }
 	void set_max_engine_torque(real_t p_v);
 	real_t get_max_engine_torque() const { return max_engine_torque; }
 
-	// Engine drive (DRIVETRAIN_ENGINE). Engine speeds are RPM; gear ratios are positive, first gear to top.
-	void set_engine_peak_torque(real_t p_v);
-	real_t get_engine_peak_torque() const { return engine_peak_torque; }
-	void set_engine_max_rpm(real_t p_v);
-	real_t get_engine_max_rpm() const { return engine_max_rpm; }
-	void set_engine_idle_rpm(real_t p_v);
-	real_t get_engine_idle_rpm() const { return engine_idle_rpm; }
-	// Torque (of engine_peak_torque) against engine speed (of engine_max_rpm), both 0..1. Null = flat.
-	void set_engine_torque_curve(const Ref<Curve> &p_curve);
-	Ref<Curve> get_engine_torque_curve() const { return engine_torque_curve; }
-	void set_engine_moment_of_inertia(real_t p_v);
-	real_t get_engine_moment_of_inertia() const { return engine_moment_of_inertia; }
-	void set_engine_damping_full_throttle(real_t p_v);
-	real_t get_engine_damping_full_throttle() const { return engine_damping_full_throttle; }
-	void set_engine_damping_zero_throttle_clutch_engaged(real_t p_v);
-	real_t get_engine_damping_zero_throttle_clutch_engaged() const { return engine_damping_zero_throttle_clutch_engaged; }
-	void set_engine_damping_zero_throttle_clutch_disengaged(real_t p_v);
-	real_t get_engine_damping_zero_throttle_clutch_disengaged() const { return engine_damping_zero_throttle_clutch_disengaged; }
-	void set_gear_ratios(const PackedFloat32Array &p_ratios);
-	PackedFloat32Array get_gear_ratios() const { return gear_ratios; }
-	void set_reverse_gear_ratio(real_t p_v);
-	real_t get_reverse_gear_ratio() const { return reverse_gear_ratio; }
-	void set_final_drive_ratio(real_t p_v);
-	real_t get_final_drive_ratio() const { return final_drive_ratio; }
-	void set_gear_switch_time(real_t p_v);
-	real_t get_gear_switch_time() const { return gear_switch_time; }
-	void set_autobox_up_ratio(real_t p_v);
-	real_t get_autobox_up_ratio() const { return autobox_up_ratio; }
-	void set_autobox_down_ratio(real_t p_v);
-	real_t get_autobox_down_ratio() const { return autobox_down_ratio; }
-	void set_autobox_latency(real_t p_v);
-	real_t get_autobox_latency() const { return autobox_latency; }
-	void set_clutch_strength(real_t p_v);
-	real_t get_clutch_strength() const { return clutch_strength; }
+	PHYSX_VEHICLE_ENGINE_DECLARE()
 	void set_differential(Differential p_differential);
 	Differential get_differential() const { return differential; }
 	void set_limited_slip_front_bias(real_t p_v);
@@ -198,26 +157,6 @@ public:
 	// tuning value.
 	void set_reverse(bool p_v) { reverse = p_v; }
 	bool is_reverse() const { return reverse; }
-	// Engine drive controls, read every tick. automatic_transmission: the autobox picks forward gears (reverse
-	// still selects the reverse gear); off, the gearbox goes to `gear` (-1 reverse, 0 neutral, 1.. forward), and
-	// reverse = true still means the reverse gear. clutch: 0 engaged .. 1 pressed. clutch_assist off: a manual
-	// gearbox changes gear (reverse too) only while the clutch is pressed past halfway, and otherwise holds its gear.
-	// The automatic holds its gear while the clutch is pressed past halfway (revving for a launch).
-	void set_automatic_transmission(bool p_v) { automatic_transmission = p_v; }
-	bool is_automatic_transmission() const { return automatic_transmission; }
-	void set_gear(int p_gear) { gear = p_gear; }
-	int get_gear() const { return gear; }
-	void set_clutch(real_t p_v) { clutch = p_v; }
-	real_t get_clutch() const { return clutch; }
-	void set_clutch_assist(bool p_v) { clutch_assist = p_v; }
-	bool is_clutch_assist() const { return clutch_assist; }
-	// The gear engaged now, numbered as `gear` (0 while a shift is under way). Direct drive: 1 or -1.
-	int get_current_gear() const;
-	// The gear the gearbox is shifting to (the current one when not shifting), numbered as `gear`.
-	int get_target_gear() const;
-	// Engine speed in RPM; 0 with direct drive.
-	real_t get_engine_rpm() const;
-
 	void set_collision_layer(uint32_t p_layer);
 	uint32_t get_collision_layer() const { return collision_layer; }
 	void set_collision_mask(uint32_t p_mask);
@@ -253,25 +192,7 @@ private:
 	CenterOfMassMode center_of_mass_mode = CENTER_OF_MASS_MODE_AUTO;
 	Vector3 center_of_mass;
 	bool can_sleep = true;
-	Drivetrain drivetrain = DRIVETRAIN_DIRECT;
 	real_t max_engine_torque = 700.0f;
-	// Engine drive defaults: see Vehicle4WEngineConfig.
-	real_t engine_peak_torque = 500.0f;
-	real_t engine_max_rpm = 6000.0f;
-	real_t engine_idle_rpm = 0.0f;
-	Ref<Curve> engine_torque_curve;
-	real_t engine_moment_of_inertia = 1.0f;
-	real_t engine_damping_full_throttle = 0.15f;
-	real_t engine_damping_zero_throttle_clutch_engaged = 2.0f;
-	real_t engine_damping_zero_throttle_clutch_disengaged = 0.35f;
-	PackedFloat32Array gear_ratios = { 4.0f, 2.0f, 1.5f, 1.1f, 1.0f };
-	real_t reverse_gear_ratio = 4.0f;
-	real_t final_drive_ratio = 4.0f;
-	real_t gear_switch_time = 0.5f;
-	real_t autobox_up_ratio = 0.65f;
-	real_t autobox_down_ratio = 0.5f;
-	real_t autobox_latency = 2.0f;
-	real_t clutch_strength = 10.0f;
 	Differential differential = DIFFERENTIAL_OPEN;
 	real_t limited_slip_front_bias = 1.3f;
 	real_t limited_slip_front_target = 1.29f;
@@ -292,10 +213,6 @@ private:
 	real_t handbrake = 0.0f;
 	real_t steer = 0.0f;
 	bool reverse = false;
-	bool automatic_transmission = true;
-	int gear = 1;
-	real_t clutch = 0.0f;
-	bool clutch_assist = true;
 	uint32_t collision_layer = 1;
 	uint32_t collision_mask = 1;
 	Ref<PhysicsMaterial> physics_material_override;

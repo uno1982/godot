@@ -456,6 +456,19 @@ Color light_strength(const Light3D *p_light) {
 	return p_light->get_color().srgb_to_linear() * strength;
 }
 
+// The material a mesh's surface is drawn with, as MeshInstance3D::get_active_material() gives it but without its error
+// when the mesh has gained surfaces the MeshInstance3D hasn't caught up with yet (a mesh being reloaded in the editor).
+Ref<Material> surface_material(const MeshInstance3D *p_mesh, int p_surface) {
+	if (p_mesh->get_material_override().is_valid()) {
+		return p_mesh->get_material_override();
+	}
+	if (p_surface < p_mesh->get_surface_override_material_count() && p_mesh->get_surface_override_material(p_surface).is_valid()) {
+		return p_mesh->get_surface_override_material(p_surface);
+	}
+	const Ref<Mesh> mesh = p_mesh->get_mesh();
+	return mesh.is_valid() && p_surface < mesh->get_surface_count() ? mesh->surface_get_material(p_surface) : Ref<Material>();
+}
+
 // A mesh's albedo (its first surface Godot can read the colour of, or that says it with a "pxtgi_albedo" Color in its
 // metadata) and the light it gives off (its brightest surface: a lamp's housing and bulb are often one mesh). A
 // "pxtgi_emission" Color in the MeshInstance3D's own metadata stands for the whole mesh.
@@ -465,7 +478,7 @@ void mesh_look(MeshInstance3D *p_mesh, Color &r_albedo, Color &r_emission) {
 	bool have_albedo = false;
 	const int surfaces = p_mesh->get_mesh().is_valid() ? p_mesh->get_mesh()->get_surface_count() : 0;
 	for (int i = 0; i < MAX(surfaces, 1); i++) {
-		const Ref<Material> material = p_mesh->get_active_material(i);
+		const Ref<Material> material = surface_material(p_mesh, i);
 		const Ref<BaseMaterial3D> base = material;
 		if (!have_albedo && material.is_valid() && material->has_meta(meta_albedo())) {
 			r_albedo = Color(material->get_meta(meta_albedo())).srgb_to_linear();
@@ -551,10 +564,11 @@ void collect(Node *p_node, HashSet<ObjectID> &r_tracked) {
 	}
 }
 
-// How much of a light Godot draws for a camera at p_eye: none when hidden or off, and with distance fade on, fading
-// out past its begin distance as Godot's renderer does.
+// How much of a light Godot draws for a camera at p_eye: none when hidden, off or out of the tree (one deleted in the
+// editor lives on for undo, and still counts as visible), and with distance fade on, fading out past its begin
+// distance as Godot's renderer does.
 float light_presence(const Light3D *p_light, const Vector3 &p_eye) {
-	if (p_light == nullptr || !p_light->is_visible_in_tree() || p_light->get_param(Light3D::PARAM_ENERGY) <= 0.0f) {
+	if (p_light == nullptr || !p_light->is_inside_tree() || !p_light->is_visible_in_tree() || p_light->get_param(Light3D::PARAM_ENERGY) <= 0.0f) {
 		return 0.0f;
 	}
 	if (!p_light->is_distance_fade_enabled()) {
@@ -991,7 +1005,7 @@ Vector3 PXTGI3D::_emissive_facing(int p_index) {
 	int surface = -1;
 	float brightest = 0.0f;
 	for (int i = 0; i < source->get_surface_count(); i++) {
-		const float glow = material_glow(mesh->get_active_material(i)).get_luminance();
+		const float glow = material_glow(surface_material(mesh, i)).get_luminance();
 		if (glow > brightest) {
 			brightest = glow;
 			surface = i;
@@ -1000,7 +1014,7 @@ Vector3 PXTGI3D::_emissive_facing(int p_index) {
 	if (surface < 0) {
 		return Vector3();
 	}
-	const Ref<Material> material = mesh->get_active_material(surface);
+	const Ref<Material> material = surface_material(mesh, surface);
 	const Ref<BaseMaterial3D> base = material;
 	if (base.is_valid() && base->get_cull_mode() == BaseMaterial3D::CULL_DISABLED) {
 		return Vector3();
@@ -1225,7 +1239,7 @@ bool PXTGI3D::_shape_frame(int p_index, Transform3D &r_to_world, float &r_type, 
 	Transform3D to_world;
 	if (entry.mesh_proxy) {
 		MeshInstance3D *mesh = ObjectDB::get_instance<MeshInstance3D>(entry.shape_node);
-		if (mesh == nullptr || !mesh->is_visible_in_tree() || mesh->get_mesh().is_null()) {
+		if (mesh == nullptr || !mesh->is_inside_tree() || !mesh->is_visible_in_tree() || mesh->get_mesh().is_null()) {
 			return false;
 		}
 		const AABB bounds = mesh->get_aabb();
@@ -1636,7 +1650,7 @@ void PXTGI3D::_publish() {
 	s.probe_count = 0;
 	for (const ObjectID &id : probes) {
 		ReflectionProbe *probe = ObjectDB::get_instance<ReflectionProbe>(id);
-		if (probe == nullptr || !probe->is_visible_in_tree() || (probe->get_reflection_mask() & 0xFFFFF) != 0xFFFFF) {
+		if (probe == nullptr || !probe->is_inside_tree() || !probe->is_visible_in_tree() || (probe->get_reflection_mask() & 0xFFFFF) != 0xFFFFF) {
 			continue;
 		}
 		const int overrides = (probe->get_ambient_mode() != ReflectionProbe::AMBIENT_DISABLED ? 1 : 0) | (probe->get_intensity() > 0.0f ? 2 : 0);
@@ -1690,7 +1704,7 @@ void PXTGI3D::_publish() {
 	for (const LocalVector<ObjectID> *list : { &omnis, &spots }) {
 		for (const ObjectID &id : *list) {
 			const Light3D *light = ObjectDB::get_instance<Light3D>(id);
-			const Color c = light != nullptr && light->is_visible_in_tree() ? light_strength(light) : Color(0, 0, 0);
+			const Color c = light != nullptr && light->is_inside_tree() && light->is_visible_in_tree() ? light_strength(light) : Color(0, 0, 0);
 			sources = hash_murmur3_one_float(c.r + c.g * 3.1f + c.b * 7.3f, sources);
 		}
 	}

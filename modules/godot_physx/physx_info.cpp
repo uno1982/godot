@@ -116,12 +116,12 @@ real_t PhysX::joint_get_angular_spring_torque_limit(const RID &p_joint, Vector3:
 	return _get_from_joint(p_joint, (real_t)Math::INF, [=](const GodotPhysXJoint3D *p_j) { return p_j->get_spring_force_limit(p_axis, true); });
 }
 
-void PhysX::joint_set_drive_target(const RID &p_joint, const Transform3D &p_target) {
-	_set_on_joint(p_joint, [=](GodotPhysXJoint3D *p_j) { p_j->set_drive_target(p_target); });
+void PhysX::joint_set_drive_target(const RID &p_joint, const Transform3D &p_target, real_t p_delta) {
+	_set_on_joint(p_joint, [=](GodotPhysXJoint3D *p_j) { p_j->set_drive_target(p_target, p_delta); });
 }
 
-void PhysX::joint_set_drive_target_from_poses(const RID &p_joint, const Transform3D &p_pose_a, const Transform3D &p_pose_b) {
-	_set_on_joint(p_joint, [=](GodotPhysXJoint3D *p_j) { p_j->set_drive_target_from_poses(p_pose_a, p_pose_b); });
+void PhysX::joint_set_drive_target_from_poses(const RID &p_joint, const Transform3D &p_pose_a, const Transform3D &p_pose_b, real_t p_delta) {
+	_set_on_joint(p_joint, [=](GodotPhysXJoint3D *p_j) { p_j->set_drive_target_from_poses(p_pose_a, p_pose_b, p_delta); });
 }
 
 Transform3D PhysX::joint_get_drive_target(const RID &p_joint) {
@@ -162,8 +162,8 @@ void PhysX::_bind_methods() {
 	ClassDB::bind_static_method("PhysX", D_METHOD("joint_get_linear_spring_force_limit", "joint", "axis"), &PhysX::joint_get_linear_spring_force_limit);
 	ClassDB::bind_static_method("PhysX", D_METHOD("joint_set_angular_spring_torque_limit", "joint", "axis", "limit"), &PhysX::joint_set_angular_spring_torque_limit);
 	ClassDB::bind_static_method("PhysX", D_METHOD("joint_get_angular_spring_torque_limit", "joint", "axis"), &PhysX::joint_get_angular_spring_torque_limit);
-	ClassDB::bind_static_method("PhysX", D_METHOD("joint_set_drive_target", "joint", "target"), &PhysX::joint_set_drive_target);
-	ClassDB::bind_static_method("PhysX", D_METHOD("joint_set_drive_target_from_poses", "joint", "pose_a", "pose_b"), &PhysX::joint_set_drive_target_from_poses);
+	ClassDB::bind_static_method("PhysX", D_METHOD("joint_set_drive_target", "joint", "target", "delta"), &PhysX::joint_set_drive_target, DEFVAL(0.0));
+	ClassDB::bind_static_method("PhysX", D_METHOD("joint_set_drive_target_from_poses", "joint", "pose_a", "pose_b", "delta"), &PhysX::joint_set_drive_target_from_poses, DEFVAL(0.0));
 	ClassDB::bind_static_method("PhysX", D_METHOD("joint_get_drive_target", "joint"), &PhysX::joint_get_drive_target);
 	ClassDB::bind_static_method("PhysX", D_METHOD("physical_bone_get_joint", "bone"), &PhysX::physical_bone_get_joint);
 }

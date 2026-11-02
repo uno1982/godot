@@ -179,8 +179,11 @@ void GodotPhysXJoint3D::_apply_params() {
 			d6->setDrive((PxD6Drive::Enum)d, PxD6JointDrive());
 		}
 	}
-	PxVec3 lin_vel_target(0.0f);
-	PxVec3 ang_vel_target(0.0f);
+	// Motor velocities, in PhysX's drive convention; a motor's axis isn't driven at the target's velocity.
+	motor_lin_vel = Vector3();
+	motor_ang_vel = Vector3();
+	motor_lin_axes = 0;
+	motor_ang_axes = 0;
 
 	switch (type) {
 		case JointType::JOINT_TYPE_PIN: {
@@ -211,7 +214,8 @@ void GodotPhysXJoint3D::_apply_params() {
 					const real_t step = (space && space->get_last_step() > 0.0) ? space->get_last_step() : 1.0 / Engine::get_singleton()->get_physics_ticks_per_second();
 					d6->setDrive(PxD6Drive::eTWIST, PxD6JointDrive(0.0f, 1.0e6f, hinge_motor_max_impulse > 0.0 ? _drive_limit(hinge_motor_max_impulse / step) : PX_MAX_F32));
 					// Not negated as for the revolute drive: the D6's drive velocity runs the other way (see the 6DOF motors).
-					ang_vel_target.x = (PxReal)hinge_motor_velocity;
+					motor_ang_vel.x = hinge_motor_velocity;
+					motor_ang_axes = 1;
 				} else if (slerp_drive) {
 					// The hinge's one angle is its SLERP: the twist drive turns it toward the target's.
 					d6->setDrive(PxD6Drive::eTWIST, PxD6JointDrive((PxReal)slerp_stiffness, (PxReal)slerp_damping, _drive_limit(slerp_torque_limit), drive_acceleration));
@@ -300,7 +304,8 @@ void GodotPhysXJoint3D::_apply_params() {
 				// A motor keeps its force units: its limit is Godot's force limit.
 				j->setDrive((PxD6Drive::Enum)(PxD6Drive::eX + a), PxD6JointDrive(k, d, f, drive_acceleration && !ax.lin_motor));
 				if (ax.lin_motor) {
-					(&lin_vel_target.x)[a] = (PxReal)ax.lin_motor_target;
+					motor_lin_vel[a] = ax.lin_motor_target;
+					motor_lin_axes |= 1 << a;
 				}
 				// A drive only acts on an axis that is not locked. Free any axis
 				// that has a spring but no valid limit range.
@@ -337,7 +342,8 @@ void GodotPhysXJoint3D::_apply_params() {
 				j->setDrive(ang_drives[a], PxD6JointDrive(0.0f, 1.0e6f, f));
 				// Not negated like the limits: PhysX's drive velocity is actor0 relative to actor1, so this already
 				// turns body B the way Jolt does (a positive target spins it clockwise about the axis).
-				(&ang_vel_target.x)[a] = (PxReal)ax.ang_motor_target;
+				motor_ang_vel[a] = ax.ang_motor_target;
+				motor_ang_axes |= 1 << a;
 				if (!(ax.ang_limit && ax.ang_upper > ax.ang_lower)) {
 					j->setMotion(ang_axes[a], PxD6Motion::eFREE);
 				}
@@ -358,8 +364,29 @@ void GodotPhysXJoint3D::_apply_params() {
 		d6->setConstraintFlag(PxConstraintFlag::eDRIVE_LIMITS_ARE_FORCES, true);
 		// Always set (zero without drives): it also wakes the bodies, so a change made while they sleep acts.
 		d6->setDrivePosition(to_px(_px_drive_target()), true);
-		d6->setDriveVelocity(lin_vel_target, ang_vel_target, true);
+		_send_drive_velocity();
 	}
+}
+
+void GodotPhysXJoint3D::_send_drive_velocity() {
+	// The target's velocity (body B's relative to body A, in A's joint frame) in PhysX's drive convention: the linear
+	// and SLERP rows take B's velocity relative to A, the per-axis twist / swing rows A's relative to B.
+	Vector3 lin = drive_lin_vel;
+	Vector3 ang = (slerp_drive && type != JointType::JOINT_TYPE_HINGE) ? drive_ang_vel : -drive_ang_vel;
+	if (type == JointType::JOINT_TYPE_HINGE) {
+		const Basis z_to_x(to_godot(HINGE_Z_TO_X)); // the hinge's PhysX frames (see _create())
+		lin = z_to_x.xform_inv(lin);
+		ang = z_to_x.xform_inv(ang);
+	}
+	for (int a = 0; a < 3; a++) {
+		if (motor_lin_axes & (1 << a)) {
+			lin[a] = motor_lin_vel[a];
+		}
+		if (motor_ang_axes & (1 << a)) {
+			ang[a] = motor_ang_vel[a];
+		}
+	}
+	static_cast<PxD6Joint *>(px_joint)->setDriveVelocity(to_px(lin), to_px(ang), true);
 }
 
 bool GodotPhysXJoint3D::has_drives() const {
@@ -813,19 +840,36 @@ void GodotPhysXJoint3D::set_drive_acceleration(bool p_enabled) {
 	_apply_params();
 }
 
-void GodotPhysXJoint3D::set_drive_target(const Transform3D &p_target) {
-	drive_target = p_target.orthonormalized();
+void GodotPhysXJoint3D::set_drive_target(const Transform3D &p_target, real_t p_delta) {
+	const Transform3D target = p_target.orthonormalized();
+	// The target's own velocity, from the last one p_delta ago: the drives then move with it instead of trailing a
+	// moving target (they damp toward this velocity).
+	drive_lin_vel = Vector3();
+	drive_ang_vel = Vector3();
+	if (p_delta > 0.0 && has_drive_target) {
+		drive_lin_vel = (target.origin - drive_target.origin) / p_delta;
+		Quaternion turn = (target.basis * drive_target.basis.inverse()).get_rotation_quaternion(); // in A's frame
+		if (turn.w < 0.0) {
+			turn = -turn;
+		}
+		const real_t angle = turn.get_angle();
+		if (angle > CMP_EPSILON) {
+			drive_ang_vel = turn.get_axis() * (angle / p_delta);
+		}
+	}
+	drive_target = target;
 	has_drive_target = true;
 	if (px_joint && _is_px_d6()) {
 		static_cast<PxD6Joint *>(px_joint)->setDrivePosition(to_px(_px_drive_target()), true);
+		_send_drive_velocity();
 	}
 }
 
-void GodotPhysXJoint3D::set_drive_target_from_poses(const Transform3D &p_pose_a, const Transform3D &p_pose_b) {
+void GodotPhysXJoint3D::set_drive_target_from_poses(const Transform3D &p_pose_a, const Transform3D &p_pose_b, real_t p_delta) {
 	// A missing body's frame is already in world space.
 	const Transform3D joint_a = body_a ? p_pose_a.orthonormalized() * frame_a : frame_a;
 	const Transform3D joint_b = body_b ? p_pose_b.orthonormalized() * frame_b : frame_b;
-	set_drive_target(joint_a.affine_inverse() * joint_b);
+	set_drive_target(joint_a.affine_inverse() * joint_b, p_delta);
 }
 
 Transform3D GodotPhysXJoint3D::get_drive_target() const {

@@ -84,8 +84,10 @@
 			<return type="void" />
 			<param index="0" name="joint" type="RID" />
 			<param index="1" name="target" type="Transform3D" />
+			<param index="2" name="delta" type="float" default="0.0" />
 			<description>
 				Sets the pose the joint's drives pull toward: body B's joint frame relative to body A's (identity is the pose the joint was made in). The rotation is what [method joint_set_slerp_drive] and the 6DOF angular springs turn toward, the origin where the 6DOF linear springs pull. Only the target moves, nothing else about the joint is rewritten, so it's cheap enough to call for every bone every physics frame. It replaces a Generic6DOF joint's spring equilibrium points until one of those is changed.
+				With [param delta] above zero, the time since the previous target (the physics frame's delta when it's set every frame), the drives also move at the target's own velocity, worked out from the two targets: the drive's damping then holds the body to the moving target rather than toward standing still, so it follows an animation instead of trailing it. A running motor keeps its axis. Without [param delta] the target's velocity is zero.
 			</description>
 		</method>
 		<method name="joint_set_drive_target_from_poses" qualifiers="static">
@@ -93,13 +95,14 @@
 			<param index="0" name="joint" type="RID" />
 			<param index="1" name="pose_a" type="Transform3D" />
 			<param index="2" name="pose_b" type="Transform3D" />
+			<param index="3" name="delta" type="float" default="0.0" />
 			<description>
-				Sets the drive target (see [method joint_set_drive_target]) that puts body A at global transform [param pose_a] and body B at [param pose_b], without needing the joint's frames. Only the two poses relative to each other matter, so poses in any common space do, e.g. a skeleton's bone poses. For a [PhysicalBone3D] the body sits at its bone's pose times [member PhysicalBone3D.body_offset]:
+				Sets the drive target (see [method joint_set_drive_target], also for [param delta]) that puts body A at global transform [param pose_a] and body B at [param pose_b], without needing the joint's frames. Only the two poses relative to each other matter, so poses in any common space do, e.g. a skeleton's bone poses. For a [PhysicalBone3D] the body sits at its bone's pose times [member PhysicalBone3D.body_offset]:
 				[codeblock]
 				var joint := PhysX.physical_bone_get_joint(bone)
 				PhysX.joint_set_drive_target_from_poses(joint,
 				        animated.get_bone_global_pose(parent.get_bone_id()) * parent.body_offset,
-				        animated.get_bone_global_pose(bone.get_bone_id()) * bone.body_offset)
+				        animated.get_bone_global_pose(bone.get_bone_id()) * bone.body_offset, delta)
 				[/codeblock]
 			</description>
 		</method>

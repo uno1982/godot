@@ -1031,8 +1031,8 @@ Godot's joint API has no room for the drives an active ragdoll needs, so the
 | `joint_set_slerp_drive(joint, enabled, stiffness, damping, torque_limit = INF)` | One spring that turns body B toward the drive target's rotation along the shortest path, all three angles at once, in place of the 6DOF's per-axis angular springs and motors. It works through the joint's angular limits (a 6DOF axis without a valid limit range is freed, as for its springs). On a hinge it drives the hinge angle; the hinge is rebuilt as a PhysX D6 joint the first time, with the same limits and motor. |
 | `joint_set_drive_acceleration(joint, enabled)` | The joint's spring stiffness and damping are accelerations, not forces: the same gains drive a light and a heavy bone alike. Motors keep their force units. |
 | `joint_set_linear_spring_force_limit(joint, axis, limit)`, `joint_set_angular_spring_torque_limit(joint, axis, limit)` | The most force or torque a 6DOF spring may use (infinite by default), so a stiff spring can't snap a body around. |
-| `joint_set_drive_target(joint, target)` | The pose the drives pull toward: body B's joint frame relative to body A's. One call that only moves the target, cheap enough for every bone every frame. A 6DOF joint's springs pull toward their equilibrium points until it's set; setting a new equilibrium point takes over again. |
-| `joint_set_drive_target_from_poses(joint, pose_a, pose_b)` | The target that puts body A at global transform `pose_a` and body B at `pose_b`; no need to know the joint's frames. |
+| `joint_set_drive_target(joint, target, delta = 0)` | The pose the drives pull toward: body B's joint frame relative to body A's. One call that only moves the target, cheap enough for every bone every frame. With `delta` (the time since the last target, e.g. the physics frame's) the drives also move at the target's own velocity; without it they damp toward standing still and trail a moving target. A 6DOF joint's springs pull toward their equilibrium points until it's set; setting a new equilibrium point takes over again. |
+| `joint_set_drive_target_from_poses(joint, pose_a, pose_b, delta = 0)` | The target that puts body A at global transform `pose_a` and body B at `pose_b`; no need to know the joint's frames. |
 | `physical_bone_get_joint(bone)` | The RID of the joint between a `PhysicalBone3D` and its parent bone (empty for the root bone or `JOINT_TYPE_NONE`). |
 
 The settings read back with matching getters (`joint_is_slerp_drive_enabled`,
@@ -1041,14 +1041,14 @@ drive each bone toward the pose an animated copy of the skeleton is in (a
 `PhysicalBone3D`'s body sits at `bone pose * body_offset`):
 
 ```gdscript
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	for bone: PhysicalBone3D in bones:
 		var joint := PhysX.physical_bone_get_joint(bone)
 		if joint.is_valid():
 			var parent: PhysicalBone3D = parent_of[bone]
 			PhysX.joint_set_drive_target_from_poses(joint,
 					animated.get_bone_global_pose(parent.get_bone_id()) * parent.body_offset,
-					animated.get_bone_global_pose(bone.get_bone_id()) * bone.body_offset)
+					animated.get_bone_global_pose(bone.get_bone_id()) * bone.body_offset, delta)
 ```
 
 with `PhysX.joint_set_slerp_drive(joint, true, 2000.0, 80.0)` and
@@ -1060,7 +1060,18 @@ its stiffness scaled up by about the mass it carries over its own bone's mass,
 or it sags to its limit. The drives act at the joints only: they hold the
 limbs' shape, while keeping the whole body upright (balance) stays up to the
 game, as in other engines. A pose a joint can't reach (past its limits, or a
-knee bent about another axis than its hinge's) is held as close as it goes.
+knee bent about another axis than its hinge's) is held as close as it goes, and
+every bone beyond it inherits the miss: a physical skeleton made for a limp
+ragdoll often has tighter limits than the animations need.
+
+A bone between two physical bones that has no `PhysicalBone3D` of its own (a
+clavicle between the chest and the upper arm, if Create Physical Skeleton
+skipped it) is still posed by the animation, while the arm hangs from the
+socket of the pose the joints were made in (the skeleton's rest pose). If those
+differ -- a retargeted rig's rest is usually a T-pose -- the mesh tears open at
+that bone. Give such a bone a physical bone too, so it's driven like the rest.
+Bones past the last physical bone (head, fingers) can keep their animation:
+play the same clip on the ragdoll's skeleton in step with the source.
 
 The example project's `demo/editor/joints/active_ragdoll.tscn` does this with
 the demo mannequin, its hips held where the animation has them by a

@@ -56,8 +56,8 @@ public:
 	static real_t joint_get_linear_spring_force_limit(const RID &p_joint, Vector3::Axis p_axis);
 	static void joint_set_angular_spring_torque_limit(const RID &p_joint, Vector3::Axis p_axis, real_t p_limit);
 	static real_t joint_get_angular_spring_torque_limit(const RID &p_joint, Vector3::Axis p_axis);
-	static void joint_set_drive_target(const RID &p_joint, const Transform3D &p_target);
-	static void joint_set_drive_target_from_poses(const RID &p_joint, const Transform3D &p_pose_a, const Transform3D &p_pose_b);
+	static void joint_set_drive_target(const RID &p_joint, const Transform3D &p_target, real_t p_delta);
+	static void joint_set_drive_target_from_poses(const RID &p_joint, const Transform3D &p_pose_a, const Transform3D &p_pose_b, real_t p_delta);
 	static Transform3D joint_get_drive_target(const RID &p_joint);
 	static RID physical_bone_get_joint(PhysicalBone3D *p_bone);
 };

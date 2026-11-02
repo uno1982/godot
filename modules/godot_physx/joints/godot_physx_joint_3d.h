@@ -93,6 +93,11 @@ class GodotPhysXJoint3D {
 	// equilibrium points build it.
 	bool has_drive_target = false;
 	Transform3D drive_target;
+	// The drive target's velocity (body B's relative to A, in A's joint frame), from successive targets.
+	Vector3 drive_lin_vel, drive_ang_vel;
+	// The motors' drive velocities (PhysX's convention) and the axes they own.
+	Vector3 motor_lin_vel, motor_ang_vel;
+	uint8_t motor_lin_axes = 0, motor_ang_axes = 0;
 
 	void _destroy();
 	physx::PxJoint *_create() const;
@@ -101,6 +106,7 @@ class GodotPhysXJoint3D {
 	bool _is_px_d6() const;
 	// The drive target in the PhysX joint frames.
 	Transform3D _px_drive_target() const;
+	void _send_drive_velocity();
 
 public:
 	void set_self(const RID &p_self) { self = p_self; }
@@ -159,9 +165,10 @@ public:
 	bool is_drive_acceleration() const { return drive_acceleration; }
 	// Only moves the drive target: no other joint state is rewritten (an active ragdoll sets it on every bone, every
 	// frame).
-	void set_drive_target(const Transform3D &p_target);
+	// p_delta > 0: the time since the last target, to drive at the target's velocity too.
+	void set_drive_target(const Transform3D &p_target, real_t p_delta = 0.0);
 	// The target that puts the bodies at these global transforms.
-	void set_drive_target_from_poses(const Transform3D &p_pose_a, const Transform3D &p_pose_b);
+	void set_drive_target_from_poses(const Transform3D &p_pose_a, const Transform3D &p_pose_b, real_t p_delta = 0.0);
 	Transform3D get_drive_target() const;
 
 	~GodotPhysXJoint3D();

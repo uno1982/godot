@@ -1306,7 +1306,10 @@ void main() {
 		vec3 xw = (f.view_to_world * vec4(p, 1.0)).xyz;
 		vec3 nw = normalize(mat3(f.view_to_world) * n);
 		float index = f.misc.x;
-		vec2 xi = vec2(fract(noise.x + 0.37 + index * 0.7548776662), fract(noise.y + 0.71 + index * 0.5698402910));
+		// The point on the emissive needs noise of its own: offsetting ign() only adds a constant to it, so with the pick
+		// on the same noise, the texels picking a small share emissive would all take nearly the same point, one that
+		// drifts with the frame (a slow pulse on what is lit by it). Other directions through the pattern are independent.
+		vec2 xi = vec2(fract(ign(vec2(px.yx)) + 0.37 + index * 0.7548776662), fract(ign(vec2(px.x + px.y, px.x - px.y)) + 0.71 + index * 0.5698402910));
 		float pick = fract(noise.z + 0.13 + index * 0.6180339887);
 		result.rgb += sample_emissive(xw, nw, xi, pick, emissives);
 	}

@@ -191,6 +191,8 @@ void PhysXSkinnedCloth3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("rebuild"), &PhysXSkinnedCloth3D::rebuild);
 	ClassDB::bind_method(D_METHOD("reset"), &PhysXSkinnedCloth3D::reset);
 	ClassDB::bind_method(D_METHOD("get_particle_count"), &PhysXSkinnedCloth3D::get_particle_count);
+	ClassDB::bind_method(D_METHOD("get_render_instance"), &PhysXSkinnedCloth3D::get_render_instance);
+	ClassDB::bind_method(D_METHOD("get_vertex_particles"), &PhysXSkinnedCloth3D::get_vertex_particles);
 	ClassDB::bind_method(D_METHOD("get_body_capsules"), &PhysXSkinnedCloth3D::get_body_capsules);
 
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "mesh_instance_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "MeshInstance3D"), "set_mesh_instance_path", "get_mesh_instance_path");
@@ -257,6 +259,17 @@ void PhysXSkinnedCloth3D::_notification(int p_what) {
 }
 
 Ref<ShaderMaterial> PhysXSkinnedCloth3D::hide_material;
+Ref<Shader> PhysXSkinnedCloth3D::render_shader;
+
+void PhysXSkinnedCloth3D::free_shared() {
+	hide_material.unref();
+	render_shader.unref();
+	SkinnedClothSolverGPU::free_shared();
+}
+
+MeshInstance3D *PhysXSkinnedCloth3D::get_render_instance() const {
+	return built ? ObjectDB::get_instance<MeshInstance3D>(render_instance_id) : nullptr;
+}
 
 // The simulated surface is drawn by the render copy; the source's own copy of
 // it is hidden. With other surfaces on the mesh (a body and its skirt in one
@@ -329,6 +342,7 @@ void PhysXSkinnedCloth3D::_clear() {
 	}
 	built = false;
 	particle_count = 0;
+	vertex_particles.clear();
 }
 
 bool PhysXSkinnedCloth3D::_find_physical_bone_shapes(Skeleton3D *p_skeleton) {
@@ -923,8 +937,10 @@ void PhysXSkinnedCloth3D::_try_build() {
 	render_arrays[Mesh::ARRAY_INDEX] = indices;
 	PackedFloat32Array custom0;
 	custom0.resize(vcount);
+	vertex_particles.resize(vcount);
 	for (int i = 0; i < vcount; i++) {
 		custom0.set(i, (float)vertex_particle[i]);
+		vertex_particles.set(i, vertex_particle[i]);
 	}
 	render_arrays[Mesh::ARRAY_CUSTOM0] = custom0;
 	Ref<ArrayMesh> render_mesh;
@@ -940,11 +956,12 @@ void PhysXSkinnedCloth3D::_try_build() {
 		normal_sign = fn.dot(normals[i0] + normals[i1] + normals[i2]) >= 0.0f ? 1.0f : -1.0f;
 	}
 
-	Ref<Shader> shader;
-	shader.instantiate();
-	shader->set_code(CLOTH_RENDER_SHADER);
+	if (render_shader.is_null()) {
+		render_shader.instantiate();
+		render_shader->set_code(CLOTH_RENDER_SHADER);
+	}
 	render_material.instantiate();
-	render_material->set_shader(shader);
+	render_material->set_shader(render_shader);
 	pos_texture.instantiate();
 	pos_texture->set_texture_rd_rid(solver->get_position_texture_rd_rid());
 	nrm_texture.instantiate();
@@ -1127,7 +1144,7 @@ void PhysXSkinnedCloth3D::_advance(double p_delta) {
 	s.animation_drive = animation_drive;
 	s.gravity = get_effective_gravity();
 	s.self_collision_thickness = self_collision ? self_collision_thickness : 0.0f;
-	s.output_xform = source->get_global_transform_interpolated().affine_inverse();   // (as drawn — matches the capture)
+	s.output_xform = source->get_global_transform_interpolated().affine_inverse(); // (as drawn — matches the capture)
 	solver->step(captured_bones, capsule_data, box_data, p_delta, substeps, s);
 
 	MeshInstance3D *ri = ObjectDB::get_instance<MeshInstance3D>(render_instance_id);

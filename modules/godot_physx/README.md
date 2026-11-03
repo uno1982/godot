@@ -686,6 +686,14 @@ running game, and after the animation each frame (`process_priority` 100).
 Only the source material's albedo texture, albedo colour and roughness carry
 over for now.
 
+A build (on entering the tree, `rebuild()`, or a new `mesh_instance_path` /
+`body_mesh_path`) prepares the garment on the CPU and gives it a new render
+copy: about 9 ms for the demo's 2048-particle skirt. The shaders are compiled
+once per run and shared by every cloth, so only the first build pays for that.
+A script that draws the garment itself finds the render copy with
+`get_render_instance()`, and the particle each of its vertices is drawn from
+with `get_vertex_particles()`.
+
 ## Soft bodies — stock `SoftBody3D`
 
 The stock `SoftBody3D` node works on this backend (the `soft_body_*`

@@ -30,10 +30,12 @@
 
 #include "skinned_cloth_solver.h"
 
+#include "../godot_physx_render_thread.h"
 #include "skinned_cloth.glsl.gen.h"
 
 #include "core/math/math_funcs.h"
 #include "core/object/callable_mp.h"
+#include "core/os/mutex.h"
 #include "servers/display/display_server.h"
 #include "servers/rendering/rendering_device.h"
 #include "servers/rendering/rendering_device_binds.h"
@@ -67,6 +69,12 @@ struct PassConstants {
 	float frac;
 };
 
+// The compute shader, made once (see SkinnedClothSolverGPU::shader): the compiled SPIR-V, and the shader + pipeline on
+// the main device. A local device's solver compiles on the caller's thread, the rest on the render thread.
+Mutex shared_mutex;
+Ref<RDShaderFile> shared_spirv;
+RID shared_shader, shared_pipeline;
+
 RID storage_from(RenderingDevice *p_rd, const uint8_t *p_data, int p_bytes) {
 	Vector<uint8_t> bytes;
 	bytes.resize(MAX(p_bytes, 16));
@@ -89,15 +97,52 @@ void SkinnedClothSolverGPU::rt_compile(Ref<SkinnedClothSolverGPU> p_self) {
 	if (rd == nullptr) {
 		return;
 	}
-	Ref<RDShaderFile> sf;
-	sf.instantiate();
-	if (sf->parse_versions_from_text(skinned_cloth_shader_glsl) != OK) {
-		ERR_PRINT("SkinnedClothSolver: the compute shader failed to compile.");
+	MutexLock lock(shared_mutex);
+	if (!local && shared_shader.is_valid()) {
+		shader = shared_shader;
+		pipeline = shared_pipeline;
 		return;
 	}
-	shader = rd->shader_create_from_spirv(sf->get_spirv_stages());
+	if (shared_spirv.is_null()) {
+		Ref<RDShaderFile> sf;
+		sf.instantiate();
+		if (sf->parse_versions_from_text(skinned_cloth_shader_glsl) != OK) {
+			ERR_PRINT("SkinnedClothSolver: the compute shader failed to compile.");
+			return;
+		}
+		shared_spirv = sf;
+	}
+	shader = rd->shader_create_from_spirv(shared_spirv->get_spirv_stages());
 	ERR_FAIL_COND(shader.is_null());
 	pipeline = rd->compute_pipeline_create(shader);
+	if (local) {
+		owns_shader = true;
+	} else {
+		shared_shader = shader;
+		shared_pipeline = pipeline;
+	}
+}
+
+void SkinnedClothSolverGPU::free_shared() {
+	MutexLock lock(shared_mutex);
+	shared_spirv.unref();
+	if (shared_shader.is_null()) {
+		return;
+	}
+	const RID s = shared_shader;
+	const RID p = shared_pipeline;
+	shared_shader = RID();
+	shared_pipeline = RID();
+	godot_physx_run_on_render_thread([s, p]() {
+		RenderingDevice *device = RenderingServer::get_singleton() ? RenderingServer::get_singleton()->get_rendering_device() : nullptr;
+		if (device == nullptr) {
+			return;
+		}
+		if (p.is_valid()) {
+			device->free_rid(p);
+		}
+		device->free_rid(s);
+	});
 }
 
 void SkinnedClothSolverGPU::rt_free_buffers() {
@@ -125,14 +170,18 @@ void SkinnedClothSolverGPU::rt_free(Ref<SkinnedClothSolverGPU> p_self) {
 	if (rd == nullptr) {
 		return;
 	}
-	if (pipeline.is_valid()) {
-		rd->free_rid(pipeline);
-		pipeline = RID();
+	// The main device's shader and pipeline are shared, freed by free_shared().
+	if (owns_shader) {
+		if (pipeline.is_valid()) {
+			rd->free_rid(pipeline);
+		}
+		if (shader.is_valid()) {
+			rd->free_rid(shader);
+		}
+		owns_shader = false;
 	}
-	if (shader.is_valid()) {
-		rd->free_rid(shader);
-		shader = RID();
-	}
+	pipeline = RID();
+	shader = RID();
 }
 
 void SkinnedClothSolverGPU::rt_build(Ref<SkinnedClothSolverGPU> p_self, PackedFloat32Array p_rest, PackedFloat32Array p_rest_normals, PackedInt32Array p_skin_idx, PackedFloat32Array p_skin_w,

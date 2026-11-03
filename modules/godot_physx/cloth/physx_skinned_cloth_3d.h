@@ -89,11 +89,14 @@ class PhysXSkinnedCloth3D : public Node3D {
 	int hidden_surface = -1;
 	Ref<Material> saved_surface_override;
 	static Ref<ShaderMaterial> hide_material;
+	// The render copy's shader, shared by every cloth: a new one each build was compiled again (~17 ms a build).
+	static Ref<Shader> render_shader;
+	PackedInt32Array vertex_particles; // render copy vertex -> particle (its CUSTOM0.x), as built
 	void _hide_source(MeshInstance3D *p_source);
 	void _unhide_source(MeshInstance3D *p_source);
 
 public:
-	static void free_shared() { hide_material.unref(); }
+	static void free_shared();
 
 private:
 	ObjectID skeleton_id;
@@ -220,6 +223,8 @@ public:
 	void rebuild();
 	void reset();
 	int get_particle_count() const { return particle_count; }
+	MeshInstance3D *get_render_instance() const;
+	PackedInt32Array get_vertex_particles() const { return vertex_particles; }
 	Array get_body_capsules() const;
 
 	PhysXSkinnedCloth3D();

@@ -43,6 +43,18 @@
 				The number of simulated particles: the surface's vertices with seams (split UV/normal vertices at the same position) welded together.
 			</description>
 		</method>
+		<method name="get_render_instance" qualifiers="const">
+			<return type="MeshInstance3D" />
+			<description>
+				The internal [MeshInstance3D] the simulated surface is drawn through (a sibling of the source mesh), or [code]null[/code] while the cloth isn't built. It's remade by every build.
+			</description>
+		</method>
+		<method name="get_vertex_particles" qualifiers="const">
+			<return type="PackedInt32Array" />
+			<description>
+				For each vertex of the render copy (the source surface's vertices, in order), the particle it's drawn from, as built; empty while the cloth isn't built. With [method get_render_instance], a script that draws the garment itself can find both without reading the mesh back from the GPU.
+			</description>
+		</method>
 		<method name="rebuild">
 			<return type="void" />
 			<description>

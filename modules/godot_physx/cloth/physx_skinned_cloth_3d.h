@@ -53,6 +53,8 @@ class PhysXSkinnedCloth3D : public Node3D {
 	NodePath mesh_instance_path;
 	NodePath body_mesh_path; // optional: fit the body capsules to this skinned mesh
 	int surface = 0;
+	// Drawn with this instead of the built-in look: each build draws with its own copy, with the cloth inputs set.
+	Ref<ShaderMaterial> render_material;
 	PackedFloat32Array max_distances; // per vertex of the surface; empty = auto from height
 	float pin_height = 1.3f; // auto paint: at/above this bind-space height the cloth follows the animation
 	float max_distance = 0.4f; // auto paint: max distance at the lowest point, ramping up from pin_height
@@ -78,7 +80,8 @@ class PhysXSkinnedCloth3D : public Node3D {
 	SkinnedClothSolver *solver = nullptr;
 	MeshInstance3D *render_instance = nullptr;
 	ObjectID render_instance_id;
-	Ref<ShaderMaterial> render_material;
+	Ref<ShaderMaterial> copy_material; // what the render copy draws with: the built-in look, or render_material's copy
+	float normal_sign = 1.0f;
 	Ref<Texture2DRD> pos_texture;
 	Ref<Texture2DRD> nrm_texture;
 	ObjectID source_id;
@@ -94,6 +97,7 @@ class PhysXSkinnedCloth3D : public Node3D {
 	PackedInt32Array vertex_particles; // render copy vertex -> particle (its CUSTOM0.x), as built
 	void _hide_source(MeshInstance3D *p_source);
 	void _unhide_source(MeshInstance3D *p_source);
+	void _make_copy_material(MeshInstance3D *p_source);
 
 public:
 	static void free_shared();
@@ -171,6 +175,8 @@ public:
 	NodePath get_body_mesh_path() const { return body_mesh_path; }
 	void set_surface(int p_surface);
 	int get_surface() const { return surface; }
+	void set_render_material(const Ref<ShaderMaterial> &p_material);
+	Ref<ShaderMaterial> get_render_material() const { return render_material; }
 	void set_max_distances(const PackedFloat32Array &p_distances);
 	PackedFloat32Array get_max_distances() const { return max_distances; }
 	void set_pin_height(float p_height);

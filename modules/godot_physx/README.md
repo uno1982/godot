@@ -683,8 +683,18 @@ stretch. `animation_drive` pulls the cloth back toward its authored shape
 
 It runs on compute shaders (no CUDA, any GPU the renderer supports), only in a
 running game, and after the animation each frame (`process_priority` 100).
-Only the source material's albedo texture, albedo colour and roughness carry
-over for now.
+
+By default the cloth is drawn with a built-in material that takes the source
+material's albedo texture, albedo colour and roughness. To draw it your own
+way (your character shader, normal maps, vertex colours), set
+`render_material` to a `ShaderMaterial` whose shader places the vertices from
+the simulation: `CUSTOM0.x` is the vertex's particle, and the cloth sets
+`cloth_positions` / `cloth_normals` (one texel per particle, source mesh
+space), `texture_width` and `normal_sign` on it. The class reference has a
+`vertex()` to start from. The source surface's UV, UV2, COLOR, TANGENT and
+CUSTOM1-3 come along (CUSTOM0 is the particle index). Each build draws with its
+own copy of the material, so one can be shared by several garments; setting
+it on a built cloth swaps the look without a rebuild.
 
 A build (on entering the tree, `rebuild()`, or a new `mesh_instance_path` /
 `body_mesh_path`) prepares the garment on the CPU and gives it a new render

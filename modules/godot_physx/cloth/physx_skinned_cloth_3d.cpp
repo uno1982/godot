@@ -69,8 +69,16 @@ uniform float roughness : hint_range(0.0, 1.0) = 0.9;
 void vertex() {
 	int i = int(CUSTOM0.x + 0.5);
 	ivec2 px = ivec2(i % texture_width, i / texture_width);
+	// The rest pose's tangent frame, turned with the simulated normal (for a normal map; a mesh without tangents has
+	// none to turn).
+	float handedness = dot(cross(NORMAL, TANGENT), BINORMAL) < 0.0 ? -1.0 : 1.0;
 	VERTEX = texelFetch(cloth_positions, px, 0).xyz;
 	NORMAL = normalize(texelFetch(cloth_normals, px, 0).xyz * normal_sign);
+	vec3 tangent = TANGENT - NORMAL * dot(NORMAL, TANGENT);
+	if (dot(tangent, tangent) > 1e-8) {
+		TANGENT = normalize(tangent);
+		BINORMAL = cross(NORMAL, TANGENT) * handedness;
+	}
 }
 
 void fragment() {
@@ -147,6 +155,8 @@ void PhysXSkinnedCloth3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_body_mesh_path"), &PhysXSkinnedCloth3D::get_body_mesh_path);
 	ClassDB::bind_method(D_METHOD("set_surface", "surface"), &PhysXSkinnedCloth3D::set_surface);
 	ClassDB::bind_method(D_METHOD("get_surface"), &PhysXSkinnedCloth3D::get_surface);
+	ClassDB::bind_method(D_METHOD("set_render_material", "material"), &PhysXSkinnedCloth3D::set_render_material);
+	ClassDB::bind_method(D_METHOD("get_render_material"), &PhysXSkinnedCloth3D::get_render_material);
 	ClassDB::bind_method(D_METHOD("set_max_distances", "distances"), &PhysXSkinnedCloth3D::set_max_distances);
 	ClassDB::bind_method(D_METHOD("get_max_distances"), &PhysXSkinnedCloth3D::get_max_distances);
 	ClassDB::bind_method(D_METHOD("set_pin_height", "height"), &PhysXSkinnedCloth3D::set_pin_height);
@@ -197,6 +207,7 @@ void PhysXSkinnedCloth3D::_bind_methods() {
 
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "mesh_instance_path", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "MeshInstance3D"), "set_mesh_instance_path", "get_mesh_instance_path");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "surface", PROPERTY_HINT_RANGE, "0,16,1"), "set_surface", "get_surface");
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "render_material", PROPERTY_HINT_RESOURCE_TYPE, "ShaderMaterial"), "set_render_material", "get_render_material");
 	ADD_GROUP("Painting", "");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_FLOAT32_ARRAY, "max_distances"), "set_max_distances", "get_max_distances");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "pin_height", PROPERTY_HINT_RANGE, "-5,5,0.01,or_greater,or_less,suffix:m"), "set_pin_height", "get_pin_height");
@@ -267,6 +278,46 @@ void PhysXSkinnedCloth3D::free_shared() {
 	SkinnedClothSolverGPU::free_shared();
 }
 
+// What the render copy draws with: a copy of render_material (the user's own is shared by other cloths and never
+// written to), or the built-in look with the source material's albedo and roughness; with the cloth inputs set.
+void PhysXSkinnedCloth3D::_make_copy_material(MeshInstance3D *p_source) {
+	if (copy_material.is_valid()) {
+		copy_material->set_shader_parameter("cloth_positions", Variant());
+		copy_material->set_shader_parameter("cloth_normals", Variant());
+	}
+	if (render_material.is_valid() && render_material->get_shader().is_valid()) {
+		copy_material = render_material->duplicate();
+	} else {
+		if (render_shader.is_null()) {
+			render_shader.instantiate();
+			render_shader->set_code(CLOTH_RENDER_SHADER);
+		}
+		copy_material.instantiate();
+		copy_material->set_shader(render_shader);
+		Ref<BaseMaterial3D> src_mat = p_source ? p_source->get_active_material(surface) : Ref<Material>();
+		if (src_mat.is_valid()) {
+			copy_material->set_shader_parameter("albedo_texture", src_mat->get_texture(BaseMaterial3D::TEXTURE_ALBEDO));
+			copy_material->set_shader_parameter("albedo_color", src_mat->get_albedo());
+			copy_material->set_shader_parameter("roughness", src_mat->get_roughness());
+		}
+	}
+	copy_material->set_shader_parameter("cloth_positions", pos_texture);
+	copy_material->set_shader_parameter("cloth_normals", nrm_texture);
+	copy_material->set_shader_parameter("texture_width", solver ? solver->get_texture_width() : 1);
+	copy_material->set_shader_parameter("normal_sign", normal_sign);
+	if (render_instance) {
+		render_instance->set_surface_override_material(0, copy_material);
+	}
+}
+
+void PhysXSkinnedCloth3D::set_render_material(const Ref<ShaderMaterial> &p_material) {
+	render_material = p_material;
+	// A built cloth swaps its look in place; the rest of the build doesn't depend on it.
+	if (built) {
+		_make_copy_material(ObjectDB::get_instance<MeshInstance3D>(source_id));
+	}
+}
+
 MeshInstance3D *PhysXSkinnedCloth3D::get_render_instance() const {
 	return built ? ObjectDB::get_instance<MeshInstance3D>(render_instance_id) : nullptr;
 }
@@ -325,10 +376,10 @@ void PhysXSkinnedCloth3D::_clear() {
 	}
 	// Let go of the solver's textures before it frees them, or the material
 	// still binds them on its next update.
-	if (render_material.is_valid()) {
-		render_material->set_shader_parameter("cloth_positions", Variant());
-		render_material->set_shader_parameter("cloth_normals", Variant());
-		render_material.unref();
+	if (copy_material.is_valid()) {
+		copy_material->set_shader_parameter("cloth_positions", Variant());
+		copy_material->set_shader_parameter("cloth_normals", Variant());
+		copy_material.unref();
 	}
 	for (Ref<Texture2DRD> *tex : { &pos_texture, &nrm_texture }) {
 		if (tex->is_valid()) {
@@ -935,6 +986,19 @@ void PhysXSkinnedCloth3D::_try_build() {
 	render_arrays[Mesh::ARRAY_NORMAL] = normals;
 	render_arrays[Mesh::ARRAY_TEX_UV] = arrays[Mesh::ARRAY_TEX_UV];
 	render_arrays[Mesh::ARRAY_INDEX] = indices;
+	// The source's other attributes, for render_material (CUSTOM0 is the particle index, so its own can't come along).
+	render_arrays[Mesh::ARRAY_TANGENT] = arrays[Mesh::ARRAY_TANGENT];
+	render_arrays[Mesh::ARRAY_TEX_UV2] = arrays[Mesh::ARRAY_TEX_UV2];
+	render_arrays[Mesh::ARRAY_COLOR] = arrays[Mesh::ARRAY_COLOR];
+	uint64_t render_format = (uint64_t)Mesh::ARRAY_CUSTOM_R_FLOAT << Mesh::ARRAY_FORMAT_CUSTOM0_SHIFT;
+	const uint64_t source_format = mesh->surface_get_format(surface);
+	for (int c = 1; c < 4; c++) {
+		if (arrays[Mesh::ARRAY_CUSTOM0 + c].get_type() != Variant::NIL) {
+			render_arrays[Mesh::ARRAY_CUSTOM0 + c] = arrays[Mesh::ARRAY_CUSTOM0 + c];
+			const int shift = Mesh::ARRAY_FORMAT_CUSTOM0_SHIFT + c * Mesh::ARRAY_FORMAT_CUSTOM_BITS;
+			render_format |= source_format & ((uint64_t)RSE::ARRAY_FORMAT_CUSTOM_MASK << shift);
+		}
+	}
 	PackedFloat32Array custom0;
 	custom0.resize(vcount);
 	vertex_particles.resize(vcount);
@@ -945,37 +1009,20 @@ void PhysXSkinnedCloth3D::_try_build() {
 	render_arrays[Mesh::ARRAY_CUSTOM0] = custom0;
 	Ref<ArrayMesh> render_mesh;
 	render_mesh.instantiate();
-	render_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, render_arrays, Array(), Dictionary(),
-			Mesh::ARRAY_CUSTOM_R_FLOAT << Mesh::ARRAY_FORMAT_CUSTOM0_SHIFT);
+	render_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, render_arrays, Array(), Dictionary(), render_format);
 
 	// Our normals come from the triangle winding; match the source's sense.
-	float normal_sign = 1.0f;
+	normal_sign = 1.0f;
 	if (!tris.is_empty() && !normals.is_empty()) {
 		const int i0 = indices[0], i1 = indices[1], i2 = indices[2];
 		const Vector3 fn = (verts[i1] - verts[i0]).cross(verts[i2] - verts[i0]);
 		normal_sign = fn.dot(normals[i0] + normals[i1] + normals[i2]) >= 0.0f ? 1.0f : -1.0f;
 	}
 
-	if (render_shader.is_null()) {
-		render_shader.instantiate();
-		render_shader->set_code(CLOTH_RENDER_SHADER);
-	}
-	render_material.instantiate();
-	render_material->set_shader(render_shader);
 	pos_texture.instantiate();
 	pos_texture->set_texture_rd_rid(solver->get_position_texture_rd_rid());
 	nrm_texture.instantiate();
 	nrm_texture->set_texture_rd_rid(solver->get_normal_texture_rd_rid());
-	render_material->set_shader_parameter("cloth_positions", pos_texture);
-	render_material->set_shader_parameter("cloth_normals", nrm_texture);
-	render_material->set_shader_parameter("texture_width", solver->get_texture_width());
-	render_material->set_shader_parameter("normal_sign", normal_sign);
-	Ref<BaseMaterial3D> src_mat = source->get_active_material(surface);
-	if (src_mat.is_valid()) {
-		render_material->set_shader_parameter("albedo_texture", src_mat->get_texture(BaseMaterial3D::TEXTURE_ALBEDO));
-		render_material->set_shader_parameter("albedo_color", src_mat->get_albedo());
-		render_material->set_shader_parameter("roughness", src_mat->get_roughness());
-	}
 
 	// Drawn as an internal sibling of the source mesh with the same local
 	// transform, in the source's space: it then moves exactly like the mesh it
@@ -983,7 +1030,7 @@ void PhysXSkinnedCloth3D::_try_build() {
 	// space would lead the interpolated character by up to a tick).
 	render_instance = memnew(MeshInstance3D);
 	render_instance->set_mesh(render_mesh);
-	render_instance->set_surface_override_material(0, render_material);
+	_make_copy_material(source);
 	render_instance->set_cast_shadows_setting(source->get_cast_shadows_setting());
 	source->get_parent()->add_child(render_instance, false, INTERNAL_MODE_BACK);
 	render_instance->set_transform(source->get_transform());

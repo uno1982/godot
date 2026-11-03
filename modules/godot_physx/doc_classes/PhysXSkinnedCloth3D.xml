@@ -7,7 +7,7 @@
 		Simulates a surface of a skinned [MeshInstance3D] (set [member mesh_instance_path]) as cloth driven by the character's animation. Every vertex has a max distance it may stray from where the animation puts it: [code]0[/code] follows the animation exactly (shoulders, a waistband), larger values swing freely (a hem, the tail of a cape). The distances are painted per vertex with [member max_distances], read from the mesh's vertex colors ([member use_vertex_color]), or ramped automatically from [member pin_height] down to [member max_distance] at the lowest point of the mesh.
 		To paint them in the editor, select the node and press [b]Paint Cloth[/b] in the 3D viewport toolbar. The garment turns into a heat map of its max distances (blue follows the animation, red swings furthest). Drag with the left mouse button to paint toward [b]Value[/b], hold [kbd]Shift[/kbd] to paint toward [code]0[/code], or hold [kbd]Ctrl[/kbd] to smooth. [b]Fill[/b] sets every vertex to [b]Value[/b], and [b]Ramp[/b] starts over from the automatic ramp. Each stroke can be undone.
 		The cloth runs on the GPU with compute shaders, so it works on any GPU the renderer supports (no CUDA needed). It collides with the character's physical bones: give the skeleton a [PhysicalBoneSimulator3D] with [PhysicalBone3D]s (select the [Skeleton3D] and use [b]Skeleton3D > Create Physical Skeleton[/b] in the 3D toolbar), and every enabled capsule, sphere or box [CollisionShape3D] on them is a collider, exactly where the editor shows it as the animation moves the bones. Edit, add or remove those shapes to fit the body; the physical bones don't need to simulate. Their sizes, placement and [member CollisionShape3D.disabled] apply live while the game runs (adding or removing a shape needs [method rebuild]). Up to 64 capsules / spheres and 32 boxes. Without a physical skeleton, capsules are placed automatically between the hips, spine, legs and arms (humanoid-profile or common Unreal-style bone names), fitted to [member body_mesh_path] if set. Collisions are swept across the solver's substeps, so fast limbs don't jump through the cloth, and they win over the max distances: where a limb moves further than the cloth may stray, the cloth moves past its limit rather than letting the limb show through. A [member backstop] keeps the cloth from sinking into the body. Free vertices are also tethered to their nearest pinned vertex, so long garments don't stretch.
-		The source mesh is hidden while the cloth runs and drawn instead from the simulated positions, read straight from GPU textures (no CPU readback). Only the source material's albedo texture, albedo colour and roughness carry over for now.
+		The source mesh is hidden while the cloth runs and drawn instead from the simulated positions, read straight from GPU textures (no CPU readback). By default it's drawn with a built-in material that takes the source material's albedo texture, albedo colour and roughness; to draw it your own way, set [member render_material].
 		Runs only in a running game, not in the editor. The node should process after whatever poses the skeleton (an [AnimationPlayer] or [AnimationTree]); its default [member Node.process_priority] of [code]100[/code] does that.
 	</description>
 	<tutorials>
@@ -107,6 +107,37 @@
 		</member>
 		<member name="pin_height" type="float" setter="set_pin_height" getter="get_pin_height" default="1.3">
 			Automatic painting: vertices at or above this height in the mesh's bind pose (meters) follow the animation exactly.
+		</member>
+		<member name="render_material" type="ShaderMaterial" setter="set_render_material" getter="get_render_material">
+			Draws the cloth with your own [ShaderMaterial] instead of the built-in look. Its shader must place the vertices from the simulation itself, from these inputs, which the cloth sets on the material:
+			- [code]CUSTOM0.x[/code]: the particle the vertex is drawn from;
+			- [code]uniform sampler2D cloth_positions[/code] and [code]uniform sampler2D cloth_normals[/code]: the particles' simulated positions and normals, in the source mesh's local space, one texel per particle (read them with [code]texelFetch[/code] and [code]filter_nearest[/code]);
+			- [code]uniform int texture_width[/code]: particle [code]i[/code] is texel [code](i % texture_width, i / texture_width)[/code];
+			- [code]uniform float normal_sign[/code]: multiply the normal by it (it matches the simulated normals to the mesh's own winding).
+			[codeblock lang=text]
+			shader_type spatial;
+			render_mode cull_disabled;
+			uniform sampler2D cloth_positions : filter_nearest, repeat_disable;
+			uniform sampler2D cloth_normals : filter_nearest, repeat_disable;
+			uniform int texture_width = 1;
+			uniform float normal_sign = 1.0;
+
+			void vertex() {
+			    int i = int(CUSTOM0.x + 0.5);
+			    ivec2 px = ivec2(i % texture_width, i / texture_width);
+			    float handedness = dot(cross(NORMAL, TANGENT), BINORMAL) &lt; 0.0 ? -1.0 : 1.0;
+			    VERTEX = texelFetch(cloth_positions, px, 0).xyz;
+			    NORMAL = normalize(texelFetch(cloth_normals, px, 0).xyz * normal_sign);
+			    // Keep the tangent frame with the new normal, for a normal map.
+			    vec3 tangent = TANGENT - NORMAL * dot(NORMAL, TANGENT);
+			    if (dot(tangent, tangent) &gt; 1e-8) {
+			        TANGENT = normalize(tangent);
+			        BINORMAL = cross(NORMAL, TANGENT) * handedness;
+			    }
+			}
+			[/codeblock]
+			The rest of the shader is yours ([code]fragment()[/code], your own uniforms). The source surface's [code]UV[/code], [code]UV2[/code], [code]COLOR[/code], [code]TANGENT[/code] and [code]CUSTOM1[/code]-[code]CUSTOM3[/code] come along on the cloth's mesh; its own [code]CUSTOM0[/code] can't, the particle index takes its place. There's no skinning to do: the positions are already where the cloth is.
+			Each build draws with its own copy of the material, with the inputs set on the copy, so one material can be shared by several garments and isn't changed. Changes to the material after the build don't reach the copy; change [code]get_render_instance().get_surface_override_material(0)[/code], or set [member render_material] again. Setting it on a built cloth changes the look without a rebuild; [code]null[/code] goes back to the built-in look.
 		</member>
 		<member name="self_collision" type="bool" setter="set_self_collision" getter="get_self_collision" default="false">
 			Keep the cloth from passing through itself where it folds and gathers: particles closer than [member self_collision_thickness] are pushed apart, unless they're that close in the garment itself. Off by default -- it adds four compute passes per substep.

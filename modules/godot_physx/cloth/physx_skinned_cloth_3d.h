@@ -74,7 +74,17 @@ class PhysXSkinnedCloth3D : public Node3D {
 	bool self_collision = false;
 	float self_collision_thickness = 0.02f;
 	float collision_radius_scale = 1.0f;
-	bool collide_with_body = true;
+	bool collide_with_body = true; // the body's colliders; the script's capsules collide regardless
+	bool use_physical_bones = true; // the physical bones' shapes if there are any, else the automatic capsules
+	PackedStringArray physical_bone_skip; // bone names whose physical-bone shapes are left out
+	// The script's own capsules (set_body_capsules), world space, read every step.
+	struct ScriptCapsule {
+		Vector3 a;
+		Vector3 b;
+		float radius_a = 0.0f;
+		float radius_b = 0.0f;
+	};
+	Vector<ScriptCapsule> script_capsules;
 	bool simulating = true;
 
 	SkinnedClothSolver *solver = nullptr;
@@ -137,6 +147,7 @@ private:
 	void _try_build();
 	void _clear();
 	void _find_capsules(Skeleton3D *p_skeleton);
+	void _refresh_colliders();
 	bool _find_physical_bone_shapes(Skeleton3D *p_skeleton);
 	static bool _read_shape(Capsule &r_c);
 	void _pack_colliders();
@@ -223,6 +234,11 @@ public:
 	bool get_collide_with_body() const { return collide_with_body; }
 	void set_collision_radius_scale(float p_scale);
 	float get_collision_radius_scale() const { return collision_radius_scale; }
+	void set_use_physical_bones(bool p_enabled);
+	bool get_use_physical_bones() const { return use_physical_bones; }
+	void set_physical_bone_skip(const PackedStringArray &p_bones);
+	PackedStringArray get_physical_bone_skip() const { return physical_bone_skip; }
+	void set_body_capsules(const Array &p_capsules);
 	void set_simulating(bool p_simulating);
 	bool is_simulating() const { return simulating; }
 

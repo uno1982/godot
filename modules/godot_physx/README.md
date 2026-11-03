@@ -671,15 +671,20 @@ vertex colors (`use_vertex_color`, painted in a modeling tool), or let
 `pin_height` / `max_distance` ramp them automatically from the waist down.
 
 It collides with the character's physical bones: run **Skeleton3D > Create
-Physical Skeleton** and every enabled capsule or sphere shape on the
+Physical Skeleton** and every enabled capsule, sphere or box shape on the
 `PhysicalBone3D`s is a collider (the bones don't need to simulate). Without a
 physical skeleton, capsules are placed automatically between the hips, spine,
-legs and arms, fitted to `body_mesh_path` if set. Collisions are swept across
-substeps so fast limbs don't jump through, and they win over the max
-distances; `backstop` keeps the cloth from sinking into the body, and free
-vertices are tethered to their nearest pinned one so long garments don't
-stretch. `animation_drive` pulls the cloth back toward its authored shape
-(useful for long robes), and `self_collision` is available, off by default.
+legs and arms, fitted to `body_mesh_path` if set. `use_physical_bones` off
+uses the automatic capsules even with a physical skeleton,
+`physical_bone_skip` leaves bones out, and `set_body_capsules()` adds your own
+capsules (world space, read every step: a held shield, a body proxy; they
+collide even with `collide_with_body` off); changing them takes effect live,
+without a rebuild. Collisions are swept across substeps so fast limbs don't
+jump through, and they win over the max distances; `backstop` keeps the cloth
+from sinking into the body, and free vertices are tethered to their nearest
+pinned one so long garments don't stretch. `animation_drive` pulls the cloth
+back toward its authored shape (useful for long robes), and `self_collision`
+is available, off by default.
 
 It runs on compute shaders (no CUDA, any GPU the renderer supports), only in a
 running game, and after the animation each frame (`process_priority` 100).

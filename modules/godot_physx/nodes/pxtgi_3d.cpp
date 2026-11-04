@@ -986,14 +986,13 @@ void PXTGI3D::_restyle_slice(LocalVector<int> &r_changed) {
 	}
 }
 
-// Which way an emissive shape's glow faces, in the world: along its mesh's glowing surface (the brightest, as its look
-// takes) when that surface mostly faces one way and is drawn one-sided; zero when it glows all round (a bulb, a
-// double-sided material, a glow given in metadata).
-Vector3 PXTGI3D::_emissive_facing(int p_index) {
+// The mesh drawing an emissive shape and its glowing surface (the brightest, as its look takes); null when the glow
+// isn't a surface's (given in metadata on the node, or no mesh).
+MeshInstance3D *PXTGI3D::_emissive_mesh(int p_index, int &r_surface) const {
 	const ShapeEntry &entry = shapes[p_index];
 	Node *node = ObjectDB::get_instance<Node>(entry.shape_node);
 	if (node == nullptr) {
-		return Vector3();
+		return nullptr;
 	}
 	MeshInstance3D *mesh = nullptr;
 	if (entry.mesh_proxy) {
@@ -1002,21 +1001,64 @@ Vector3 PXTGI3D::_emissive_facing(int p_index) {
 		mesh = body_mesh(node->get_parent());
 	}
 	if (mesh == nullptr || mesh->get_mesh().is_null() || mesh->has_meta(meta_emission())) {
-		return Vector3();
+		return nullptr;
 	}
 	const Ref<Mesh> source = mesh->get_mesh();
-	int surface = -1;
+	r_surface = -1;
 	float brightest = 0.0f;
 	for (int i = 0; i < source->get_surface_count(); i++) {
 		const float glow = material_glow(surface_material(mesh, i)).get_luminance();
 		if (glow > brightest) {
 			brightest = glow;
-			surface = i;
+			r_surface = i;
 		}
 	}
-	if (surface < 0) {
+	return r_surface < 0 ? nullptr : mesh;
+}
+
+// Where an emissive gives off light: the box of its mesh's glowing surface, not of the whole shape. A door frame with a
+// thin strip of light otherwise shines from a slab the size of the door, around whatever stands by it, which can't
+// shadow it from inside that slab. Falls back on the shape's own box when the glow isn't a surface's.
+bool PXTGI3D::_emissive_frame(int p_index, Transform3D &r_to_world, AABB &r_local) {
+	if (!_entry_frame(p_index, r_to_world, r_local)) {
+		return false;
+	}
+	const EmissiveSurface *known = emissive_surfaces.getptr(p_index);
+	if (known == nullptr) {
+		EmissiveSurface found;
+		int surface = -1;
+		MeshInstance3D *mesh = _emissive_mesh(p_index, surface);
+		if (mesh != nullptr) {
+			const Array arrays = mesh->get_mesh()->surface_get_arrays(surface);
+			const PackedVector3Array vertices = arrays[Mesh::ARRAY_VERTEX];
+			if (!vertices.is_empty()) {
+				found.bounds.position = vertices[0];
+				for (const Vector3 &vertex : vertices) {
+					found.bounds.expand_to(vertex);
+				}
+				found.mesh = mesh->get_instance_id();
+			}
+		}
+		known = &emissive_surfaces.insert(p_index, found)->value;
+	}
+	const MeshInstance3D *mesh = ObjectDB::get_instance<MeshInstance3D>(known->mesh);
+	if (mesh != nullptr && mesh->is_inside_tree()) {
+		r_to_world = mesh->get_global_transform();
+		r_local = known->bounds;
+	}
+	return true;
+}
+
+// Which way an emissive shape's glow faces, in the world: along its mesh's glowing surface (the brightest, as its look
+// takes) when that surface mostly faces one way and is drawn one-sided; zero when it glows all round (a bulb, a
+// double-sided material, a glow given in metadata).
+Vector3 PXTGI3D::_emissive_facing(int p_index) {
+	int surface = -1;
+	MeshInstance3D *mesh = _emissive_mesh(p_index, surface);
+	if (mesh == nullptr) {
 		return Vector3();
 	}
+	const Ref<Mesh> source = mesh->get_mesh();
 	const Ref<Material> material = surface_material(mesh, surface);
 	const Ref<BaseMaterial3D> base = material;
 	if (base.is_valid() && base->get_cull_mode() == BaseMaterial3D::CULL_DISABLED) {
@@ -1073,6 +1115,7 @@ void PXTGI3D::_rescan() {
 	tracked_changed = false;
 	frames_since_rescan = 0;
 	surface_normals.clear();
+	emissive_surfaces.clear();
 	chosen_emissives.clear();
 	shapes.clear();
 	suns.clear();
@@ -1563,7 +1606,7 @@ void PXTGI3D::_publish() {
 		for (int i : emissive_entries) {
 			Transform3D frame;
 			AABB local;
-			if (!_entry_frame(i, frame, local)) {
+			if (!_emissive_frame(i, frame, local)) {
 				continue;
 			}
 			const Vector3 center = frame.xform(local.get_center());
@@ -1592,7 +1635,7 @@ void PXTGI3D::_publish() {
 			const int e = scored[k].second;
 			Transform3D frame;
 			AABB local;
-			_entry_frame(e, frame, local);
+			_emissive_frame(e, frame, local);
 			s.emissive_count++;
 			const Vector3 half = local.size * 0.5f;
 			s.emissive_center[k] = frame.xform(local.get_center());

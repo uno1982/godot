@@ -45,6 +45,8 @@
 // PXTGI3D is in the tree, Godot's own GI step (which would overwrite it) runs a do-nothing shader with the same binding
 // layout instead, and SDFGI is kept to its cheapest settings (it is only the switch that makes surfaces read the
 // buffer). Hidden or gone, Godot's pipelines and the environment's own SDFGI settings are restored.
+class MeshInstance3D;
+
 class PXTGI3D : public Node3D {
 	GDCLASS(PXTGI3D, Node3D);
 
@@ -150,6 +152,13 @@ class PXTGI3D : public Node3D {
 	// for which way a flat glow faces.
 	HashMap<ObjectID, Vector<Vector3>> surface_normals;
 	HashSet<int> chosen_emissives; // the emissives sampled directly last frame (shape indices): a head start this one
+	struct EmissiveSurface {
+		ObjectID mesh; // Unset: the shape's own box.
+		AABB bounds;
+	};
+	HashMap<int, EmissiveSurface> emissive_surfaces;
+	MeshInstance3D *_emissive_mesh(int p_index, int &r_surface) const;
+	bool _emissive_frame(int p_index, Transform3D &r_to_world, AABB &r_local);
 	Vector3 _emissive_facing(int p_index);
 	LocalVector<float> ordered_floats; // the records in the tree's leaf order
 	LocalVector<float> tree_nodes;

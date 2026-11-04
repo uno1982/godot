@@ -523,6 +523,40 @@ MeshInstance3D *body_mesh(Node *p_body) {
 	return mesh;
 }
 
+// Whether body p_node has a collision shape that is traced (not a trigger volume, not hidden or disabled).
+bool body_has_traced_shape(const Node *p_node) {
+	if (!Object::cast_to<CollisionObject3D>(p_node) || Object::cast_to<Area3D>(p_node)) {
+		return false;
+	}
+	for (int i = 0; i < p_node->get_child_count(); i++) {
+		const CollisionShape3D *cs = Object::cast_to<CollisionShape3D>(p_node->get_child(i));
+		if (cs != nullptr && !cs->is_disabled() && cs->is_visible_in_tree() && cs->get_shape().is_valid()) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// Whether a mesh has its own collision: a body under it, or one beside it that takes it as its mesh (body_mesh). Its
+// shapes then block the light and carry its glow, so it needs no box of its own, which would shadow by its bounds.
+bool mesh_has_collision(MeshInstance3D *p_mesh) {
+	for (int i = 0; i < p_mesh->get_child_count(); i++) {
+		if (body_has_traced_shape(p_mesh->get_child(i))) {
+			return true;
+		}
+	}
+	Node *parent = p_mesh->get_parent();
+	if (parent != nullptr && parent->get_child_count() <= 8) {
+		for (int i = 0; i < parent->get_child_count(); i++) {
+			Node *sibling = parent->get_child(i);
+			if (sibling != p_mesh && body_has_traced_shape(sibling) && body_mesh(sibling) == p_mesh) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
 // The look of the mesh a body belongs to (body_mesh), else a neutral grey. A "pxtgi_albedo" or "pxtgi_emission" Color
 // in the body's own metadata says it outright.
 void body_look(Node *p_body, Color &r_albedo, Color &r_emission) {
@@ -1156,7 +1190,7 @@ void PXTGI3D::_rescan() {
 		if (MeshInstance3D *mesh = Object::cast_to<MeshInstance3D>(n)) {
 			// A mesh outside any body only counts while it gives off light (and not when it's kept out of GI, as
 			// Godot's own GI leaves it out).
-			if (mesh->get_mesh().is_null() || entry.emission.get_luminance() <= 0.0f || mesh->get_gi_mode() == GeometryInstance3D::GI_MODE_DISABLED) {
+			if (mesh->get_mesh().is_null() || entry.emission.get_luminance() <= 0.0f || mesh->get_gi_mode() == GeometryInstance3D::GI_MODE_DISABLED || mesh_has_collision(mesh)) {
 				continue;
 			}
 			entry.mesh_proxy = true;

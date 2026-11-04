@@ -129,6 +129,7 @@ public:
 		float max_distance = 8.0f;
 		float world_distance = 30.0f; // how far a GI ray goes against the collision shapes
 		int rays_per_texel = 4;
+		int emissive_candidates = 6; // weighed by a texel for its one emissive shadow ray
 		// Emissive shapes sampled directly by every texel (the nearest to the camera): an oriented box each (centre and
 		// three half axes, world space) and the light its surface gives off.
 		static constexpr int MAX_EMISSIVES = 64;

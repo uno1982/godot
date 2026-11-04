@@ -1534,6 +1534,7 @@ void PXTGI3D::_publish() {
 	s.debug = debug;
 	s.multi_bounce = multi_bounce;
 	s.rays_per_texel = rays_per_texel;
+	s.emissive_candidates = emissive_candidates;
 	s.reflection_mode = reflection_mode;
 	s.reflection_cutoff = reflection_cutoff;
 
@@ -1825,6 +1826,8 @@ void PXTGI3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_world_ray_distance"), &PXTGI3D::get_world_ray_distance);
 	ClassDB::bind_method(D_METHOD("set_rays_per_texel", "rays"), &PXTGI3D::set_rays_per_texel);
 	ClassDB::bind_method(D_METHOD("get_rays_per_texel"), &PXTGI3D::get_rays_per_texel);
+	ClassDB::bind_method(D_METHOD("set_emissive_candidates", "candidates"), &PXTGI3D::set_emissive_candidates);
+	ClassDB::bind_method(D_METHOD("get_emissive_candidates"), &PXTGI3D::get_emissive_candidates);
 	ClassDB::bind_method(D_METHOD("set_multi_bounce", "enabled"), &PXTGI3D::set_multi_bounce);
 	ClassDB::bind_method(D_METHOD("get_multi_bounce"), &PXTGI3D::get_multi_bounce);
 	ClassDB::bind_method(D_METHOD("set_reflection_mode", "mode"), &PXTGI3D::set_reflection_mode);
@@ -1837,6 +1840,7 @@ void PXTGI3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "max_distance", PROPERTY_HINT_RANGE, "0.1,20,0.1,or_greater"), "set_max_distance", "get_max_distance");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "world_ray_distance", PROPERTY_HINT_RANGE, "1,100,0.5,or_greater,suffix:m"), "set_world_ray_distance", "get_world_ray_distance");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "rays_per_texel", PROPERTY_HINT_RANGE, "1,4,1"), "set_rays_per_texel", "get_rays_per_texel");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "emissive_candidates", PROPERTY_HINT_RANGE, "1,16,1"), "set_emissive_candidates", "get_emissive_candidates");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "multi_bounce"), "set_multi_bounce", "get_multi_bounce");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "reflection_mode", PROPERTY_HINT_ENUM, "Godot,Screen Space,Traced,Traced + Probes"), "set_reflection_mode", "get_reflection_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "reflection_roughness_cutoff", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_reflection_roughness_cutoff", "get_reflection_roughness_cutoff");

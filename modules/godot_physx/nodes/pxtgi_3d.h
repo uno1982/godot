@@ -56,6 +56,7 @@ class PXTGI3D : public Node3D {
 	int debug = 0;
 	bool multi_bounce = true;
 	int rays_per_texel = 4;
+	int emissive_candidates = 6;
 	int reflection_mode = 2;
 	float reflection_cutoff = 0.5f;
 	ObjectID attached_world;
@@ -197,6 +198,8 @@ public:
 	float get_world_ray_distance() const { return world_ray_distance; }
 	void set_rays_per_texel(int p_value) { rays_per_texel = CLAMP(p_value, 1, 4); }
 	int get_rays_per_texel() const { return rays_per_texel; }
+	void set_emissive_candidates(int p_value) { emissive_candidates = CLAMP(p_value, 1, 16); }
+	int get_emissive_candidates() const { return emissive_candidates; }
 	void set_multi_bounce(bool p_value) { multi_bounce = p_value; }
 	bool get_multi_bounce() const { return multi_bounce; }
 	void set_reflection_mode(int p_value) {

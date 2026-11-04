@@ -97,7 +97,7 @@ layout(set = 0, binding = 9, std140) uniform Frame {
 	vec4 probe_y[8];
 	vec4 probe_z[8];
 	vec4 probe_core[8];
-	ivec4 probes; // x: count
+	ivec4 probes; // x: count, y: candidates a texel weighs for its emissive sample
 	// What a ray that leaves the scene sees: the sky's radiance map (at its roughest level: x the level, a layer or a
 	// mip; y and z the map's border offset and scale; w its strength, 0: no sky map), turned by sky_x/y/z (the
 	// world-to-sky rotation's rows), or else a background colour (sky_flat).
@@ -1058,9 +1058,13 @@ float emissive_entry(vec3 x, vec3 l, vec3 c, vec3 ax, vec3 ay, vec3 az, float p_
 	return max(max(lo.x, max(lo.y, lo.z)), 0.0);
 }
 
-// One emissive (picked uniformly), one point on the faces of its box that look toward x (a face pair chosen by its
-// area), a shadow ray: the light it gives x, as the GI buffer holds light (irradiance / pi).
-vec3 sample_emissive(vec3 x, vec3 n, vec2 xi, float pick, int count) {
+// One emissive (picked by its share), one point on the faces of its box that look toward x (a face pair chosen by its
+// area): the light it would give x if nothing is in the way, as the GI buffer holds light (irradiance / pi), and where
+// a shadow ray must go to check that.
+vec3 emissive_candidate(vec3 x, vec3 n, vec2 xi, float pick, int count, out int r_index, out vec3 r_dir, out float r_dist) {
+	r_index = 0;
+	r_dir = vec3(0.0, 1.0, 0.0);
+	r_dist = 0.0;
 	// The emissive whose share of the running totals holds pick (a binary search), and its share.
 	int lo = 0;
 	int hi = count - 1;
@@ -1170,17 +1174,78 @@ vec3 sample_emissive(vec3 x, vec3 n, vec2 xi, float pick, int count) {
 	vec3 l = to / dist;
 	float cos_x = dot(n, l);
 	float cos_e = dot(face_n, -l);
-	// The shadow ray stops where it enters the emissive's box (a little grown): collision is often coarser than what
-	// is drawn, and a lamp mounted on a wall or ceiling sits partly inside it. That collision would hide part of the
-	// lamp from its own sample points, a different part each frame (a flicker); a real occluder lies outside the box.
-	float reach = min(dist - 0.05, emissive_entry(x, l, c, ax, ay, az, 0.05) - 0.01);
-	if (cos_x <= 0.0 || cos_e <= 0.0 || (reach > 0.0 && blocked(x + n * 0.03, l, reach))) {
+	if (cos_x <= 0.0 || cos_e <= 0.0) {
 		return vec3(0.0);
 	}
+	r_index = i;
+	r_dir = l;
+	r_dist = dist;
 	// pdf over the area picked from: 1 / (4 * area); this emissive picked with its share.
-	vec3 e = f.emit_color[i].rgb * cos_x * cos_e * (4.0 * area) / d2 / share / 3.14159265;
+	return f.emit_color[i].rgb * cos_x * cos_e * (4.0 * area) / d2 / share / 3.14159265;
+}
+
+// Whether something lies between x and the point on emissive p_index. The shadow ray stops where it enters the emissive's
+// box (a little grown): collision is often coarser than what is drawn, and a lamp mounted on a wall or ceiling sits partly
+// inside it. That collision would hide part of the lamp from its own sample points, a different part each frame (a
+// flicker); a real occluder lies outside the box.
+bool emissive_blocked(vec3 x, vec3 n, vec3 l, float dist, int p_index) {
+	float reach = min(dist - 0.05, emissive_entry(x, l, f.emit_center[p_index].xyz, f.emit_x[p_index].xyz, f.emit_y[p_index].xyz, f.emit_z[p_index].xyz, 0.05) - 0.01);
+	return reach > 0.0 && blocked(x + n * 0.03, l, reach);
+}
+
+// One bright sample mustn't light its surroundings for many frames.
+vec3 emissive_clamped(vec3 e) {
 	float lum = dot(e, vec3(0.2126, 0.7152, 0.0722));
 	return e * min(1.0, 8.0 / max(lum, 1e-4));
+}
+
+// One candidate, one shadow ray: the light it gives x.
+vec3 sample_emissive(vec3 x, vec3 n, vec2 xi, float pick, int count) {
+	int i;
+	vec3 l;
+	float dist;
+	vec3 e = emissive_candidate(x, n, xi, pick, count, i, l, dist);
+	if (dist <= 0.0 || emissive_blocked(x, n, l, dist, i)) {
+		return vec3(0.0);
+	}
+	return emissive_clamped(e);
+}
+
+// Several candidates, weighed by the light each would give x, and one shadow ray, for the one kept (resampled importance
+// sampling): a texel beside a strip nearly always keeps the strip, so what lights it comes from common, modest samples
+// rather than rare, heavily weighted ones, which the denoiser would smear into blobs that wander. p_choose: a third
+// random number, for which candidate to keep.
+vec3 sample_emissive_resampled(vec3 x, vec3 n, vec2 xi, float pick, float p_choose, int count) {
+	int candidates = f.probes.y;
+	float total = 0.0;
+	float kept_lum = 0.0;
+	vec3 kept = vec3(0.0);
+	vec3 kept_dir = vec3(0.0, 1.0, 0.0);
+	float kept_dist = 0.0;
+	int kept_index = 0;
+	for (int k = 0; k < candidates; k++) {
+		int i;
+		vec3 l;
+		float dist;
+		vec3 e = emissive_candidate(x, n, fract(xi + float(k) * vec2(0.7548776662, 0.5698402910)), fract(pick + float(k) / float(candidates)), count, i, l, dist);
+		float lum = dot(e, vec3(0.2126, 0.7152, 0.0722));
+		if (lum <= 0.0) {
+			continue;
+		}
+		total += lum;
+		p_choose = fract(p_choose + 0.6180339887);
+		if (p_choose * total < lum) {
+			kept = e;
+			kept_lum = lum;
+			kept_dir = l;
+			kept_dist = dist;
+			kept_index = i;
+		}
+	}
+	if (kept_lum <= 0.0 || emissive_blocked(x, n, kept_dir, kept_dist, kept_index)) {
+		return vec3(0.0);
+	}
+	return emissive_clamped(kept * (total / float(candidates)) / kept_lum);
 }
 )";
 
@@ -1306,12 +1371,14 @@ void main() {
 		vec3 xw = (f.view_to_world * vec4(p, 1.0)).xyz;
 		vec3 nw = normalize(mat3(f.view_to_world) * n);
 		float index = f.misc.x;
-		// The point on the emissive needs noise of its own: offsetting ign() only adds a constant to it, so with the pick
-		// on the same noise, the texels picking a small share emissive would all take nearly the same point, one that
-		// drifts with the frame (a slow pulse on what is lit by it). Other directions through the pattern are independent.
-		vec2 xi = vec2(fract(ign(vec2(px.yx)) + 0.37 + index * 0.7548776662), fract(ign(vec2(px.x + px.y, px.x - px.y)) + 0.71 + index * 0.5698402910));
-		float pick = fract(noise.z + 0.13 + index * 0.6180339887);
-		result.rgb += sample_emissive(xw, nw, xi, pick, emissives);
+		// Hashed by texel, as the cache's cells are, not ign(): its offsets and directions are all the one regular pattern,
+		// so the emissive picked and the point on it stayed related, and neighbouring texels stepped through the frame
+		// sequence together, which nearly repeats every 21 frames (a slow pulse, a crawl, on what the emissives light).
+		uint h = hash_u(uint(px.x) | (uint(px.y) << 16u));
+		vec2 xi = vec2(fract(float(h & 0xffffu) / 65536.0 + index * 0.7548776662), fract(float(h >> 16u) / 65536.0 + index * 0.5698402910));
+		float pick = fract(float(hash_u(h ^ 0x165667b1u) & 0xffffu) / 65536.0 + index * 0.6180339887);
+		float choose = float(hash_u(h ^ 0x9e3779b9u) & 0xffffu) / 65536.0 + index * 0.3819660113;
+		result.rgb += sample_emissive_resampled(xw, nw, xi, pick, fract(choose), emissives);
 	}
 	// One bad sample would otherwise live on in the accumulation forever.
 	imageStore(dst, px, any(isnan(result)) || any(isinf(result)) ? vec4(0.0) : result);
@@ -2516,6 +2583,7 @@ void PhysXGIEffect::_render(int p_callback_type, const RenderData *p_render_data
 	data.cache[2] = s.multi_bounce ? 1 : 0;
 	data.cache[3] = s.rays_per_texel;
 	data.probes[0] = s.probe_count;
+	data.probes[1] = s.emissive_candidates;
 	for (int i = 0; i < s.probe_count; i++) {
 		const Transform3D &t = s.probe_to_local[i];
 		for (int k = 0; k < 3; k++) {

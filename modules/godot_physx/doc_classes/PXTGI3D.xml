@@ -20,6 +20,11 @@
 		<member name="debug" type="int" setter="set_debug" getter="get_debug" default="0">
 			Shows one stage of the work instead of the lit scene, to see what each adds. [code]0[/code] is off (the normal result).
 		</member>
+		<member name="emissive_candidates" type="int" setter="set_emissive_candidates" getter="get_emissive_candidates" default="6">
+			How many emissives (and points on them) each traced point weighs, from [code]1[/code] to [code]16[/code], before spending its one shadow ray on the one likely to light it most. Weighing is cheap arithmetic, so in a scene with many small emissives this steadies the light for far less than more shadow rays would: a point beside a light strip nearly always picks that strip, rather than rarely hitting it among all the others, which the denoiser would smear into shadows that crawl.
+			Raise it if the light from emissives crawls or shimmers while the camera is still; lower it if the trace pass costs too much. [code]1[/code] picks with no weighing: the cheapest, and the noisiest with many emissives. Each candidate adds a little to the trace pass, wherever emissives are sampled: at 1920×1080 on an RTX 5070, in a small room lit by one emissive, [code]6[/code] added about 0.035 ms and [code]12[/code] about 0.11 ms; at 2560×1440 in a station with 755 emissives, [code]6[/code] added about 0.17 ms for about a third less frame-to-frame change. A scene with no emissives pays nothing.
+			More candidates can also brighten what emissives light, in scenes with many small ones: a single heavily weighted sample is limited to keep it from lighting its surroundings for many frames, and weighing leaves fewer samples over that limit. That is more of the light that was there all along, not an error.
+		</member>
 		<member name="intensity" type="float" setter="set_intensity" getter="get_intensity" default="1.0">
 			How strong the bounce light is: [code]1.0[/code] is physically based; higher brightens it artistically.
 		</member>

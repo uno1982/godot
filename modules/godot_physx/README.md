@@ -365,6 +365,10 @@ multiple bounces.
   physics playground (2,000 boxes being blown apart) about 2 ms with
   `rays_per_texel` `2`. `rays_per_texel` and `world_ray_distance` trade
   quality for speed.
+- `emissive_candidates` (default `6`) steadies the light from emissives: each
+  point weighs that many and traces one, so light beside a strip doesn't crawl
+  in a scene with many of them. More is steadier and costs a little more of the
+  trace pass; a scene with no emissives pays nothing.
 - Demos: `demo/editor/rendering/gi_courtyard.tscn`, `gi_courtyard_night.tscn`,
   `gi_cornell_box.tscn`, `demo/cpu/physx_playground_gi.tscn` (key `G`).
 

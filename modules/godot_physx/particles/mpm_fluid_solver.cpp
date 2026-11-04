@@ -56,6 +56,7 @@
 #include "core/math/math_funcs.h"
 #include "core/object/callable_mp.h"
 #include "core/os/os.h"
+#include "scene/resources/texture.h"
 #include "servers/display/display_server.h"
 #include "servers/rendering/rendering_device.h"
 #include "servers/rendering/rendering_device_binds.h"
@@ -96,6 +97,145 @@ uint32_t next_pow2(uint32_t v) {
 	v |= v >> 8;
 	v |= v >> 16;
 	return v + 1;
+}
+
+// A bake is only negative in a thin skin behind each surface, and positive again past it: fluid that
+// got through a closed mesh's skin would be free inside it, and a skin thinner than a grid cell is easy
+// to get through. So what can't be reached from the box's edges without crossing a skin is solid: its
+// voxels become negative, further from the outside the deeper in. An open mesh is reached from outside
+// through its opening, and keeps its hollow. Returns whether anything was enclosed.
+//
+// The skin has gaps: behind a concave edge, what's behind each triangle spreads apart, and a voxel there
+// reads as just outside the nearest triangle. So the search from outside stops a voxel short of any
+// surface, which no such gap gets through (an opening under two voxels wide closes too).
+bool _fill_enclosed_voxels(float *r_voxels, const Vector3i &p_size, float p_voxel) {
+	const int64_t count = (int64_t)p_size.x * p_size.y * p_size.z;
+	const int64_t steps[3] = { 1, p_size.x, (int64_t)p_size.x * p_size.y };
+	const int axis_size[3] = { p_size.x, p_size.y, p_size.z };
+
+	LocalVector<uint32_t> depth; // 0: reached from outside (or not yet looked at)
+	depth.resize(count);
+	LocalVector<uint8_t> outside;
+	outside.resize(count);
+	memset(outside.ptr(), 0, count);
+
+	LocalVector<uint32_t> front;
+	for (int z = 0; z < p_size.z; z++) {
+		for (int y = 0; y < p_size.y; y++) {
+			for (int x = 0; x < p_size.x; x++) {
+				const bool edge = x == 0 || y == 0 || z == 0 || x == p_size.x - 1 || y == p_size.y - 1 || z == p_size.z - 1;
+				const int64_t at = x + y * steps[1] + z * steps[2];
+				if (edge && r_voxels[at] >= p_voxel) {
+					outside[at] = 1;
+					front.push_back((uint32_t)at);
+				}
+			}
+		}
+	}
+
+	const auto neighbors = [&](int64_t p_at, auto &&p_visit) {
+		const int coord[3] = { (int)(p_at % p_size.x), (int)((p_at / p_size.x) % p_size.y), (int)(p_at / steps[2]) };
+		for (int axis = 0; axis < 3; axis++) {
+			if (coord[axis] > 0) {
+				p_visit(p_at - steps[axis]);
+			}
+			if (coord[axis] < axis_size[axis] - 1) {
+				p_visit(p_at + steps[axis]);
+			}
+		}
+	};
+
+	// What can be reached from outside.
+	while (!front.is_empty()) {
+		const uint32_t at = front[front.size() - 1];
+		front.resize(front.size() - 1);
+		neighbors(at, [&](int64_t p_next) {
+			if (!outside[p_next] && r_voxels[p_next] >= p_voxel) {
+				outside[p_next] = 1;
+				front.push_back((uint32_t)p_next);
+			}
+		});
+	}
+
+	bool enclosed = false;
+	for (int64_t at = 0; at < count && !enclosed; at++) {
+		enclosed = !outside[at] && r_voxels[at] >= p_voxel;
+	}
+
+	// That stopped short of the surface. With nothing enclosed, all that's left outside is what's positive.
+	// Otherwise the voxels it left on the outside of the skin are within two steps.
+	if (!enclosed) {
+		for (int64_t at = 0; at < count; at++) {
+			outside[at] = r_voxels[at] >= 0.0f;
+		}
+	}
+	LocalVector<uint32_t> skin;
+	for (int pass = 0; enclosed && pass < 2; pass++) {
+		skin.clear();
+		for (int64_t at = 0; at < count; at++) {
+			if (!outside[at]) {
+				continue;
+			}
+			neighbors(at, [&](int64_t p_next) {
+				if (!outside[p_next] && r_voxels[p_next] >= 0.0f && r_voxels[p_next] < p_voxel) {
+					skin.push_back((uint32_t)p_next);
+				}
+			});
+		}
+		for (uint32_t i = 0; i < skin.size(); i++) {
+			outside[skin[i]] = 1;
+		}
+	}
+
+	// How far in the rest is. The first layer keeps its baked distance: that's where the surface is. This
+	// is for a wall's insides too: baked, they rise to zero again at its far side, which would push fluid
+	// that got that far through the wall.
+	memset(depth.ptr(), 0, count * sizeof(uint32_t));
+	LocalVector<uint32_t> layer;
+	for (int64_t at = 0; at < count; at++) {
+		if (outside[at]) {
+			continue;
+		}
+		bool touches = false;
+		neighbors(at, [&](int64_t p_next) { touches = touches || outside[p_next]; });
+		if (touches) {
+			depth[at] = 1;
+			r_voxels[at] = -Math::abs(r_voxels[at]);
+			layer.push_back((uint32_t)at);
+		}
+	}
+	uint32_t reached = 1;
+	while (!layer.is_empty()) {
+		reached++;
+		front.clear();
+		for (uint32_t i = 0; i < layer.size(); i++) {
+			neighbors(layer[i], [&](int64_t p_next) {
+				if (!outside[p_next] && depth[p_next] == 0) {
+					depth[p_next] = reached;
+					r_voxels[p_next] = -(float)(reached - 1) * p_voxel;
+					front.push_back((uint32_t)p_next);
+				}
+			});
+		}
+		SWAP(layer, front);
+	}
+	// Enclosed without a skin next to the outside (a mesh filling the box's edges).
+	for (int64_t at = 0; at < count; at++) {
+		if (!outside[at] && depth[at] == 0) {
+			r_voxels[at] = -p_voxel;
+		}
+	}
+	return enclosed;
+}
+
+RID _rt_create_sdf_buffer(RenderingDevice *p_rd, const PackedByteArray &p_voxels) {
+	if (p_voxels.is_empty()) {
+		PackedByteArray none; // a shader's binding always needs a buffer
+		none.resize(16);
+		memset(none.ptrw(), 0, none.size());
+		return p_rd->storage_buffer_create(none.size(), none);
+	}
+	return p_rd->storage_buffer_create(p_voxels.size(), p_voxels);
 }
 } // namespace
 
@@ -190,7 +330,7 @@ void MPMFluidSolverGPU::_rt_free_buffers() {
 			uset[i] = RID();
 		}
 	}
-	RID *bufs[] = { &buf_params, &buf_particles, &buf_grid_i, &buf_grid_v, &buf_colliders, &buf_cimp, &buf_mm, &buf_surf, &buf_mverts, &buf_mnorms, &buf_mcount, &buf_bhash, &buf_bhash_val, &buf_bkey, &buf_bcounts, &buf_bargs };
+	RID *bufs[] = { &buf_params, &buf_particles, &buf_grid_i, &buf_grid_v, &buf_colliders, &buf_cimp, &buf_mm, &buf_surf, &buf_mverts, &buf_mnorms, &buf_mcount, &buf_bhash, &buf_bhash_val, &buf_bkey, &buf_bcounts, &buf_bargs, &buf_sdf };
 	for (RID *b : bufs) {
 		if (b->is_valid()) {
 			rd->free_rid(*b);
@@ -200,6 +340,10 @@ void MPMFluidSolverGPU::_rt_free_buffers() {
 }
 
 void MPMFluidSolverGPU::_rt_rebuild_uniform_sets() {
+	if (uset_mesh.is_valid()) {
+		rd->free_rid(uset_mesh);
+		uset_mesh = RID();
+	}
 	for (int p = 0; p < PASS_MAX; p++) {
 		if (uset[p].is_valid()) {
 			rd->free_rid(uset[p]);
@@ -226,6 +370,13 @@ void MPMFluidSolverGPU::_rt_rebuild_uniform_sets() {
 			u.append_id(by_binding[bnd]);
 			uniforms.push_back(u);
 		}
+		{
+			RD::Uniform u;
+			u.uniform_type = RD::UNIFORM_TYPE_STORAGE_BUFFER;
+			u.binding = block_sparse ? 13 : 8; // after each path's own (see the includes)
+			u.append_id(buf_sdf);
+			uniforms.push_back(u);
+		}
 		uset[p] = rd->uniform_set_create(uniforms, shader[p], 0);
 		ERR_FAIL_COND(uset[p].is_null());
 	}
@@ -245,7 +396,7 @@ void MPMFluidSolverGPU::_rt_rebuild_uniform_sets() {
 	}
 }
 
-void MPMFluidSolverGPU::rt_build(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p_params, PackedByteArray p_particles, int p_capacity, int p_node_count, int p_tri_budget, bool p_block_sparse, int p_max_blocks, int p_hash_slots) {
+void MPMFluidSolverGPU::rt_build(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p_params, PackedByteArray p_particles, int p_capacity, int p_node_count, int p_tri_budget, bool p_block_sparse, int p_max_blocks, int p_hash_slots, PackedByteArray p_sdf) {
 	if (rd == nullptr || !_shaders_ok) {
 		return;
 	}
@@ -280,6 +431,7 @@ void MPMFluidSolverGPU::rt_build(Ref<MPMFluidSolverGPU> p_self, PackedByteArray 
 	memset(czero.ptrw(), 0, czero.size());
 	buf_colliders = rd->storage_buffer_create(czero.size(), czero);
 	buf_cimp = rd->storage_buffer_create(MAX_COLLIDERS * 4 * sizeof(int32_t));
+	buf_sdf = _rt_create_sdf_buffer(rd, p_sdf);
 
 	{
 		PackedByteArray mm_zero;
@@ -334,6 +486,26 @@ void MPMFluidSolverGPU::rt_build(Ref<MPMFluidSolverGPU> p_self, PackedByteArray 
 
 	_rt_rebuild_uniform_sets();
 	built.set_to(true);
+}
+
+void MPMFluidSolverGPU::rt_set_sdf(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p_sdf) {
+	if (rd == nullptr || !built.is_set()) {
+		return;
+	}
+	if (local && _submitted) {
+		rd->sync(); // don't free a buffer with GPU work still in flight
+		_submitted = false;
+	}
+	// The uniform sets first: see _rt_free_buffers.
+	for (int p = 0; p < PASS_MAX; p++) {
+		if (uset[p].is_valid()) {
+			rd->free_rid(uset[p]);
+			uset[p] = RID();
+		}
+	}
+	rd->free_rid(buf_sdf);
+	buf_sdf = _rt_create_sdf_buffer(rd, p_sdf);
+	_rt_rebuild_uniform_sets();
 }
 
 void MPMFluidSolverGPU::rt_step(Ref<MPMFluidSolverGPU> p_self, PackedByteArray p_params, PackedByteArray p_colliders, int p_ncol, int p_pcount, int p_node_count, Vector3i p_grid_dims, int p_substeps, bool p_want_surface, bool p_bench) {
@@ -977,11 +1149,11 @@ void MPMFluidSolver::_pack_colliders(const LocalVector<SphereCollider> &p_collid
 		encode_float(ext.x, o + 16);
 		encode_float(ext.y, o + 20);
 		encode_float(ext.z, o + 24);
-		encode_float(0.0f, o + 28);
+		encode_float(c.shape == COLLIDER_BAKED ? c.baked_scale : 0.0f, o + 28);
 		encode_float(c.velocity.x, o + 32);
 		encode_float(c.velocity.y, o + 36);
 		encode_float(c.velocity.z, o + 40);
-		encode_float(0.0f, o + 44);
+		encode_float(c.shape == COLLIDER_BAKED ? (float)c.baked_offset : 0.0f, o + 44);
 		const Quaternion q = c.rotation.normalized();
 		encode_float(q.x, o + 48);
 		encode_float(q.y, o + 52);
@@ -1038,7 +1210,7 @@ void MPMFluidSolver::configure(const Settings &p_settings, const Transform3D &p_
 
 	gpu->built.set_to(false);
 	const bool bs = !settings.granular;
-	_dispatch(callable_mp(gpu.ptr(), &MPMFluidSolverGPU::rt_build).bind(gpu, params, job_particles, capacity, node_count, (int)TRI_BUDGET, bs, max_blocks, hash_slots));
+	_dispatch(callable_mp(gpu.ptr(), &MPMFluidSolverGPU::rt_build).bind(gpu, params, job_particles, capacity, node_count, (int)TRI_BUDGET, bs, max_blocks, hash_slots, baked_voxels));
 }
 
 void MPMFluidSolver::emit(const LocalVector<EmittedParticle> &p_new) {
@@ -1072,6 +1244,65 @@ void MPMFluidSolver::emit(const LocalVector<EmittedParticle> &p_new) {
 
 	write_head = (write_head + n) % capacity;
 	pcount = MIN(pcount + n, capacity);
+}
+
+int MPMFluidSolver::get_baked_field(const Ref<Texture3D> &p_texture, float p_voxel, Vector3i &r_size, bool &r_hollow) {
+	if (p_texture.is_null() || gpu.is_null()) {
+		return -1;
+	}
+	const ObjectID id = p_texture->get_instance_id();
+	if (const BakedField *known = baked_fields.getptr(id)) {
+		r_size = known->size;
+		r_hollow = known->hollow;
+		return known->offset;
+	}
+
+	BakedField field; // Remembered even when it can't be used, so it's only read back once.
+	const Vector<Ref<Image>> slices = p_texture->get_data();
+	const int depth = slices.size();
+	const int width = depth > 0 && slices[0].is_valid() ? slices[0]->get_width() : 0;
+	const int height = depth > 0 && slices[0].is_valid() ? slices[0]->get_height() : 0;
+	const int64_t voxels = (int64_t)width * height * depth;
+	const int64_t head = baked_voxels.size() / (int64_t)sizeof(float);
+	// A collider holds the start as a float, exact up to 2^24.
+	if (voxels == 0) {
+		ERR_PRINT("MPM fluid: a baked collider's texture has no data.");
+	} else if (head + 3 > (1 << 24) || voxels > (1 << 26)) {
+		ERR_PRINT("MPM fluid: too many baked collider voxels. Lower the GPUParticlesCollisionSDF3D resolution.");
+	} else {
+		baked_voxels.resize((head + 3 + voxels) * sizeof(float));
+		float *out = reinterpret_cast<float *>(baked_voxels.ptrw()) + head;
+		*out++ = (float)width;
+		*out++ = (float)height;
+		*out++ = (float)depth;
+		float *grid = out;
+		bool valid = true;
+		for (int z = 0; z < depth && valid; z++) {
+			Ref<Image> slice = slices[z]->duplicate();
+			if (slice->is_compressed()) {
+				slice->decompress();
+			}
+			slice->convert(Image::FORMAT_RF);
+			valid = slice->get_width() == width && slice->get_height() == height;
+			if (valid) {
+				memcpy(out, slice->ptr(), width * height * sizeof(float));
+				out += width * height;
+			}
+		}
+		if (valid) {
+			field.hollow = !_fill_enclosed_voxels(grid, Vector3i(width, height, depth), p_voxel);
+			field.offset = (int)head;
+			field.size = Vector3i(width, height, depth);
+			_dispatch(callable_mp(gpu.ptr(), &MPMFluidSolverGPU::rt_set_sdf).bind(gpu, baked_voxels));
+		} else {
+			baked_voxels.resize(head * sizeof(float));
+			ERR_PRINT("MPM fluid: a baked collider's slices differ in size.");
+		}
+	}
+	baked_fields[id] = field;
+	r_size = field.size;
+	r_hollow = field.hollow;
+	return field.offset;
 }
 
 void MPMFluidSolver::set_domain_transform(const Transform3D &p_xform) {

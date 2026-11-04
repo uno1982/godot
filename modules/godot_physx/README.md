@@ -296,7 +296,7 @@ black, at the screen's aspect ratio: it's stretched to fit).
 
 A camera lens flare: every bright part of the frame (sun, fire, headlights,
 Flow flames) is reflected back over the screen as a row of soft, tinted
-ghosts through the screen's centre, plus a faint halo ring. It's image-based,
+ghosts through the screen's center, plus a faint halo ring. It's image-based,
 so no light needs tagging, and a light that's covered or leaves the frame
 stops flaring. Add the node; that's all.
 
@@ -335,7 +335,7 @@ multiple bounces.
   `StandardMaterial3D`, its glow from its brightest surface. PXTGI can't
   read a `ShaderMaterial`; give one a `pxtgi_albedo` and/or
   `pxtgi_emission` Color in its metadata (or put them on the
-  `MeshInstance3D` or the physics body), or it bounces as neutral grey with
+  `MeshInstance3D` or the physics body), or it bounces as neutral gray with
   no glow off screen.
 - Lights: the sun is the brightest visible `DirectionalLight3D` that lights
   surfaces; of omni and spot lights, the 8 of each Godot draws that come
@@ -446,6 +446,32 @@ Fluid runs off ledges and spreads freely; add a `WorldBoundaryShape3D` to
 `mpm_colliders` or lower the domain for a true drop. The grid cell size is
 `2 × particle_size` (`mpm_grid_resolution` is `PhysXGranular3D`-only — its dense
 box grid still uses it). Cost is at parity with the old fixed-box grid.
+
+`mpm_colliders` takes sphere, box, capsule, cylinder and world boundary shapes, from a
+body's first shape; anything else collides as a rough sphere, and the node warns
+about it. For a mesh, like a statue, add a `GPUParticlesCollisionSDF3D` around it
+(the stock node for GPU particles), press **Bake SDF** in the 3D editor's toolbar,
+and list that node in `mpm_colliders`:
+
+- It's about as cheap as a box: with a 100,000-particle pool on an RTX 5070, a solve
+  took 1.66 ms on one field against 1.63 ms on a box, and 1.77 ms on four. A field
+  outside its box costs almost nothing, and fields share their memory (4 bytes a
+  voxel) when they share a texture.
+- It bakes the meshes visible inside its box, so keep the floor out with `bake_mask`.
+- It bakes a mesh's stored vertices and ignores its skeleton, so a skinned mesh is
+  baked in its bind pose, which can differ from the pose you see (by 10 cm on average
+  on the demo's retargeted mannequin). For a skinned statue, freeze the pose first:
+  save what `MeshInstance3D.bake_mesh_from_current_skeleton_pose()` returns, draw that
+  instead, and bake it.
+- A closed mesh is solid, and so is one whose openings are under about two voxels
+  wide. A mesh with a wider opening, like a bell, stays hollow, and only its walls
+  hold the fluid: bake them at least as thick as the fluid's grid cell
+  (`2 × particle_size`). A wall's thickness is the voxel size times `thickness`, so
+  a higher `resolution` makes walls *thinner*. A fast stream still leaks a little
+  (1-2% at 15 m/s through 5 cm walls). A warning is printed if a hollow mesh's walls
+  are too thin.
+- The node can move and turn, and takes a uniform scale. Detail thinner than a grid
+  cell is lost, and a mesh that deforms isn't followed.
 
 Static and kinematic colliders couple cleanly; a **dynamic `RigidBody3D` in MPM
 fluid has soft buoyancy** and may sink slowly or over-bounce — feed it through
@@ -695,7 +721,7 @@ running game, and after the animation each frame (`process_priority` 100).
 
 By default the cloth is drawn with a built-in material that takes the source
 material's albedo texture, albedo colour and roughness. To draw it your own
-way (your character shader, normal maps, vertex colours), set
+way (your character shader, normal maps, vertex colors), set
 `render_material` to a `ShaderMaterial` whose shader places the vertices from
 the simulation: `CUSTOM0.x` is the vertex's particle, and the cloth sets
 `cloth_positions` / `cloth_normals` (one texel per particle, source mesh
@@ -967,7 +993,7 @@ cleared (a surface with a `surface_mesh` footprint or a measured seabed still
 rebuilds, since its depths depend on where the square is). Together with
 `render_extent` that's an endless ocean out to the horizon. The one limit is
 ordinary floating-point precision far from the world origin — at hundreds of
-kilometres rendering and physics start to jitter, as for any Godot scene; large
+kilometers rendering and physics start to jitter, as for any Godot scene; large
 worlds shift their origin or use a double-precision build. Over a coastline,
 turn on `open_sea_beyond` so the sea past a moving square stays open deep water
 instead of carrying the square's edge — its seabed, shore foam and wet sand —
@@ -1134,7 +1160,7 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   side's value, so this backend uses the larger one: exact whenever one side's
   bounce is 0 (a bouncy ball on an ordinary floor), but two bouncy bodies bounce
   less than the sum, and an `absorbent` material counts as 0 instead of
-  cancelling the other side's bounce. Friction matches Godot's rule (`rough`
+  canceling the other side's bounce. Friction matches Godot's rule (`rough`
   wins), except that a `rough` material against a higher-friction one gets the
   higher friction.
 - **`SeparationRayShape3D`** has no PhysX geometry: it's cast as a ray. In

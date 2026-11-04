@@ -28,10 +28,10 @@ struct Particle {
 };
 
 // Analytic collider: a moving velocity boundary condition for the grid.
-//   c0: xyz = center (world), w = shape (0 sphere, 1 box, 2 plane, 3 capsule)
-//   c1: sphere x=radius | box xyz=half-extents | plane xyz=unit normal | capsule x=radius y=half-height
-//   c2: xyz = linear velocity
-//   c3: orientation quaternion (box / capsule; sphere and plane ignore it)
+//   c0: xyz = center (world), w = shape (0 sphere, 1 box, 2 plane, 3 capsule, 4 baked, 5 cylinder)
+//   c1: sphere x=radius | box xyz=half-extents | plane xyz=unit normal | capsule, cylinder x=radius y=half-height | baked xyz=half-extents w=distance scale
+//   c2: xyz = linear velocity, w = baked: where its grid starts in sdf_voxels
+//   c3: orientation quaternion (box / capsule / baked / cylinder; sphere and plane ignore it)
 struct Collider {
 	vec4 c0;
 	vec4 c1;
@@ -71,6 +71,9 @@ layout(set = 0, binding = 6, std430) restrict buffer MMData {
 layout(set = 0, binding = 7, std430) restrict buffer SurfaceField {
 	int surf_i[];
 }; // 1 int / node: SPH density scatter (SURF_FIXED), for isosurfacing
+layout(set = 0, binding = 8, std430) restrict readonly buffer SDFVoxels {
+	float sdf_voxels[];
+}; // every baked collider's grid (see collider_baked)
 
 #define DT (gravity_dt.w)
 #define GRAV (gravity_dt.xyz)
@@ -185,6 +188,36 @@ vec3 dp_project(vec3 sig, float mu, float lambda, float alpha, float coh) {
 	return exp(eps - dg * eps_hat / ehn);
 }
 
+// --- baked collider: a field baked by GPUParticlesCollisionSDF3D, in sdf_voxels ---
+// Its grid starts with its size (three floats), then x, then y, then z. p is local to
+// the collider, with the box the field fills centered on it.
+
+float sdf_voxel(uint first, ivec3 size, ivec3 c) {
+	return sdf_voxels[first + uint(c.x + size.x * (c.y + size.y * c.z))];
+}
+
+float collider_baked(int i, vec3 p) {
+	vec3 half_size = colliders[i].c1.xyz;
+	float beyond = length(max(abs(p) - half_size, 0.0));
+	if (beyond > DX) {
+		return beyond; // too far to touch anything, and no reads
+	}
+	uint head = uint(colliders[i].c2.w + 0.5);
+	ivec3 size = ivec3(sdf_voxels[head], sdf_voxels[head + 1u], sdf_voxels[head + 2u]);
+	uint first = head + 3u;
+	vec3 g = clamp((p / half_size * 0.5 + 0.5) * vec3(size) - 0.5, vec3(0.0), vec3(size - 1));
+	ivec3 a = ivec3(g);
+	ivec3 b = min(a + 1, size - 1);
+	vec3 f = g - vec3(a);
+	float s = mix(
+			mix(mix(sdf_voxel(first, size, a), sdf_voxel(first, size, ivec3(b.x, a.y, a.z)), f.x),
+					mix(sdf_voxel(first, size, ivec3(a.x, b.y, a.z)), sdf_voxel(first, size, ivec3(b.x, b.y, a.z)), f.x), f.y),
+			mix(mix(sdf_voxel(first, size, ivec3(a.x, a.y, b.z)), sdf_voxel(first, size, ivec3(b.x, a.y, b.z)), f.x),
+					mix(sdf_voxel(first, size, ivec3(a.x, b.y, b.z)), sdf_voxel(first, size, b), f.x), f.y),
+			f.z);
+	return s * colliders[i].c1.w + beyond;
+}
+
 // --- analytic collider SDF (shared by the coupling pass and G2P clamp) ---
 
 vec3 _qrot(vec4 q, vec3 v) {
@@ -199,6 +232,13 @@ float collider_sdf(int i, vec3 wp) {
 	}
 	vec4 q = colliders[i].c3;
 	vec3 p = _qrot(vec4(-q.xyz, q.w), wp - ctr);
+	if (type == 4) {
+		return collider_baked(i, p);
+	}
+	if (type == 5) { // cylinder along local Y
+		vec2 d = vec2(length(p.xz) - colliders[i].c1.x, abs(p.y) - colliders[i].c1.y);
+		return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
+	}
 	if (type == 1) { // box
 		vec3 d = abs(p) - colliders[i].c1.xyz;
 		return length(max(d, 0.0)) + min(max(d.x, max(d.y, d.z)), 0.0);

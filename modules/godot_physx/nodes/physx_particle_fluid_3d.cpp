@@ -40,6 +40,7 @@
 #include "core/config/project_settings.h"
 #include "core/object/class_db.h"
 #include "core/templates/hash_map.h"
+#include "scene/3d/gpu_particles_collision_3d.h"
 #include "scene/3d/physics/animatable_body_3d.h"
 #include "scene/3d/physics/collision_object_3d.h"
 #include "scene/3d/physics/collision_shape_3d.h"
@@ -50,6 +51,7 @@
 #include "scene/main/window.h"
 #include "scene/resources/3d/box_shape_3d.h"
 #include "scene/resources/3d/capsule_shape_3d.h"
+#include "scene/resources/3d/cylinder_shape_3d.h"
 #include "scene/resources/3d/primitive_meshes.h"
 #include "scene/resources/3d/sphere_shape_3d.h"
 #include "scene/resources/3d/world_3d.h"
@@ -170,11 +172,41 @@ void PhysXParticleFluid3D::_mpm_configure(bool p_prefill) {
 	}
 }
 
-// Resolve a node to an analytic MPM collider. Accepts a CollisionShape3D
-// directly, or a CollisionObject3D (uses its first shape). Sphere, box, capsule
-// and infinite-plane map exactly; anything else falls back to a bounding sphere.
-static bool resolve_mpm_collider(Node3D *p_node, MPMFluidSolver::Collider &out) {
+// Resolve a node to an MPM collider. Accepts a CollisionShape3D directly, a
+// CollisionObject3D (uses its first shape), or a GPUParticlesCollisionSDF3D with a
+// baked texture. Sphere, box, capsule, cylinder and infinite-plane map exactly; anything else
+// falls back to a bounding sphere (see mpm_collider_issue).
+static bool resolve_mpm_collider(Node3D *p_node, MPMFluidSolver &p_solver, MPMFluidSolver::Collider &out) {
 	out.velocity = Vector3();
+
+	if (const GPUParticlesCollisionSDF3D *baked = Object::cast_to<GPUParticlesCollisionSDF3D>(p_node)) {
+		const Ref<Texture3D> texture = baked->get_texture();
+		if (texture.is_null()) {
+			return false;
+		}
+		// The bake fits whole voxels from the box's negative corner, so a box that doesn't divide
+		// evenly isn't quite filled: place the field where its voxels really are.
+		const Vector3 size = baked->get_size();
+		const float voxel = size[size.max_axis_index()] / (float)MAX(texture->get_width(), MAX(texture->get_height(), texture->get_depth()));
+		Vector3i voxels;
+		bool hollow = false;
+		out.baked_offset = p_solver.get_baked_field(texture, voxel, voxels, hollow);
+		if (out.baked_offset < 0) {
+			return false;
+		}
+		if (hollow && voxel * baked->get_thickness() < p_solver.get_cell_size()) {
+			WARN_PRINT_ONCE("MPM fluid: a GPUParticlesCollisionSDF3D holds a hollow mesh whose walls are baked thinner than the fluid's grid cell (2 x particle_size), so fluid leaks through them. Raise its thickness or lower its resolution, and bake it again.");
+		}
+		const Vector3 filled = Vector3(voxels) * voxel;
+		const Transform3D baked_xf = baked->get_global_transform();
+		const Vector3 baked_scale = baked_xf.basis.get_scale().abs();
+		out.shape = MPMFluidSolver::COLLIDER_BAKED;
+		out.position = baked_xf.xform((filled - size) * 0.5f);
+		out.rotation = baked_xf.basis.get_rotation_quaternion();
+		out.extents = filled * 0.5f * baked_scale;
+		out.baked_scale = (baked_scale.x + baked_scale.y + baked_scale.z) / 3.0f;
+		return true;
+	}
 
 	Ref<Shape3D> shape;
 	Transform3D xf = p_node->get_global_transform();
@@ -218,6 +250,12 @@ static bool resolve_mpm_collider(Node3D *p_node, MPMFluidSolver::Collider &out) 
 		out.extents = Vector3(MAX(r, 0.01f), half_h, 0);
 		return true;
 	}
+	Ref<CylinderShape3D> cyl = shape;
+	if (cyl.is_valid()) {
+		out.shape = MPMFluidSolver::COLLIDER_CYLINDER;
+		out.extents = Vector3(MAX(cyl->get_radius() * MAX(scale.x, scale.z), 0.01f), MAX(cyl->get_height() * 0.5f * scale.y, 0.01f), 0);
+		return true;
+	}
 	Ref<WorldBoundaryShape3D> wb = shape;
 	if (wb.is_valid()) {
 		const Plane p = xf.xform(wb->get_plane());
@@ -240,6 +278,43 @@ static bool resolve_mpm_collider(Node3D *p_node, MPMFluidSolver::Collider &out) 
 	out.position = xf.origin;
 	out.extents = Vector3(MAX(radius * uniform_scale, 0.01f), 0, 0);
 	return true;
+}
+
+// What's wrong with listing a node in mpm_colliders, for the node's warnings.
+static String mpm_collider_issue(Node *p_node) {
+	if (Object::cast_to<PhysXChunkEmitter3D>(p_node) != nullptr) {
+		return String();
+	}
+	if (const GPUParticlesCollisionSDF3D *baked = Object::cast_to<GPUParticlesCollisionSDF3D>(p_node)) {
+		return baked->get_texture().is_valid() ? String() : RTR("it has no baked texture yet, so it's ignored. Select it and press Bake SDF.");
+	}
+
+	Ref<Shape3D> shape;
+	int shape_count = 0;
+	if (const CollisionShape3D *cshape = Object::cast_to<CollisionShape3D>(p_node)) {
+		shape = cshape->get_shape();
+	} else if (CollisionObject3D *co = Object::cast_to<CollisionObject3D>(p_node)) {
+		List<uint32_t> owners;
+		co->get_shape_owners(&owners);
+		for (uint32_t owner : owners) {
+			const int count = co->shape_owner_get_shape_count(owner);
+			if (count > 0 && shape.is_null()) {
+				shape = co->shape_owner_get_shape(owner, 0);
+			}
+			shape_count += count;
+		}
+	}
+
+	const bool exact = Object::cast_to<SphereShape3D>(shape.ptr()) != nullptr || Object::cast_to<BoxShape3D>(shape.ptr()) != nullptr ||
+			Object::cast_to<CapsuleShape3D>(shape.ptr()) != nullptr || Object::cast_to<CylinderShape3D>(shape.ptr()) != nullptr ||
+			Object::cast_to<WorldBoundaryShape3D>(shape.ptr()) != nullptr;
+	if (!exact) {
+		return RTR("only sphere, box, capsule, cylinder and world boundary shapes are supported, so it collides as a rough sphere. For a mesh, bake a GPUParticlesCollisionSDF3D around it and list that instead.");
+	}
+	if (shape_count > 1) {
+		return RTR("only its first shape collides. List each of its CollisionShape3D nodes instead.");
+	}
+	return String();
 }
 
 // Where a fed MPM collider came from, so the fluid's reaction impulse can be
@@ -275,7 +350,7 @@ void PhysXParticleFluid3D::_mpm_step(double p_delta) {
 			continue; // expanded below, once the fixed colliders are counted
 		}
 		MPMFluidSolver::Collider c;
-		if (!resolve_mpm_collider(n, c)) {
+		if (!resolve_mpm_collider(n, *mpm, c)) {
 			continue;
 		}
 
@@ -335,7 +410,7 @@ void PhysXParticleFluid3D::_mpm_step(double p_delta) {
 					continue; // already fed from the explicit list
 				}
 				MPMFluidSolver::Collider c;
-				if (!resolve_mpm_collider(n, c)) {
+				if (!resolve_mpm_collider(n, *mpm, c)) {
 					continue;
 				}
 				RigidBody3D *rb = Object::cast_to<RigidBody3D>(n);
@@ -1618,6 +1693,7 @@ void PhysXParticleFluid3D::set_mpm_stiffness(float p_stiffness) {
 void PhysXParticleFluid3D::set_mpm_colliders(const TypedArray<NodePath> &p_colliders) {
 	mpm_colliders = p_colliders;
 	_mpm_prev_pos.clear();
+	update_configuration_warnings();
 }
 
 void PhysXParticleFluid3D::set_particle_count(int p_count) {
@@ -1912,6 +1988,15 @@ PackedStringArray PhysXParticleFluid3D::get_configuration_warnings() const {
 	}
 	if (on_mpm && (int)mpm_colliders.size() > 32) {
 		warnings.push_back(RTR("MPM coupling uses at most 32 colliders (rigid bodies plus any nearby debris chunks); the rest are ignored."));
+	}
+	if (on_mpm && is_inside_tree()) {
+		for (int i = 0; i < mpm_colliders.size(); i++) {
+			Node *n = get_node_or_null(mpm_colliders[i]);
+			const String issue = n != nullptr ? mpm_collider_issue(n) : String();
+			if (!issue.is_empty()) {
+				warnings.push_back(vformat(RTR("MPM collider \"%s\": %s"), n->get_name(), issue));
+			}
+		}
 	}
 	if (surface_anisotropy && !_iso()) {
 		warnings.push_back(RTR("\"Surface Anisotropy\" has no effect unless \"Render Mode\" is \"Isosurface\"."));

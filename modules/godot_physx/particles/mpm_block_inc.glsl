@@ -85,6 +85,9 @@ layout(set = 0, binding = 10, std430) restrict buffer BKey {
 layout(set = 0, binding = 11, std430) restrict buffer BCounts {
 	uint bcounts[];
 }; // [0] active blocks
+layout(set = 0, binding = 13, std430) restrict readonly buffer SDFVoxels {
+	float sdf_voxels[];
+}; // every baked collider's grid (see collider_baked)
 
 #define DT (gravity_dt.w)
 #define GRAV (gravity_dt.xyz)
@@ -225,6 +228,36 @@ int cell_slot(ivec3 c, ivec3 base_bc, int bs[8]) {
 	return slot * BCELLS + lin;
 }
 
+// --- baked collider: a field baked by GPUParticlesCollisionSDF3D, in sdf_voxels ---
+// Its grid starts with its size (three floats), then x, then y, then z. p is local to
+// the collider, with the box the field fills centered on it.
+
+float sdf_voxel(uint first, ivec3 size, ivec3 c) {
+	return sdf_voxels[first + uint(c.x + size.x * (c.y + size.y * c.z))];
+}
+
+float collider_baked(int i, vec3 p) {
+	vec3 half_size = colliders[i].c1.xyz;
+	float beyond = length(max(abs(p) - half_size, 0.0));
+	if (beyond > DX) {
+		return beyond; // too far to touch anything, and no reads
+	}
+	uint head = uint(colliders[i].c2.w + 0.5);
+	ivec3 size = ivec3(sdf_voxels[head], sdf_voxels[head + 1u], sdf_voxels[head + 2u]);
+	uint first = head + 3u;
+	vec3 g = clamp((p / half_size * 0.5 + 0.5) * vec3(size) - 0.5, vec3(0.0), vec3(size - 1));
+	ivec3 a = ivec3(g);
+	ivec3 b = min(a + 1, size - 1);
+	vec3 f = g - vec3(a);
+	float s = mix(
+			mix(mix(sdf_voxel(first, size, a), sdf_voxel(first, size, ivec3(b.x, a.y, a.z)), f.x),
+					mix(sdf_voxel(first, size, ivec3(a.x, b.y, a.z)), sdf_voxel(first, size, ivec3(b.x, b.y, a.z)), f.x), f.y),
+			mix(mix(sdf_voxel(first, size, ivec3(a.x, a.y, b.z)), sdf_voxel(first, size, ivec3(b.x, a.y, b.z)), f.x),
+					mix(sdf_voxel(first, size, ivec3(a.x, b.y, b.z)), sdf_voxel(first, size, b), f.x), f.y),
+			f.z);
+	return s * colliders[i].c1.w + beyond;
+}
+
 // --- analytic collider SDF (same as the dense path) ---
 
 vec3 _qrot(vec4 q, vec3 v) {
@@ -239,6 +272,13 @@ float collider_sdf(int i, vec3 wp) {
 	}
 	vec4 q = colliders[i].c3;
 	vec3 p = _qrot(vec4(-q.xyz, q.w), wp - ctr);
+	if (type == 4) {
+		return collider_baked(i, p);
+	}
+	if (type == 5) { // cylinder along local Y
+		vec2 d = vec2(length(p.xz) - colliders[i].c1.x, abs(p.y) - colliders[i].c1.y);
+		return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
+	}
 	if (type == 1) {
 		vec3 d = abs(p) - colliders[i].c1.xyz;
 		return length(max(d, 0.0)) + min(max(d.x, max(d.y, d.z)), 0.0);

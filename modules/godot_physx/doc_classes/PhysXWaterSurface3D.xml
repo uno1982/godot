@@ -65,6 +65,12 @@
 				The fetch (meters of open water the wind blows over) the wave spectrum actually uses: [member fetch] when it's above 0, otherwise the automatic value -- the longest side of the [member surface_mesh] footprint for enclosed water, or 100 km (a fully developed open sea) for the plain square.
 			</description>
 		</method>
+		<method name="is_ripple_resting" qualifiers="const">
+			<return type="bool" />
+			<description>
+				[code]true[/code] while the ripple layer is resting: [member ripple_rest_threshold] is set, it stayed flat for a few readbacks and nothing has disturbed it since, so its solve is skipped (see [member ripple_rest_threshold]).
+			</description>
+		</method>
 		<method name="is_wet" qualifiers="const">
 			<return type="bool" />
 			<param index="0" name="world_pos" type="Vector3" />
@@ -191,6 +197,9 @@
 		<member name="ripple_amplitude" type="float" setter="set_ripple_amplitude" getter="get_ripple_amplitude" default="1.0">
 			Multiplier on the ripple displacement driven by submitted floating-body proxies and impulses. Set lower for small splashes and wakes in a pool; this does not scale the FFT ocean waves.
 		</member>
+		<member name="ripple_rest_threshold" type="float" setter="set_ripple_rest_threshold" getter="get_ripple_rest_threshold" default="0.0">
+			Lets the ripple layer rest. Above [code]0[/code], once the ripple height stayed within this many meters of [member water_level] everywhere for a few steps, with no sphere (strength not zero) or impulse submitted, the ripple solve, its blit and its readback are skipped until the next [method submit_sphere] / [method submit_impulse]. The ocean, foam and swash keep running. [code]0[/code] solves every step.
+		</member>
 		<member name="seabed_collision_mask" type="int" setter="set_seabed_collision_mask" getter="get_seabed_collision_mask" default="1">
 			Physics layers [member seabed_from_floor]'s rays hit. Only static bodies count; a rigid or character body in the way is skipped.
 		</member>
@@ -205,6 +214,9 @@
 		</member>
 		<member name="shore_undertow" type="float" setter="set_shore_undertow" getter="get_shore_undertow" default="0.3">
 			Steady seaward drift (m/s) of the shore foam. The foam moves with the water along the seabed slope at the shallow-water particle velocity -- pushed up the beach under each arriving crest, drawn back between crests (with the local wave height capped by depth-limited breaking) -- and this undertow drags it back out into the water on top of that, so the sheet surges in and slides back out in streaks. [code]0[/code] leaves it rocking in place.
+		</member>
+		<member name="step_mode" type="int" setter="set_step_mode" getter="get_step_mode" enum="PhysXWaterSurface3D.StepMode" default="0">
+			When the surface advances. [constant STEP_MODE_PER_TICK] runs the whole GPU step every physics tick. [constant STEP_MODE_PER_FRAME] records each physics tick (its delta and the spheres / impulses submitted so far) and runs them in ONE step per rendered frame: the ripple layer still takes one sub-step per tick with that tick's bodies (the same ripples), while the FFT ocean (evaluated at the summed time -- the same waves), foam, swash, the texture blits and the height readbacks run once. When the game runs several physics ticks per frame (a high tick rate, or a physics catch-up), this keeps the surface's cost at one step per frame.
 		</member>
 		<member name="surface_mesh" type="Mesh" setter="set_surface_mesh" getter="get_surface_mesh">
 			Optional water outline: any flat [Mesh] (node-local) whose up-facing triangles' X/Z footprint is the water -- e.g. a disc baked from a [CSGCylinder3D], or a shape modeled elsewhere. Its own vertices are not displaced directly; the footprint is resampled into an even grid clipped to the outline, so a coarse or fan-triangulated mesh still gets vertices to animate everywhere.
@@ -241,6 +253,12 @@
 		</constant>
 		<constant name="NORMAL_MODE_PER_VERTEX" value="1" enum="NormalMode">
 			Normals and foam per vertex from finite differences of the displaced mesh.
+		</constant>
+		<constant name="STEP_MODE_PER_TICK" value="0" enum="StepMode">
+			The surface steps every physics tick.
+		</constant>
+		<constant name="STEP_MODE_PER_FRAME" value="1" enum="StepMode">
+			The surface steps once per rendered frame for all of that frame's physics ticks.
 		</constant>
 	</constants>
 </class>

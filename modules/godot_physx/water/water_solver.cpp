@@ -740,6 +740,7 @@ void WaterSolverGPU::rt_clear_ripples(Ref<WaterSolverGPU> p_self) {
 	rd->buffer_clear(buf_state_a, 0, cells * 4 * sizeof(float));
 	rd->buffer_clear(buf_state_b, 0, cells * 4 * sizeof(float));
 	rd->buffer_clear(buf_height, 0, cells * sizeof(float));
+	ripple_quiet.set(0);
 }
 
 void WaterSolverGPU::rt_build(Ref<WaterSolverGPU> p_self, int p_grid_resolution, Vector2 p_domain_size, int p_ocean_grid_resolution, Vector2 p_ocean_domain_size, float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_gravity, bool p_caustics_enabled, PackedFloat32Array p_cell_depth, float p_depth, float p_shallow_fade_depth, float p_fetch) {
@@ -748,6 +749,7 @@ void WaterSolverGPU::rt_build(Ref<WaterSolverGPU> p_self, int p_grid_resolution,
 	}
 	built.set_to(false);
 	_rt_free_buffers();
+	ripple_quiet.set(0);
 	grid_resolution = p_grid_resolution;
 	domain_size = p_domain_size;
 	ocean_grid_resolution = p_ocean_grid_resolution;
@@ -765,63 +767,96 @@ void WaterSolverGPU::rt_build(Ref<WaterSolverGPU> p_self, int p_grid_resolution,
 	built.set_to(true);
 }
 
-void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, double p_delta, float p_depth, float p_damping, float p_gravity, float p_water_level, float p_ripple_amplitude, PackedFloat32Array p_spheres, PackedFloat32Array p_impulses) {
-	if (rd == nullptr || !shaders_ok || buf_params.is_null()) {
+void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, PackedFloat64Array p_deltas, float p_depth, float p_damping, float p_gravity, float p_water_level, float p_ripple_amplitude, PackedFloat32Array p_spheres, PackedInt32Array p_sphere_counts, PackedFloat32Array p_impulses, PackedInt32Array p_impulse_counts, bool p_rest, int64_t p_serial, bool p_disturbed, float p_rest_threshold) {
+	if (rd == nullptr || !shaders_ok || buf_params.is_null() || p_deltas.is_empty()) {
 		return;
 	}
 	const int n = grid_resolution;
 	const int on = ocean_grid_resolution;
+	ripple_rest_threshold = p_rest_threshold;
+	ripple_water_level = p_water_level;
+	if (p_disturbed) {
+		ripple_disturbed_serial = p_serial;
+		ripple_quiet.set(0);
+	}
 
-	// Ripple layer params + body data.
-	{
-		Vector<uint8_t> b;
-		b.resize(PARAMS_BYTES);
-		uint8_t *w = b.ptrw();
-		auto put_f = [&](int off, float v) { memcpy(w + off, &v, sizeof(float)); };
-		auto put_i = [&](int off, int32_t v) { memcpy(w + off, &v, sizeof(int32_t)); };
-		put_f(0, domain_size.x * 0.5f);
-		put_f(4, domain_size.y * 0.5f);
-		put_f(8, p_depth);
-		put_f(12, (float)p_delta);
-		put_f(16, p_damping);
-		put_f(20, p_gravity);
-		put_f(24, domain_size.x / (float)n);
-		put_f(28, p_water_level);
-		put_i(32, n);
-		put_i(36, p_spheres.size() / 4);
-		put_i(40, p_impulses.size() / 4);
-		put_i(44, 0);
-		put_f(48, p_ripple_amplitude);
-		put_f(52, 0.0f);
-		put_f(56, 0.0f);
-		put_f(60, 0.0f);
-		rd->buffer_update(buf_params, 0, PARAMS_BYTES, b.ptr());
+	// Ripple layer: one sub-step per tick, each with that tick's dt and bodies (the wave equation's coefficient is
+	// clamped per step, so one big dt would not be the same water). The sphere / impulse buffers are re-uploaded only
+	// when a tick's data differs from the one before.
+	double step_delta = 0.0; // the summed dt of every tick in this call
+	const int ticks = p_deltas.size();
+	if (!p_rest) {
+		int sphere_at = 0;
+		int impulse_at = 0;
+		const float *prev_spheres = nullptr;
+		int prev_sphere_count = -1;
+		for (int t = 0; t < ticks; t++) {
+			const float dt = (float)p_deltas[t];
+			const int sphere_count = t < p_sphere_counts.size() ? p_sphere_counts[t] : 0;
+			const int impulse_count = t < p_impulse_counts.size() ? p_impulse_counts[t] : 0;
+			const float *spheres = p_spheres.ptr() + sphere_at * 4;
+			const float *impulses = p_impulses.ptr() + impulse_at * 4;
+			sphere_at += sphere_count;
+			impulse_at += impulse_count;
+			{
+				Vector<uint8_t> b;
+				b.resize(PARAMS_BYTES);
+				uint8_t *w = b.ptrw();
+				auto put_f = [&](int off, float v) { memcpy(w + off, &v, sizeof(float)); };
+				auto put_i = [&](int off, int32_t v) { memcpy(w + off, &v, sizeof(int32_t)); };
+				put_f(0, domain_size.x * 0.5f);
+				put_f(4, domain_size.y * 0.5f);
+				put_f(8, p_depth);
+				put_f(12, dt);
+				put_f(16, p_damping);
+				put_f(20, p_gravity);
+				put_f(24, domain_size.x / (float)n);
+				put_f(28, p_water_level);
+				put_i(32, n);
+				put_i(36, sphere_count);
+				put_i(40, impulse_count);
+				put_i(44, 0);
+				put_f(48, p_ripple_amplitude);
+				put_f(52, 0.0f);
+				put_f(56, 0.0f);
+				put_f(60, 0.0f);
+				rd->buffer_update(buf_params, 0, PARAMS_BYTES, b.ptr());
+			}
+			const bool same_spheres = sphere_count > 0 && prev_sphere_count == sphere_count && memcmp(prev_spheres, spheres, sphere_count * 4 * sizeof(float)) == 0;
+			if (sphere_count > 0 && !same_spheres) {
+				Vector<uint8_t> sb;
+				sb.resize(MAX_SPHERES * 4 * sizeof(float));
+				memset(sb.ptrw(), 0, sb.size());
+				memcpy(sb.ptrw(), spheres, MIN((size_t)sphere_count * 4 * sizeof(float), (size_t)sb.size()));
+				rd->buffer_update(buf_spheres, 0, sb.size(), sb.ptr());
+			}
+			prev_spheres = spheres;
+			prev_sphere_count = sphere_count;
+			if (impulse_count > 0) { // (the shader reads only NUM_IMPULSES entries)
+				Vector<uint8_t> ib;
+				ib.resize(MAX_IMPULSES * 4 * sizeof(float));
+				memset(ib.ptrw(), 0, ib.size());
+				memcpy(ib.ptrw(), impulses, MIN((size_t)impulse_count * 4 * sizeof(float), (size_t)ib.size()));
+				rd->buffer_update(buf_impulses, 0, ib.size(), ib.ptr());
+			}
+			RD::ComputeListID cl = rd->compute_list_begin();
+			rd->compute_list_bind_compute_pipeline(cl, pipeline_ripple);
+			rd->compute_list_bind_uniform_set(cl, a_is_current ? uset_atob : uset_btoa, 0);
+			rd->compute_list_dispatch(cl, groups_for(n), groups_for(n), 1);
+			rd->compute_list_end();
+			a_is_current = !a_is_current;
+		}
 	}
-	{
-		Vector<uint8_t> sb;
-		sb.resize(MAX_SPHERES * 4 * sizeof(float));
-		memset(sb.ptrw(), 0, sb.size());
-		memcpy(sb.ptrw(), p_spheres.ptr(), MIN((size_t)p_spheres.size() * sizeof(float), (size_t)sb.size()));
-		rd->buffer_update(buf_spheres, 0, sb.size(), sb.ptr());
+	for (int t = 0; t < ticks; t++) {
+		step_delta += p_deltas[t];
 	}
-	{
-		Vector<uint8_t> ib;
-		ib.resize(MAX_IMPULSES * 4 * sizeof(float));
-		memset(ib.ptrw(), 0, ib.size());
-		memcpy(ib.ptrw(), p_impulses.ptr(), MIN((size_t)p_impulses.size() * sizeof(float), (size_t)ib.size()));
-		rd->buffer_update(buf_impulses, 0, ib.size(), ib.ptr());
-	}
-	{
-		RD::ComputeListID cl = rd->compute_list_begin();
-		rd->compute_list_bind_compute_pipeline(cl, pipeline_ripple);
-		rd->compute_list_bind_uniform_set(cl, a_is_current ? uset_atob : uset_btoa, 0);
-		rd->compute_list_dispatch(cl, groups_for(n), groups_for(n), 1);
-		rd->compute_list_end();
-	}
-	a_is_current = !a_is_current;
 
-	// FFT ocean layer: evolve, then the Stockham butterfly passes.
-	ocean_time_accum += p_delta;
+	// FFT ocean layer: evolve, then the Stockham butterfly passes. The spectrum is evaluated AT ocean_time_accum (no
+	// state carried between steps), so one evaluation after N ticks is the same ocean as the last of N; the clock adds
+	// each tick's dt in order, exactly as one call per tick did.
+	for (int t = 0; t < ticks; t++) {
+		ocean_time_accum += p_deltas[t];
+	}
 	{
 		Vector<uint8_t> eb;
 		eb.resize(OCEAN_EVOLVE_PARAMS_BYTES);
@@ -886,8 +921,9 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, double p_delta, float p
 	// Always lands in fft_b (and fft_d, fft_f, fft_h) -- 2*log2(N) passes is
 	// always even (see the header's note).
 
-	// Blit both layers into their real RD textures for zero-copy rendering.
-	{
+	// Blit both layers into their real RD textures for zero-copy rendering (a resting ripple layer's texture already
+	// holds its last height).
+	if (!p_rest) {
 		RD::ComputeListID cl = rd->compute_list_begin();
 		rd->compute_list_bind_compute_pipeline(cl, pipeline_blit_ripple);
 		rd->compute_list_bind_uniform_set(cl, uset_blit_ripple, 0);
@@ -903,7 +939,7 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, double p_delta, float p
 	}
 	// Persistent foam: inject where the surface folds, fade the rest.
 	{
-		float fp[4] = { Math::exp(-(float)p_delta / MAX(foam_persistence, 0.01f)), foam_choppiness, foam_threshold, 0.25f };
+		float fp[4] = { Math::exp(-(float)step_delta / MAX(foam_persistence, 0.01f)), foam_choppiness, foam_threshold, 0.25f };
 		int32_t fr[4] = { on, foam_enabled ? 1 : 0, 0, 0 };
 		Vector<uint8_t> fb;
 		fb.resize(FOAM_PARAMS_BYTES);
@@ -920,9 +956,9 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, double p_delta, float p
 	// than the whitecaps.
 	{
 		float sp[12] = {
-			Math::exp(-(float)p_delta / MAX(foam_persistence * 1.5f, 0.01f)), shore_foam_band, 0.2f, p_water_level,
+			Math::exp(-(float)step_delta / MAX(foam_persistence * 1.5f, 0.01f)), shore_foam_band, 0.2f, p_water_level,
 			domain_size.x, domain_size.y, ocean_domain_size.x, ocean_domain_size.y,
-			(float)p_delta, domain_size.x / (float)n, shore_undertow, p_gravity
+			(float)step_delta, domain_size.x / (float)n, shore_undertow, p_gravity
 		};
 		int32_t sr[4] = { n, (foam_enabled && shore_foam_band > 0.0f) ? 1 : 0, 0, 0 };
 		Vector<uint8_t> sb;
@@ -941,7 +977,7 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, double p_delta, float p
 	}
 	// Swash run-up and wet sand, on the ripple grid.
 	{
-		const float dt = (float)p_delta;
+		const float dt = (float)step_delta;
 		float wp[12] = {
 			dt, swash_run_up, swash_drain_speed, Math::exp(-dt / MAX(wet_sand_dry_time, 0.05f)),
 			domain_size.x, domain_size.y, ocean_domain_size.x, ocean_domain_size.y,
@@ -967,12 +1003,15 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, double p_delta, float p
 		rd->submit();
 		rd->sync();
 		MutexLock lock(cache_mtx);
-		ripple_cache_time = ocean_time_accum;
 		ocean_cache_time = ocean_time_accum;
-		Vector<uint8_t> rraw = rd->buffer_get_data(buf_height, 0, n * n * sizeof(float));
-		ripple_height_cache.resize(n * n);
-		if (rraw.size() > 0) {
-			memcpy(ripple_height_cache.ptrw(), rraw.ptr(), MIN((size_t)rraw.size(), (size_t)(n * n * sizeof(float))));
+		if (!p_rest) {
+			ripple_cache_time = ocean_time_accum;
+			Vector<uint8_t> rraw = rd->buffer_get_data(buf_height, 0, n * n * sizeof(float));
+			ripple_height_cache.resize(n * n);
+			if (rraw.size() > 0) {
+				memcpy(ripple_height_cache.ptrw(), rraw.ptr(), MIN((size_t)rraw.size(), (size_t)(n * n * sizeof(float))));
+			}
+			_rt_note_ripple_peak(ripple_height_cache.ptr(), ripple_height_cache.size(), p_serial);
 		}
 		Vector<uint8_t> oraw = rd->buffer_get_data(buf_fft_b, 0, on * on * 2 * sizeof(float));
 		ocean_height_cache.resize(on * on);
@@ -1006,7 +1045,9 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, double p_delta, float p
 	// lands a few frames later on the render thread and refreshes the
 	// caches; each callback binds a Ref to us so we survive the wait, same
 	// convention as every other async readback in this module.
-	rd->buffer_get_data_async(buf_height, callable_mp(this, &WaterSolverGPU::rt_on_ripple_height).bind(ocean_time_accum, p_self), 0, n * n * sizeof(float));
+	if (!p_rest) {
+		rd->buffer_get_data_async(buf_height, callable_mp(this, &WaterSolverGPU::rt_on_ripple_height).bind(ocean_time_accum, p_self, p_serial), 0, n * n * sizeof(float));
+	}
 	rd->buffer_get_data_async(buf_fft_b, callable_mp(this, &WaterSolverGPU::rt_on_ocean_height).bind(ocean_time_accum, p_self), 0, on * on * 2 * sizeof(float));
 	rd->buffer_get_data_async(buf_fft_d, callable_mp(this, &WaterSolverGPU::rt_on_ocean_dz).bind(p_self), 0, on * on * 2 * sizeof(float));
 }
@@ -1073,7 +1114,7 @@ void WaterSolverGPU::rt_render_caustics(Ref<WaterSolverGPU> p_self, Vector3 p_su
 	rd->draw_list_end();
 }
 
-void WaterSolverGPU::rt_on_ripple_height(const PackedByteArray &p_data, double p_time, Ref<WaterSolverGPU> p_self) {
+void WaterSolverGPU::rt_on_ripple_height(const PackedByteArray &p_data, double p_time, Ref<WaterSolverGPU> p_self, int64_t p_serial) {
 	MutexLock lock(cache_mtx);
 	ripple_cache_time = p_time;
 	const int n = grid_resolution;
@@ -1081,7 +1122,27 @@ void WaterSolverGPU::rt_on_ripple_height(const PackedByteArray &p_data, double p
 	if (p_data.size() > 0) {
 		memcpy(ripple_height_cache.ptrw(), p_data.ptr(), MIN((size_t)p_data.size(), (size_t)(n * n * sizeof(float))));
 	}
+	_rt_note_ripple_peak(ripple_height_cache.ptr(), MIN((int)(p_data.size() / sizeof(float)), n * n), p_serial);
 	height_ready.set();
+}
+
+void WaterSolverGPU::_rt_note_ripple_peak(const float *p_heights, int p_count, int64_t p_serial) {
+	if (ripple_rest_threshold <= 0.0f || p_heights == nullptr) {
+		return;
+	}
+	if (p_serial <= ripple_disturbed_serial || p_count <= 0) {
+		ripple_quiet.set(0); // taken before / at the last disturbance: says nothing about the water after it
+		return;
+	}
+	float peak = 0.0f;
+	for (int i = 0; i < p_count; i++) {
+		peak = MAX(peak, Math::abs(p_heights[i] - ripple_water_level));
+	}
+	if (peak < ripple_rest_threshold) {
+		ripple_quiet.increment();
+	} else {
+		ripple_quiet.set(0);
+	}
 }
 
 void WaterSolverGPU::rt_on_ocean_height(const PackedByteArray &p_data, double p_time, Ref<WaterSolverGPU> p_self) {
@@ -1216,6 +1277,7 @@ void WaterSolver::reinit_spectrum(float p_wind_speed, Vector2 p_wind_direction, 
 }
 
 void WaterSolver::recenter(Vector2 p_grid_center) {
+	flush_ticks(); // ticks recorded so far ran on the old centre (their bodies are relative to it)
 	settings.grid_center = p_grid_center;
 	for (SphereSlot &s : sphere_slots) {
 		s = SphereSlot();
@@ -1228,6 +1290,9 @@ void WaterSolver::recenter(Vector2 p_grid_center) {
 }
 
 void WaterSolver::configure(const Settings &p_settings) {
+	flush_ticks(); // the old surface takes the ticks it already had (the ocean clock survives a rebuild)
+	_clear_queue();
+	ripple_resting = false;
 	settings = p_settings;
 	for (SphereSlot &s : sphere_slots) {
 		s = SphereSlot();
@@ -1265,13 +1330,59 @@ PackedFloat32Array WaterSolver::_pack_impulses() const {
 }
 
 void WaterSolver::step(double p_delta) {
+	queue_tick(p_delta);
+	flush_ticks();
+}
+
+void WaterSolver::queue_tick(double p_delta) {
 	if (!is_available()) {
 		return;
 	}
-	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_step).bind(gpu, p_delta, settings.depth, settings.damping, settings.gravity, settings.water_level, settings.ripple_amplitude, _pack_spheres(), _pack_impulses()));
-	// One-shot: consumed by exactly one step, then cleared. Persistent
+	const PackedFloat32Array spheres = _pack_spheres();
+	const PackedFloat32Array impulses = _pack_impulses();
+	queued_deltas.push_back(p_delta);
+	queued_spheres.append_array(spheres);
+	queued_sphere_counts.push_back(spheres.size() / 4);
+	queued_impulses.append_array(impulses);
+	queued_impulse_counts.push_back(impulses.size() / 4);
+	if (!impulses.is_empty()) {
+		queued_disturbed = true;
+	}
+	for (int i = 3; i < spheres.size(); i += 4) {
+		if (spheres[i] != 0.0f) {
+			queued_disturbed = true;
+			break;
+		}
+	}
+	// One-shot: consumed by exactly one tick, then cleared. Persistent
 	// sphere proxies stay until explicitly cleared/overwritten by the caller.
 	pending_impulses.clear();
+	if (queued_deltas.size() >= MAX_QUEUED_TICKS) {
+		flush_ticks();
+	}
+}
+
+void WaterSolver::flush_ticks() {
+	if (queued_deltas.is_empty()) {
+		return;
+	}
+	if (!is_available()) {
+		_clear_queue();
+		return;
+	}
+	step_serial++;
+	ripple_resting = rest_threshold > 0.0f && !queued_disturbed && gpu->ripple_quiet.get() >= REST_QUIET_READBACKS;
+	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_step).bind(gpu, queued_deltas, settings.depth, settings.damping, settings.gravity, settings.water_level, settings.ripple_amplitude, queued_spheres, queued_sphere_counts, queued_impulses, queued_impulse_counts, ripple_resting, step_serial, queued_disturbed, rest_threshold));
+	_clear_queue();
+}
+
+void WaterSolver::_clear_queue() {
+	queued_deltas.clear();
+	queued_spheres.clear();
+	queued_sphere_counts.clear();
+	queued_impulses.clear();
+	queued_impulse_counts.clear();
+	queued_disturbed = false;
 }
 
 void WaterSolver::submit_sphere(uint64_t p_owner, const Vector3 &p_world_pos, float p_radius, float p_strength) {

@@ -653,6 +653,14 @@ void PhysXWaterSurface3D::_bind_methods() {
 	BIND_ENUM_CONSTANT(NORMAL_MODE_PER_PIXEL);
 	BIND_ENUM_CONSTANT(NORMAL_MODE_PER_VERTEX);
 
+	ClassDB::bind_method(D_METHOD("set_step_mode", "mode"), &PhysXWaterSurface3D::set_step_mode);
+	ClassDB::bind_method(D_METHOD("get_step_mode"), &PhysXWaterSurface3D::get_step_mode);
+	ClassDB::bind_method(D_METHOD("set_ripple_rest_threshold", "threshold"), &PhysXWaterSurface3D::set_ripple_rest_threshold);
+	ClassDB::bind_method(D_METHOD("get_ripple_rest_threshold"), &PhysXWaterSurface3D::get_ripple_rest_threshold);
+	ClassDB::bind_method(D_METHOD("is_ripple_resting"), &PhysXWaterSurface3D::is_ripple_resting);
+	BIND_ENUM_CONSTANT(STEP_MODE_PER_TICK);
+	BIND_ENUM_CONSTANT(STEP_MODE_PER_FRAME);
+
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "surface_mesh", PROPERTY_HINT_RESOURCE_TYPE, "Mesh"), "set_surface_mesh", "get_surface_mesh");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR2, "domain_size"), "set_domain_size", "get_domain_size");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "grid_resolution"), "set_grid_resolution", "get_grid_resolution");
@@ -660,6 +668,8 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "water_level"), "set_water_level", "get_water_level");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "damping"), "set_damping", "get_damping");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ripple_amplitude", PROPERTY_HINT_RANGE, "0,2,0.01,or_greater"), "set_ripple_amplitude", "get_ripple_amplitude");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "step_mode", PROPERTY_HINT_ENUM, "Per Tick,Per Frame"), "set_step_mode", "get_step_mode");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ripple_rest_threshold", PROPERTY_HINT_RANGE, "0,0.05,0.0001,or_greater,suffix:m"), "set_ripple_rest_threshold", "get_ripple_rest_threshold");
 
 	ADD_GROUP("Seabed", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "seabed_from_floor"), "set_seabed_from_floor", "get_seabed_from_floor");
@@ -694,6 +704,21 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "caustics_enabled"), "set_caustics_enabled", "get_caustics_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "caustics_sun_direction"), "set_caustics_sun_direction", "get_caustics_sun_direction");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "caustics_reference_depth", PROPERTY_HINT_RANGE, "0.1,50,0.1,or_greater"), "set_caustics_reference_depth", "get_caustics_reference_depth");
+}
+
+void PhysXWaterSurface3D::set_step_mode(StepMode p_mode) {
+	if (p_mode == step_mode) {
+		return;
+	}
+	step_mode = p_mode;
+	if (step_mode == STEP_MODE_PER_TICK && solver.has_queued_ticks()) {
+		_frame_update(); // the ticks recorded so far still run
+	}
+}
+
+void PhysXWaterSurface3D::set_ripple_rest_threshold(float p_threshold) {
+	ripple_rest_threshold = MAX(p_threshold, 0.0f);
+	solver.set_rest_threshold(ripple_rest_threshold);
 }
 
 void PhysXWaterSurface3D::set_domain_size(Vector2 p_size) {
@@ -953,6 +978,9 @@ void PhysXWaterSurface3D::_notification(int p_what) {
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			if (!Engine::get_singleton()->is_editor_hint()) {
+				if (step_mode == STEP_MODE_PER_FRAME) {
+					_frame_update();
+				}
 				_update_mesh_offset();
 			}
 		} break;
@@ -1219,7 +1247,9 @@ void PhysXWaterSurface3D::_update(double p_delta) {
 		return;
 	}
 	water_time += p_delta;
-	if (water_material.is_valid()) {
+	if (step_mode == STEP_MODE_PER_FRAME) {
+		water_time_dirty = true; // the material gets it once, in _frame_update()
+	} else if (water_material.is_valid()) {
 		// Wrapped so float precision holds up in long sessions.
 		water_material->set_shader_parameter("water_time", (float)Math::fmod(water_time, 3600.0));
 	}
@@ -1232,7 +1262,30 @@ void PhysXWaterSurface3D::_update(double p_delta) {
 	if (!solver.has_device()) {
 		return;
 	}
+	if (step_mode == STEP_MODE_PER_FRAME) {
+		// Bodies / impulses submitted up to this tick are snapshotted with it; the GPU work waits for the frame.
+		solver.queue_tick(p_delta); // no-ops until solver.is_available(), like step()
+		return;
+	}
 	solver.step(p_delta); // no-ops internally until solver.is_available() (see water_solver.cpp)
+	_after_step();
+}
+
+void PhysXWaterSurface3D::_frame_update() {
+	if (water_time_dirty) {
+		water_time_dirty = false;
+		if (water_material.is_valid()) {
+			water_material->set_shader_parameter("water_time", (float)Math::fmod(water_time, 3600.0));
+		}
+	}
+	if (!solver.has_queued_ticks()) {
+		return; // no physics tick since the last frame: nothing moved
+	}
+	solver.flush_ticks();
+	_after_step();
+}
+
+void PhysXWaterSurface3D::_after_step() {
 	if (!textures_bound && solver.is_available()) {
 		_bind_textures();
 	}

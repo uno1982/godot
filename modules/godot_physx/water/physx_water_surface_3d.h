@@ -83,6 +83,19 @@ public:
 		NORMAL_MODE_PER_VERTEX,
 	};
 
+	// When the surface advances: every physics tick (each tick posts the whole GPU step -- ripple solve, FFT, blits,
+	// foam, readbacks), or once per rendered frame for all of that frame's ticks (the ripple layer still sub-steps
+	// per tick with each tick's bodies; the rest runs once with the summed dt -- see WaterSolverGPU::rt_step).
+	enum StepMode {
+		STEP_MODE_PER_TICK,
+		STEP_MODE_PER_FRAME,
+	};
+	void set_step_mode(StepMode p_mode);
+	StepMode get_step_mode() const { return step_mode; }
+	void set_ripple_rest_threshold(float p_threshold);
+	float get_ripple_rest_threshold() const { return ripple_rest_threshold; }
+	bool is_ripple_resting() const { return solver.is_ripple_resting(); }
+
 	void set_domain_size(Vector2 p_size);
 	Vector2 get_domain_size() const { return domain_size; }
 	void set_grid_resolution(int p_n);
@@ -248,6 +261,9 @@ public:
 
 private:
 	WaterSolver solver;
+	StepMode step_mode = STEP_MODE_PER_TICK;
+	float ripple_rest_threshold = 0.0f;
+	bool water_time_dirty = false; // per-frame mode: water_time advanced since the material last got it
 	// NOT cached from immediately after configure() -- configure() dispatches
 	// asynchronously (a render-thread post, see water_solver.h), so
 	// solver.is_available() only flips true a frame or two later. _update()
@@ -381,7 +397,9 @@ private:
 	Ref<Mesh> _build_footprint_mesh(const Vector<Vector2> &p_tris, const Rect2 &p_bounds, int p_cells) const;
 	void _bind_textures();
 	void _refresh_cpu_cache();
-	void _update(double p_delta);
+	void _update(double p_delta); // one physics tick
+	void _frame_update(); // per-frame mode: the frame's ticks in one step
+	void _after_step();
 	// p_repeat: wrap around instead of clamping at the edge (the FFT ocean is
 	// periodic).
 	float _bilinear_sample(const Vector<float> &p_grid, int p_n, Vector2 p_domain, float p_world_x, float p_world_z, bool p_repeat = false) const;
@@ -392,3 +410,4 @@ private:
 };
 
 VARIANT_ENUM_CAST(PhysXWaterSurface3D::NormalMode);
+VARIANT_ENUM_CAST(PhysXWaterSurface3D::StepMode);

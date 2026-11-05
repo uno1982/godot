@@ -61,6 +61,7 @@ class PhysXWaterWake3D : public Node3D {
 	float damping = 0.25f;
 	float border_damping = 8.0f;
 	float hull_length = 0.0f; // 0 = from the sibling PhysXBuoyancy3D's sample points
+	float hull_offset = 0.0f; // with hull_length: the hull's centre along local Z
 	float hull_beam = 0.0f;
 	PackedFloat32Array hull_profile; // 8 half-beam fractions bow -> stern (empty = a box): a tapered hull's foam + dip
 	int source_count = 5;
@@ -69,7 +70,9 @@ class PhysXWaterWake3D : public Node3D {
 	float reference_speed = 6.0f;
 	float shore_grid_fade = 0.0f;
 	float bow_foam = 8.0f; // foam churned in per second along the hull's sides at the bow, at reference_speed
-	float propeller_foam = 1.0f; // per second at full throttle (needs a sibling PhysXBoat3D)
+	float propeller_foam = 1.0f; // per second at full throttle
+	float propeller_thrust = 0.0f; // 0..1 from a script, for a body without a sibling PhysXBoat3D
+	Vector3 propeller_position; // of propeller_thrust, local to the body
 	float foam_persistence = 4.0f;
 	float foam_slope = 0.08f;
 	float foam_slope_gain = 4.0f;
@@ -110,6 +113,8 @@ public:
 	float get_border_damping() const { return border_damping; }
 	void set_hull_length(float p_length) { hull_length = MAX(p_length, 0.0f); }
 	float get_hull_length() const { return hull_length; }
+	void set_hull_offset(float p_offset) { hull_offset = p_offset; }
+	float get_hull_offset() const { return hull_offset; }
 	void set_hull_beam(float p_beam) { hull_beam = MAX(p_beam, 0.0f); }
 	float get_hull_beam() const { return hull_beam; }
 	void set_hull_profile(const PackedFloat32Array &p_profile) { hull_profile = p_profile.size() == 8 ? p_profile : PackedFloat32Array(); }
@@ -128,6 +133,10 @@ public:
 	float get_bow_foam() const { return bow_foam; }
 	void set_propeller_foam(float p_foam) { propeller_foam = MAX(p_foam, 0.0f); }
 	float get_propeller_foam() const { return propeller_foam; }
+	void set_propeller_thrust(float p_thrust) { propeller_thrust = CLAMP(p_thrust, 0.0f, 1.0f); }
+	float get_propeller_thrust() const { return propeller_thrust; }
+	void set_propeller_position(const Vector3 &p_position) { propeller_position = p_position; }
+	Vector3 get_propeller_position() const { return propeller_position; }
 	void set_foam_persistence(float p_seconds) { foam_persistence = MAX(p_seconds, 0.05f); }
 	float get_foam_persistence() const { return foam_persistence; }
 	void set_foam_slope(float p_slope) { foam_slope = MAX(p_slope, 0.0f); }

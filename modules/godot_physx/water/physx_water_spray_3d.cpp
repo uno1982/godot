@@ -51,6 +51,8 @@ void PhysXWaterSpray3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_stern_emitters"), &PhysXWaterSpray3D::get_stern_emitters);
 	ClassDB::bind_method(D_METHOD("set_slam_emitters", "paths"), &PhysXWaterSpray3D::set_slam_emitters);
 	ClassDB::bind_method(D_METHOD("get_slam_emitters"), &PhysXWaterSpray3D::get_slam_emitters);
+	ClassDB::bind_method(D_METHOD("set_propeller_thrust", "thrust"), &PhysXWaterSpray3D::set_propeller_thrust);
+	ClassDB::bind_method(D_METHOD("get_propeller_thrust"), &PhysXWaterSpray3D::get_propeller_thrust);
 	ClassDB::bind_method(D_METHOD("set_start_speed", "speed"), &PhysXWaterSpray3D::set_start_speed);
 	ClassDB::bind_method(D_METHOD("get_start_speed"), &PhysXWaterSpray3D::get_start_speed);
 	ClassDB::bind_method(D_METHOD("set_reference_speed", "speed"), &PhysXWaterSpray3D::set_reference_speed);
@@ -87,6 +89,7 @@ void PhysXWaterSpray3D::_bind_methods() {
 	ADD_GROUP("Emitters", "");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "bow_emitters", PROPERTY_HINT_TYPE_STRING, emitter_list_hint), "set_bow_emitters", "get_bow_emitters");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "stern_emitters", PROPERTY_HINT_TYPE_STRING, emitter_list_hint), "set_stern_emitters", "get_stern_emitters");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "propeller_thrust", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_propeller_thrust", "get_propeller_thrust");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "slam_emitters", PROPERTY_HINT_TYPE_STRING, emitter_list_hint), "set_slam_emitters", "get_slam_emitters");
 	ADD_GROUP("Speed", "");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "start_speed", PROPERTY_HINT_RANGE, "0,20,0.01,or_greater,suffix:m/s"), "set_start_speed", "get_start_speed");
@@ -347,12 +350,12 @@ void PhysXWaterSpray3D::_physics_step(double p_delta) {
 	const float bow_velocity = Math::lerp(slow_velocity_scale, 1.0f, MIN(forward_speed / reference_speed, 1.0f));
 	_update_collider(water, xf.origin, level, p_delta);
 
-	// Propeller churn, from a sibling PhysXBoat3D.
-	float churn = 0.0f;
+	// Propeller churn: the stronger of a script's thrust and a sibling PhysXBoat3D's.
+	float churn = propeller_thrust;
 	for (int i = 0; i < body->get_child_count(); i++) {
 		const PhysXBoat3D *boat = Object::cast_to<PhysXBoat3D>(body->get_child(i));
 		if (boat != nullptr && boat->get_max_thrust() > 0.0f) {
-			churn = MIN(Math::abs(boat->get_applied_thrust()) / boat->get_max_thrust(), 1.0f);
+			churn = MAX(churn, MIN(Math::abs(boat->get_applied_thrust()) / boat->get_max_thrust(), 1.0f));
 			break;
 		}
 	}

@@ -46,7 +46,7 @@ class RigidBody3D;
 // - bow_emitters spray while the hull moves through the water: rate and
 //   launch speed rise with forward speed, none where the hull is out of the
 //   water.
-// - stern_emitters spray with a sibling PhysXBoat3D's propeller thrust.
+// - stern_emitters spray with a sibling PhysXBoat3D's propeller thrust, or propeller_thrust from a script.
 // - slam_emitters fire once (restart) when the hull drops back onto the
 //   water fast enough, scaled with the impact.
 // Every tick the emitters are moved to the water surface under where they
@@ -104,6 +104,7 @@ private:
 	float start_speed = 1.5f;
 	float reference_speed = 6.0f;
 	float slow_velocity_scale = 0.4f;
+	float propeller_thrust = 0.0f; // 0..1 from a script, for a body without a sibling PhysXBoat3D
 	float submerge_depth = 0.25f;
 	float slam_speed = 1.5f;
 	float slam_full_speed = 4.0f;
@@ -164,6 +165,8 @@ public:
 	float get_reference_speed() const { return reference_speed; }
 	void set_slow_velocity_scale(float p_scale) { slow_velocity_scale = CLAMP(p_scale, 0.0f, 1.0f); }
 	float get_slow_velocity_scale() const { return slow_velocity_scale; }
+	void set_propeller_thrust(float p_thrust) { propeller_thrust = CLAMP(p_thrust, 0.0f, 1.0f); }
+	float get_propeller_thrust() const { return propeller_thrust; }
 	void set_submerge_depth(float p_depth) { submerge_depth = MAX(p_depth, 0.01f); }
 	float get_submerge_depth() const { return submerge_depth; }
 	void set_slam_speed(float p_speed) { slam_speed = MAX(p_speed, 0.0f); }

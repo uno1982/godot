@@ -96,6 +96,13 @@
 				The same as [method sample_height], but leaving out one [PhysXWaterWake3D]'s contribution (pass [code]null[/code] to leave out nothing). A boat that does its own buoyancy in a script should pass its own wake: otherwise it reads the dip and bow wave its hull pushes into the water and rides its own wake, sinking at the stern and pitching. Other boats' wakes are still included, so it still rocks on theirs. [PhysXBuoyancy3D] (and so [PhysXBoat3D]) already does this for a [PhysXWaterWake3D] that is another child of the same body.
 			</description>
 		</method>
+		<method name="sample_vertical_speed" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="world_pos" type="Vector3" />
+			<description>
+				How fast the surface above [param world_pos]'s XZ is rising, in meters per second (negative while it falls): the ripple and ocean layers' change between the last two readbacks, so it is as far behind the GPU simulation as [method sample_height]. Wakes are left out. Returns [code]0.0[/code] where [method is_wet] is [code]false[/code], and until two readbacks have landed.
+			</description>
+		</method>
 		<method name="set_sea_state">
 			<return type="void" />
 			<param index="0" name="wind_speed" type="float" />
@@ -138,6 +145,9 @@
 		</member>
 		<member name="choppiness" type="float" setter="set_choppiness" getter="get_choppiness" default="1.0">
 			Tessendorf horizontal displacement of the ocean layer: pulls the surface toward the wave crests so they sharpen and the troughs flatten, the way real wind waves look. [code]0[/code] is a pure height field; around [code]1[/code] is realistic, and much higher can fold the surface through itself. Fades out over the shallows with the rest of the ocean chop. Where the displacement folds the surface it also injects whitecap foam (see [member foam_threshold]). [method sample_height] accounts for the displacement.
+		</member>
+		<member name="cull_margin" type="float" setter="set_cull_margin" getter="get_cull_margin" default="0.0">
+			Extra room (m) added around the surface before it is culled. The surface's bounds already allow for 4 times [member wave_amplitude], or 2 m if that is larger. Raise this for a material that displaces the surface further, such as a whirlpool or a tsunami wall, if the water disappears at grazing angles. A larger margin draws the water more often when it is off-screen.
 		</member>
 		<member name="damping" type="float" setter="set_damping" getter="get_damping" default="0.08">
 			Damping (ALPHA) on the local ripple layer's wave equation -- higher settles disturbances faster.

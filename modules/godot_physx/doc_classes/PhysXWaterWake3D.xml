@@ -8,7 +8,7 @@
 		The wake is drawn by the water surface's material and included in [method PhysXWaterSurface3D.sample_height], so other floating bodies ride it -- everywhere there is water, past the surface's simulated square and over its shore ripple grid alike. The body's own [PhysXBuoyancy3D] doesn't float on its own wake. A surface draws up to four wakes.
 		It also carries foam, in two layers:
 		- [b]Hull foam[/b]: churned into a band just outside the hull along its sides, heaviest at the bow ([member bow_foam]), then pushed out sideways from the hull's line ([member foam_spread]) so it peels off into the two bands of a boat's wake. Steep wake waves break into it too ([member foam_slope]). Foam added with [method add_foam] drifts out with it.
-		- [b]Propeller foam[/b]: churned in behind a sibling [PhysXBoat3D]'s propeller with its thrust ([member propeller_foam]); it stays where it was made, a band down the middle.
+		- [b]Propeller foam[/b]: churned in behind a sibling [PhysXBoat3D]'s propeller with its thrust, or at [member propeller_position] with [member propeller_thrust] ([member propeller_foam]); it stays where it was made, a band down the middle.
 		Both fade over [member foam_persistence]. The grid has to cover the wake to keep it: a body turning tight circles needs a [member size] that holds the circle for its wake to close into a ring, and a [member foam_persistence] of about one lap.
 		Water with an interactive shore ripple grid can carry a body's ripples there instead (see [member PhysXBuoyancy3D.disturb_water]); [member shore_grid_fade] fades the wake out over that grid.
 	</description>
@@ -76,11 +76,20 @@
 		<member name="hull_length" type="float" setter="set_hull_length" getter="get_hull_length" default="0.0">
 			The hull's length (m) along its [code]+Z[/code]. [code]0[/code] takes it from the sibling [PhysXBuoyancy3D]'s sample points.
 		</member>
+		<member name="hull_offset" type="float" setter="set_hull_offset" getter="get_hull_offset" default="0.0">
+			Where the hull's centre sits along the body's [code]+Z[/code] (m), for a hull not centred on the body. Used only with a [member hull_length]; the sibling [PhysXBuoyancy3D]'s sample points already say where the hull is. Read when the wake is built, on its first physics tick.
+		</member>
 		<member name="hull_profile" type="PackedFloat32Array" setter="set_hull_profile" getter="get_hull_profile" default="PackedFloat32Array()">
 			The hull's shape seen from above: 8 half-beam fractions (0 to 1, of [member hull_beam]'s half) from bow to stern. The hull foam and the keel's dip follow it, so a pointed bow doesn't churn foam where there's no hull. Empty (the default) treats the hull as a box. Any other size than 8 is ignored.
 		</member>
 		<member name="propeller_foam" type="float" setter="set_propeller_foam" getter="get_propeller_foam" default="1.0">
-			Propeller foam churned in per second at full thrust, behind a sibling [PhysXBoat3D]'s propeller. [code]0[/code] turns it off.
+			Propeller foam churned in per second at full thrust, behind a sibling [PhysXBoat3D]'s propeller or [member propeller_position]. [code]0[/code] turns it off.
+		</member>
+		<member name="propeller_position" type="Vector3" setter="set_propeller_position" getter="get_propeller_position" default="Vector3(0, 0, 0)">
+			Where the propeller of [member propeller_thrust] is, local to the body. The foam starts just behind it.
+		</member>
+		<member name="propeller_thrust" type="float" setter="set_propeller_thrust" getter="get_propeller_thrust" default="0.0">
+			A propeller's thrust from a script, [code]0[/code] to [code]1[/code], for a body without a sibling [PhysXBoat3D]. With one, the stronger of the two is used.
 		</member>
 		<member name="reference_speed" type="float" setter="set_reference_speed" getter="get_reference_speed" default="6.0">
 			The speed (m/s) at which the hull dips to [member wake_depth] and churns [member bow_foam]; faster goes up to 1.5 times that.

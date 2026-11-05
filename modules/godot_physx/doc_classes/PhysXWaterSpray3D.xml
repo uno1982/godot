@@ -6,7 +6,7 @@
 	<description>
 		Add as a child of a [RigidBody3D] (a boat), and point its emitter lists at ordinary [GPUParticles3D] nodes: their look -- the droplet mesh, material, size, colour, gravity -- is authored in the editor as usual. This node only drives them from the body's motion, every physics tick:
 		- [member bow_emitters] spray while the hull moves through the water: their rate and launch speed rise with forward speed (from [member start_speed] to [member reference_speed]), and none where that part of the hull is out of the water ([member submerge_depth]).
-		- [member stern_emitters] spray with a sibling [PhysXBoat3D]'s propeller thrust.
+		- [member stern_emitters] spray with a sibling [PhysXBoat3D]'s propeller thrust, or [member propeller_thrust].
 		- [member slam_emitters] fire once (they should be [member GPUParticles3D.one_shot]) when the hull drops back onto the water faster than [member slam_speed], scaled with the impact, and emit [signal slammed].
 		Each emitter is moved to the water surface under where it was placed on the hull, level and turned with the hull's heading, so the spray leaves the water there whatever the hull's pitch and roll. An emitter's [member ParticleProcessMaterial.initial_velocity_min] and [member ParticleProcessMaterial.initial_velocity_max] are scaled with speed, on a copy of its process material.
 		For spray that leaves the hull along its waterline, use the [constant ParticleProcessMaterial.EMISSION_SHAPE_DIRECTED_POINTS] emission shape with points along the waterline and the hull's outward normals (tilted up) as the directions.
@@ -31,6 +31,9 @@
 		</member>
 		<member name="collision_smoothing" type="float" setter="set_collision_smoothing" getter="get_collision_smoothing" default="0.1">
 			Seconds over which the collision plane eases to the water's fitted height and slope. The collider is fitted each physics tick and moved every frame between the last two fits.
+		</member>
+		<member name="propeller_thrust" type="float" setter="set_propeller_thrust" getter="get_propeller_thrust" default="0.0">
+			A propeller's thrust from a script, [code]0[/code] to [code]1[/code], for a body without a sibling [PhysXBoat3D]. With one, the stronger of the two is used.
 		</member>
 		<member name="reference_speed" type="float" setter="set_reference_speed" getter="get_reference_speed" default="6.0">
 			The forward speed (m/s) at which bow spray reaches its full rate and launch speed.
@@ -63,7 +66,7 @@
 			The forward speed (m/s) below which there is no bow spray.
 		</member>
 		<member name="stern_emitters" type="NodePath[]" setter="set_stern_emitters" getter="get_stern_emitters" default="[]">
-			[GPUParticles3D] nodes that spray with a sibling [PhysXBoat3D]'s propeller thrust.
+			[GPUParticles3D] nodes that spray with a sibling [PhysXBoat3D]'s propeller thrust, or [member propeller_thrust].
 		</member>
 		<member name="submerge_depth" type="float" setter="set_submerge_depth" getter="get_submerge_depth" default="0.25">
 			How far (m) above the water an emitter's place on the hull can rise before it stops spraying, easing out over that height.

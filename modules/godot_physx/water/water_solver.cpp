@@ -967,6 +967,8 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, double p_delta, float p
 		rd->submit();
 		rd->sync();
 		MutexLock lock(cache_mtx);
+		ripple_cache_time = ocean_time_accum;
+		ocean_cache_time = ocean_time_accum;
 		Vector<uint8_t> rraw = rd->buffer_get_data(buf_height, 0, n * n * sizeof(float));
 		ripple_height_cache.resize(n * n);
 		if (rraw.size() > 0) {
@@ -1004,8 +1006,8 @@ void WaterSolverGPU::rt_step(Ref<WaterSolverGPU> p_self, double p_delta, float p
 	// lands a few frames later on the render thread and refreshes the
 	// caches; each callback binds a Ref to us so we survive the wait, same
 	// convention as every other async readback in this module.
-	rd->buffer_get_data_async(buf_height, callable_mp(this, &WaterSolverGPU::rt_on_ripple_height).bind(p_self), 0, n * n * sizeof(float));
-	rd->buffer_get_data_async(buf_fft_b, callable_mp(this, &WaterSolverGPU::rt_on_ocean_height).bind(p_self), 0, on * on * 2 * sizeof(float));
+	rd->buffer_get_data_async(buf_height, callable_mp(this, &WaterSolverGPU::rt_on_ripple_height).bind(ocean_time_accum, p_self), 0, n * n * sizeof(float));
+	rd->buffer_get_data_async(buf_fft_b, callable_mp(this, &WaterSolverGPU::rt_on_ocean_height).bind(ocean_time_accum, p_self), 0, on * on * 2 * sizeof(float));
 	rd->buffer_get_data_async(buf_fft_d, callable_mp(this, &WaterSolverGPU::rt_on_ocean_dz).bind(p_self), 0, on * on * 2 * sizeof(float));
 }
 
@@ -1071,8 +1073,9 @@ void WaterSolverGPU::rt_render_caustics(Ref<WaterSolverGPU> p_self, Vector3 p_su
 	rd->draw_list_end();
 }
 
-void WaterSolverGPU::rt_on_ripple_height(const PackedByteArray &p_data, Ref<WaterSolverGPU> p_self) {
+void WaterSolverGPU::rt_on_ripple_height(const PackedByteArray &p_data, double p_time, Ref<WaterSolverGPU> p_self) {
 	MutexLock lock(cache_mtx);
+	ripple_cache_time = p_time;
 	const int n = grid_resolution;
 	ripple_height_cache.resize(n * n);
 	if (p_data.size() > 0) {
@@ -1081,8 +1084,9 @@ void WaterSolverGPU::rt_on_ripple_height(const PackedByteArray &p_data, Ref<Wate
 	height_ready.set();
 }
 
-void WaterSolverGPU::rt_on_ocean_height(const PackedByteArray &p_data, Ref<WaterSolverGPU> p_self) {
+void WaterSolverGPU::rt_on_ocean_height(const PackedByteArray &p_data, double p_time, Ref<WaterSolverGPU> p_self) {
 	MutexLock lock(cache_mtx);
+	ocean_cache_time = p_time;
 	const int on = ocean_grid_resolution;
 	ocean_height_cache.resize(on * on);
 	ocean_imag_cache.resize(on * on);
@@ -1442,7 +1446,7 @@ RID WaterSolver::get_caustics_texture_rd_rid() const {
 	return gpu->tex_caustics;
 }
 
-void WaterSolver::get_height_grid(Vector<float> &r_height, int &r_n, Vector2 &r_domain_size) const {
+void WaterSolver::get_height_grid(Vector<float> &r_height, int &r_n, Vector2 &r_domain_size, double *r_time) const {
 	r_height.clear();
 	r_n = settings.grid_resolution;
 	r_domain_size = settings.domain_size;
@@ -1451,6 +1455,9 @@ void WaterSolver::get_height_grid(Vector<float> &r_height, int &r_n, Vector2 &r_
 	}
 	MutexLock lock(gpu->cache_mtx);
 	r_height = gpu->ripple_height_cache;
+	if (r_time != nullptr) {
+		*r_time = gpu->ripple_cache_time;
+	}
 	if (r_height.size() != r_n * r_n) {
 		// grid_resolution just changed: the cache is still the old size until
 		// the rebuilt solver reads back. Report "not ready" rather than let
@@ -1459,7 +1466,7 @@ void WaterSolver::get_height_grid(Vector<float> &r_height, int &r_n, Vector2 &r_
 	}
 }
 
-void WaterSolver::get_ocean_height_grid(Vector<float> &r_height, Vector<float> &r_imag, int &r_n, Vector2 &r_domain_size) const {
+void WaterSolver::get_ocean_height_grid(Vector<float> &r_height, Vector<float> &r_imag, int &r_n, Vector2 &r_domain_size, double *r_time) const {
 	r_height.clear();
 	r_imag.clear();
 	r_n = settings.ocean_grid_resolution;
@@ -1470,6 +1477,9 @@ void WaterSolver::get_ocean_height_grid(Vector<float> &r_height, Vector<float> &
 	MutexLock lock(gpu->cache_mtx);
 	r_height = gpu->ocean_height_cache;
 	r_imag = gpu->ocean_imag_cache;
+	if (r_time != nullptr) {
+		*r_time = gpu->ocean_cache_time;
+	}
 	if (r_height.size() != r_n * r_n || r_imag.size() != r_n * r_n) {
 		// ocean_grid_resolution just changed (see get_height_grid()).
 		r_height.clear();

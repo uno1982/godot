@@ -175,6 +175,8 @@ public:
 	Vector<float> ocean_imag_cache; // x displacement (see water_spectrum_evolve.glsl)
 	Vector<float> ocean_dz_cache; // z displacement
 	Vector<float> ocean_slope_x_cache; // dh/dx (for tests)
+	double ripple_cache_time = 0.0; // the simulation clock at the step each cache was read from
+	double ocean_cache_time = 0.0;
 	SafeFlag height_ready;
 
 	// All posted to the render thread via RenderingServer::call_on_render_thread
@@ -224,8 +226,8 @@ public:
 	// pattern as MPMFluidSolverGPU's rt_on_mm/rt_on_impulses/rt_on_surf_* --
 	// no ordering dependency between them, whichever lands first updates the
 	// cache immediately.
-	void rt_on_ripple_height(const PackedByteArray &p_data, Ref<WaterSolverGPU> p_self);
-	void rt_on_ocean_height(const PackedByteArray &p_data, Ref<WaterSolverGPU> p_self);
+	void rt_on_ripple_height(const PackedByteArray &p_data, double p_time, Ref<WaterSolverGPU> p_self);
+	void rt_on_ocean_height(const PackedByteArray &p_data, double p_time, Ref<WaterSolverGPU> p_self);
 	void rt_on_ocean_dz(const PackedByteArray &p_data, Ref<WaterSolverGPU> p_self);
 
 	~WaterSolverGPU();
@@ -426,10 +428,11 @@ public:
 	// MPM's own mm_cache/pos_cache accept) -- cheap (a mutex lock + copy),
 	// no dispatch, no sync, safe to call every physics tick from any number
 	// of callers.
-	void get_height_grid(Vector<float> &r_height, int &r_n, Vector2 &r_domain_size) const;
+	// r_time, if given: the simulation clock when the grid was read (two grids apart, their rate of change).
+	void get_height_grid(Vector<float> &r_height, int &r_n, Vector2 &r_domain_size, double *r_time = nullptr) const;
 	// r_imag carries the ocean's choppy x displacement (see
 	// water_spectrum_evolve.glsl); get_ocean_dz_grid() the z displacement.
-	void get_ocean_height_grid(Vector<float> &r_height, Vector<float> &r_imag, int &r_n, Vector2 &r_domain_size) const;
+	void get_ocean_height_grid(Vector<float> &r_height, Vector<float> &r_imag, int &r_n, Vector2 &r_domain_size, double *r_time = nullptr) const;
 	void get_ocean_dz_grid(Vector<float> &r_dz) const;
 	// dh/dx of the ocean layer from the FFT (readback, for tests).
 	void get_ocean_slope_x_grid(Vector<float> &r_slope_x) const;

@@ -106,6 +106,9 @@ public:
 	Vector2 get_wind_direction() const { return wind_direction; }
 	void set_wave_amplitude(float p_amp);
 	float get_wave_amplitude() const { return wave_amplitude; }
+	// Extra room around the surface before it is culled, for a material displacing it further than the waves.
+	void set_cull_margin(float p_margin);
+	float get_cull_margin() const { return cull_margin; }
 	// How far the wind has blown over open water, in meters (JONSWAP): sets
 	// how tall and long the wind waves get. 0 = auto: the surface_mesh
 	// footprint's longest side for enclosed water, a fully developed open sea
@@ -225,6 +228,9 @@ public:
 	float sample_height_excluding_wake(Vector3 p_world_pos, ObjectID p_wake) const;
 	// Script-side: the wake as a node (null leaves nothing out).
 	float _sample_height_excluding_wake_bind(Vector3 p_world_pos, Object *p_wake) const;
+	// How fast the ripple + ocean surface rises (m/s, negative falling) above a point, from the last two readbacks.
+	// Wakes are left out. 0 over dry cells and until two readbacks have landed.
+	float sample_vertical_speed(Vector3 p_world_pos) const;
 	// Moving wake grids (PhysXWaterWake3D): up to MAX_WAKES are drawn and
 	// sampled. register_wake() returns a slot (-1 when full).
 	static constexpr int MAX_WAKES = 4;
@@ -260,6 +266,7 @@ private:
 	float wind_speed = 8.0f;
 	Vector2 wind_direction = Vector2(1, 0);
 	float wave_amplitude = 1.0f;
+	float cull_margin = 0.0f;
 	float fetch = 0.0f;
 	float render_extent = 0.0f;
 	double water_time = 0.0; // shader clock (water_time), advanced only in a running game
@@ -309,6 +316,7 @@ private:
 	ObjectID wakes[MAX_WAKES];
 	Vector2 mesh_offset; // see _update_mesh_offset()
 	void _update_mesh_offset();
+	void _update_cull_box();
 	Ref<Texture2DRD> ripple_height_tex;
 	Ref<Texture2DRD> ocean_height_tex;
 	Ref<Texture2DRD> ocean_fade_tex;
@@ -339,6 +347,18 @@ private:
 	Vector<float> cached_ocean_dz;
 	int cached_ocean_n = 0;
 	Vector2 cached_ocean_domain;
+	// The readback before the cached one, and when each was read: sample_vertical_speed().
+	double cached_ripple_time = 0.0;
+	double cached_ocean_time = 0.0;
+	Vector<float> previous_ripple_height;
+	Vector<float> previous_ocean_height;
+	Vector<float> previous_ocean_dx;
+	Vector<float> previous_ocean_dz;
+	double previous_ripple_time = 0.0;
+	double previous_ocean_time = 0.0;
+	float _ripple_height_at(const Vector<float> &p_height, float p_x, float p_z) const;
+	float _ocean_fade_at(float p_x, float p_z) const;
+	float _ocean_height_at(const Vector<float> &p_height, const Vector<float> &p_dx, const Vector<float> &p_dz, float p_x, float p_z, float p_fade) const;
 
 	int frames_since_refresh = 0;
 	// CPU cache refresh for sample_height() only -- rendering is unthrottled/automatic via the zero-copy textures.

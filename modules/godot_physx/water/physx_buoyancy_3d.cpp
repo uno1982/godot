@@ -100,14 +100,7 @@ float PhysXBuoyancy3D::get_water_height(const Vector3 &p_world_pos) const {
 void PhysXBuoyancy3D::_resolve() {
 	PhysXWaterSurface3D *water = Object::cast_to<PhysXWaterSurface3D>(get_node_or_null(water_surface_path));
 	water_id = water != nullptr ? water->get_instance_id() : ObjectID();
-	wake_id = ObjectID();
-	if (get_parent() != nullptr) {
-		for (int i = 0; i < get_parent()->get_child_count(); i++) {
-			if (Object::cast_to<PhysXWaterWake3D>(get_parent()->get_child(i)) != nullptr) {
-				wake_id = get_parent()->get_child(i)->get_instance_id();
-			}
-		}
-	}
+	_find_wake();
 
 	// Hull bounds from the body's collision shapes, in the body's space.
 	AABB bounds;
@@ -157,7 +150,22 @@ void PhysXBuoyancy3D::_resolve() {
 	point_depths.fill(-Math::INF);
 }
 
+// Every tick: a wake can be added or removed at any time.
+void PhysXBuoyancy3D::_find_wake() {
+	wake_id = ObjectID();
+	const Node *parent = get_parent();
+	if (parent == nullptr) {
+		return;
+	}
+	for (int i = 0; i < parent->get_child_count(); i++) {
+		if (Object::cast_to<PhysXWaterWake3D>(parent->get_child(i)) != nullptr) {
+			wake_id = parent->get_child(i)->get_instance_id();
+		}
+	}
+}
+
 void PhysXBuoyancy3D::_physics_step() {
+	_find_wake();
 	RigidBody3D *body = get_body();
 	PhysXWaterSurface3D *water = get_water_surface();
 	if (body == nullptr || water == nullptr || points.is_empty()) {

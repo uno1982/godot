@@ -68,6 +68,7 @@ class PhysXBuoyancy3D : public Node3D {
 	PackedFloat32Array point_depths;
 
 	void _resolve();
+	void _find_wake();
 	void _physics_step();
 
 protected:

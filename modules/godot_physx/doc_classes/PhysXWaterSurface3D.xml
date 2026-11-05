@@ -85,6 +85,13 @@
 				Moves the simulated ripple square to [param world_position]'s XZ (the node's height is kept), for a sea that follows the camera or the player. Unlike moving the node or changing [member domain_size], it doesn't rebuild the surface: the mesh, the textures and the FFT ocean (sampled in world space, so its waves stay where they are) carry on, and only the ripples are cleared -- no frame without water. A surface with a [member surface_mesh] footprint or a per-cell seabed ([member seabed_from_floor]) depends on where the square is, so it still rebuilds.
 			</description>
 		</method>
+		<method name="remeasure_seabed">
+			<return type="void" />
+			<description>
+				Measures the floor again for [member seabed_from_floor], when it changed at runtime: a dug channel, a raised sandbar, a wall that came down. The ripples, foam and swash carry on, and the waves, the shoreline and [method is_wet] follow the new floor. Changing [member seabed_from_floor] or [member seabed_collision_mask] rebuilds the surface instead, which clears them.
+				The rays are cast on the next physics tick, one per ripple cell, so this costs that one tick more the larger [member grid_resolution] is; don't call it every tick. Needs [member seabed_from_floor].
+			</description>
+		</method>
 		<method name="sample_height" qualifiers="const">
 			<return type="float" />
 			<param index="0" name="world_pos" type="Vector3" />

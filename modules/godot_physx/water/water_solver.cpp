@@ -262,20 +262,9 @@ void WaterSolverGPU::_rt_build_buffers() {
 	{
 		has_cell_depth = _init_cell_depth.size() == cells;
 		Vector<uint8_t> depth_bytes;
-		depth_bytes.resize(cells * sizeof(uint16_t));
-		uint16_t *dw = (uint16_t *)depth_bytes.ptrw();
 		Vector<uint8_t> fade_bytes;
-		fade_bytes.resize(cells);
-		uint8_t *fw = fade_bytes.ptrw();
 		Vector<uint8_t> shore_bytes;
-		shore_bytes.resize(cells * sizeof(uint16_t));
-		uint16_t *sw = (uint16_t *)shore_bytes.ptrw();
-		for (int i = 0; i < cells; i++) {
-			const float d = has_cell_depth ? _init_cell_depth[i] : _init_depth;
-			dw[i] = Math::make_half_float(d);
-			fw[i] = (uint8_t)Math::round(WaterSolver::shallow_fade(d, shallow_fade_depth) * 255.0f);
-			sw[i] = Math::make_half_float(d <= WaterSolver::WALL_DEPTH * 0.5f ? 100.0f : d);
-		}
+		_rt_depth_bytes(_init_cell_depth, depth_bytes, fade_bytes, shore_bytes);
 		RD::TextureFormat depth_tf;
 		depth_tf.format = RD::DATA_FORMAT_R16_SFLOAT;
 		depth_tf.width = n;
@@ -730,6 +719,39 @@ void WaterSolverGPU::_rt_build_caustics_grid() {
 	depth_uniform.append_id(tex_cell_depth);
 	uniforms.push_back(depth_uniform);
 	uset_caustics = rd->uniform_set_create(uniforms, shader_caustics, 0);
+}
+
+void WaterSolverGPU::_rt_depth_bytes(const PackedFloat32Array &p_cell_depth, Vector<uint8_t> &r_depth, Vector<uint8_t> &r_fade, Vector<uint8_t> &r_shore) const {
+	const int cells = grid_resolution * grid_resolution;
+	const bool per_cell = p_cell_depth.size() == cells;
+	r_depth.resize(cells * sizeof(uint16_t));
+	r_fade.resize(cells);
+	r_shore.resize(cells * sizeof(uint16_t));
+	uint16_t *dw = (uint16_t *)r_depth.ptrw();
+	uint8_t *fw = r_fade.ptrw();
+	uint16_t *sw = (uint16_t *)r_shore.ptrw();
+	for (int i = 0; i < cells; i++) {
+		const float d = per_cell ? p_cell_depth[i] : _init_depth;
+		dw[i] = Math::make_half_float(d);
+		fw[i] = (uint8_t)Math::round(WaterSolver::shallow_fade(d, shallow_fade_depth) * 255.0f);
+		sw[i] = Math::make_half_float(d <= WaterSolver::WALL_DEPTH * 0.5f ? 100.0f : d);
+	}
+}
+
+void WaterSolverGPU::rt_update_depth(Ref<WaterSolverGPU> p_self, PackedFloat32Array p_cell_depth) {
+	if (rd == nullptr || !shaders_ok || tex_cell_depth.is_null() || p_cell_depth.size() != grid_resolution * grid_resolution) {
+		return;
+	}
+	_init_cell_depth = p_cell_depth;
+	has_cell_depth = true;
+	Vector<uint8_t> depth_bytes;
+	Vector<uint8_t> fade_bytes;
+	Vector<uint8_t> shore_bytes;
+	_rt_depth_bytes(p_cell_depth, depth_bytes, fade_bytes, shore_bytes);
+	rd->texture_update(tex_cell_depth, 0, depth_bytes);
+	rd->texture_update(tex_ocean_fade, 0, fade_bytes);
+	rd->texture_update(tex_shore_depth, 0, shore_bytes);
+	ripple_quiet.set(0);
 }
 
 void WaterSolverGPU::rt_clear_ripples(Ref<WaterSolverGPU> p_self) {
@@ -1287,6 +1309,16 @@ void WaterSolver::recenter(Vector2 p_grid_center) {
 		return;
 	}
 	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_clear_ripples).bind(gpu));
+}
+
+void WaterSolver::update_seabed(const PackedFloat32Array &p_cell_depth) {
+	flush_ticks(); // ticks recorded so far ran on the old seabed
+	settings.cell_depth = p_cell_depth;
+	if (gpu.is_null()) {
+		return;
+	}
+	_dispatch(callable_mp(gpu.ptr(), &WaterSolverGPU::rt_update_depth).bind(gpu, p_cell_depth));
+	queued_disturbed = true; // a resting ripple layer has to see the new shore
 }
 
 void WaterSolver::configure(const Settings &p_settings) {

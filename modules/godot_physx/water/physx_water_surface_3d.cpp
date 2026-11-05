@@ -606,6 +606,7 @@ void PhysXWaterSurface3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_open_sea_beyond", "open"), &PhysXWaterSurface3D::set_open_sea_beyond);
 	ClassDB::bind_method(D_METHOD("set_sea_state", "wind_speed", "wind_direction", "wave_amplitude", "fetch"), &PhysXWaterSurface3D::set_sea_state);
 	ClassDB::bind_method(D_METHOD("recenter", "world_position"), &PhysXWaterSurface3D::recenter);
+	ClassDB::bind_method(D_METHOD("remeasure_seabed"), &PhysXWaterSurface3D::remeasure_seabed);
 	ClassDB::bind_method(D_METHOD("get_open_sea_beyond"), &PhysXWaterSurface3D::get_open_sea_beyond);
 	ClassDB::bind_method(D_METHOD("set_shore_undertow", "speed"), &PhysXWaterSurface3D::set_shore_undertow);
 	ClassDB::bind_method(D_METHOD("get_shore_undertow"), &PhysXWaterSurface3D::get_shore_undertow);
@@ -818,6 +819,16 @@ void PhysXWaterSurface3D::recenter(Vector3 p_world_position) {
 	cached_ripple_height.clear(); // (the old square's heights are not this one's)
 	previous_ripple_height.clear();
 	frames_since_refresh = REFRESH_EVERY_FRAMES;
+}
+
+// The floor changed: its depths are measured again on the next physics tick and written into the solver's textures in
+// place (no rebuild, so ripples, foam and swash carry on). Rays need a physics tick, as in _rebuild().
+void PhysXWaterSurface3D::remeasure_seabed() {
+	if (Engine::get_singleton()->is_editor_hint()) {
+		return;
+	}
+	ERR_FAIL_COND_MSG(!seabed_from_floor, "PhysXWaterSurface3D: remeasure_seabed() needs seabed_from_floor.");
+	seabed_remeasure_pending = true;
 }
 
 // The sea state changed: a built solver regenerates its spectrum IN PLACE (no rebuild -- the waves keep their phases,
@@ -1255,12 +1266,22 @@ void PhysXWaterSurface3D::_update(double p_delta) {
 	}
 	if (seabed_pending) {
 		seabed_pending = false;
+		seabed_remeasure_pending = false; // just measured
 		_sample_seabed();
 		_configure_solver();
 		return;
 	}
 	if (!solver.has_device()) {
 		return;
+	}
+	// (Waits for a solver still being built, whose depth textures don't exist yet.)
+	if (seabed_remeasure_pending && solver.is_available()) {
+		seabed_remeasure_pending = false;
+		if (seabed_from_floor) {
+			_sample_seabed();
+			_update_cell_fade();
+			solver.update_seabed(cell_depth);
+		}
 	}
 	if (step_mode == STEP_MODE_PER_FRAME) {
 		// Bodies / impulses submitted up to this tick are snapshotted with it; the GPU work waits for the frame.

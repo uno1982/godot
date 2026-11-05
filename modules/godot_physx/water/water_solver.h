@@ -237,6 +237,9 @@ public:
 	// The ripple layer moved (a re-centre): its state + composed height zeroed in place -- the ocean, its textures and
 	// every other buffer stay (see WaterSolver::recenter).
 	void rt_clear_ripples(Ref<WaterSolverGPU> p_self);
+	// New per-cell depths for the same grid, written into the depth textures in place: nothing is freed, and the
+	// ripples, foam and swash carry on.
+	void rt_update_depth(Ref<WaterSolverGPU> p_self, PackedFloat32Array p_cell_depth);
 
 	// Async readback callbacks: RenderingDevice invokes them with the data as
 	// the runtime arg; Callable::bind APPENDS the bound args, so the data
@@ -270,6 +273,7 @@ private:
 
 	void _rt_free_buffers();
 	void _rt_build_buffers();
+	void _rt_depth_bytes(const PackedFloat32Array &p_cell_depth, Vector<uint8_t> &r_depth, Vector<uint8_t> &r_fade, Vector<uint8_t> &r_shore) const;
 	void _rt_spectrum_init();
 	void _rt_build_caustics_grid();
 };
@@ -356,6 +360,8 @@ public:
 	// The ripple grid's centre moved (a constant-depth square only): no rebuild -- the ripples are cleared, the ocean
 	// (world-anchored) carries on; bodies' spheres / pending impulses are dropped (they were relative to the old centre).
 	void recenter(Vector2 p_grid_center);
+	// The seabed was measured again: new per-cell depths for the same grid, no rebuild.
+	void update_seabed(const PackedFloat32Array &p_cell_depth);
 	// One physics tick: the whole surface steps now (= queue_tick() + flush_ticks()).
 	void step(double p_delta);
 	// Per-frame stepping: record one physics tick (its dt and a snapshot of the bodies / impulses submitted so far)

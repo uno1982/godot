@@ -1265,6 +1265,8 @@ void PhysXWaterSurface3D::_update(double p_delta) {
 	if (step_mode == STEP_MODE_PER_FRAME) {
 		// Bodies / impulses submitted up to this tick are snapshotted with it; the GPU work waits for the frame.
 		solver.queue_tick(p_delta); // no-ops until solver.is_available(), like step()
+		// Readbacks land at the end of a frame: this tick's sample_height() sees them, as it does per tick.
+		_refresh_cpu_cache();
 		return;
 	}
 	solver.step(p_delta); // no-ops internally until solver.is_available() (see water_solver.cpp)
@@ -1468,7 +1470,8 @@ float PhysXWaterSurface3D::sample_vertical_speed(Vector3 p_world_pos) const {
 	const float z = p_world_pos.z - grid_center.y;
 	float speed = 0.0f;
 	const double ripple_dt = cached_ripple_time - previous_ripple_time;
-	if (ripple_dt > 0.0 && !cached_ripple_height.is_empty() && previous_ripple_height.size() == cached_ripple_height.size()) {
+	// A resting ripple layer has no new readbacks: its last two say nothing about now.
+	if (!solver.is_ripple_resting() && ripple_dt > 0.0 && !cached_ripple_height.is_empty() && previous_ripple_height.size() == cached_ripple_height.size()) {
 		speed += (_ripple_height_at(cached_ripple_height, x, z) - _ripple_height_at(previous_ripple_height, x, z)) / (float)ripple_dt;
 	}
 	const double ocean_dt = cached_ocean_time - previous_ocean_time;

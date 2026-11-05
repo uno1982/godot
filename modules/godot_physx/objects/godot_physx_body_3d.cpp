@@ -1252,7 +1252,10 @@ Vector3 GodotPhysXBody3D::get_velocity_at_position(const Vector3 &p_position) co
 	// Kinematic bodies included: PhysX derives their velocity from the last
 	// kinematic target, which is what a CharacterBody3D standing on a moving
 	// platform needs.
-	const Vector3 com = body_transform.origin + get_center_of_mass_relative();
+	// The centre of mass from the actor's own pose: during a contact report body_transform is still last step's.
+	const PxRigidActor *actor = _state_actor();
+	const PxRigidBody *rb = actor ? actor->is<PxRigidBody>() : nullptr;
+	const Vector3 com = rb ? to_godot(actor->getGlobalPose().transform(rb->getCMassLocalPose().p)) : body_transform.origin + get_center_of_mass_relative();
 	return get_linear_velocity() + get_angular_velocity().cross(p_position - com);
 }
 

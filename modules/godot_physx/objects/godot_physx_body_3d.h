@@ -67,6 +67,7 @@ public:
 		RID collider;
 		ObjectID collider_id;
 		int collider_shape = 0;
+		Vector3 local_velocity; // of each body at the contact point, spin included
 		Vector3 collider_velocity;
 	};
 

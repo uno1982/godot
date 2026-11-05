@@ -167,7 +167,8 @@ public:
 					c.collider = b1 ? b1->get_self() : RID();
 					c.collider_id = b1 ? b1->get_instance_id() : ObjectID();
 					c.collider_shape = s1;
-					c.collider_velocity = b1 ? b1->get_linear_velocity() : Vector3();
+					c.local_velocity = b0->get_velocity_at_position(pos);
+					c.collider_velocity = b1 ? b1->get_velocity_at_position(pos) : Vector3();
 					b0->add_contact(c);
 				}
 				if (r1) {
@@ -179,7 +180,8 @@ public:
 					c.collider = b0 ? b0->get_self() : RID();
 					c.collider_id = b0 ? b0->get_instance_id() : ObjectID();
 					c.collider_shape = s0;
-					c.collider_velocity = b0 ? b0->get_linear_velocity() : Vector3();
+					c.local_velocity = b1->get_velocity_at_position(pos);
+					c.collider_velocity = b0 ? b0->get_velocity_at_position(pos) : Vector3();
 					b1->add_contact(c);
 				}
 			}
@@ -1232,7 +1234,7 @@ bool GodotPhysXSpace3D::test_body_motion(GodotPhysXBody3D *p_body, const Physics
 			c.normal = to_godot(best_hit.normal);
 			c.collider = other ? other->get_self() : RID();
 			c.collider_id = other ? other->get_instance_id() : ObjectID();
-			c.collider_velocity = other ? other->get_linear_velocity() : Vector3();
+			c.collider_velocity = other ? other->get_velocity_at_position(c.position) : Vector3();
 			c.local_shape = 0;
 			c.collider_shape = best_hit.shape ? (int)reinterpret_cast<uintptr_t>(best_hit.shape->userData) : 0;
 			c.depth = margin;
@@ -1245,7 +1247,7 @@ bool GodotPhysXSpace3D::test_body_motion(GodotPhysXBody3D *p_body, const Physics
 			c.normal = to_godot(rec_normal);
 			c.collider = other ? other->get_self() : RID();
 			c.collider_id = other ? other->get_instance_id() : ObjectID();
-			c.collider_velocity = other ? other->get_linear_velocity() : Vector3();
+			c.collider_velocity = other ? other->get_velocity_at_position(c.position) : Vector3();
 			c.local_shape = 0;
 			c.collider_shape = rec_shape ? (int)reinterpret_cast<uintptr_t>(rec_shape->userData) : 0;
 			c.depth = rec_depth;

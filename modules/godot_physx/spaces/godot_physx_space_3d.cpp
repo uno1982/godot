@@ -1191,10 +1191,16 @@ bool GodotPhysXSpace3D::test_body_motion(GodotPhysXBody3D *p_body, const Physics
 					// Ignore contacts that don't actually oppose the motion: a hit
 					// whose normal faces along (rather than against) the sweep is a
 					// grazing/edge contact from sliding on a surface.
-					if (hit.block.normal.dot(-unit_dir) < 0.001f) {
+					const PxReal approach = hit.block.normal.dot(-unit_dir);
+					if (approach < 0.001f) {
 						continue;
 					}
-					const real_t frac = CLAMP((real_t)hit.block.distance / motion_len, (real_t)0.0, (real_t)1.0);
+					// Stop the margin short of the surface, as Godot Physics and Jolt leave it. A character
+					// resting in true contact rubs what it stands on through the kinematic capsule's friction,
+					// and riding that body's motion feeds it back: a loose box spins up and throws it off.
+					// (Limited for a glancing hit, where the same gap would cost a long way back along the motion.)
+					const PxReal backoff = margin / PxMax(approach, 0.25f);
+					const real_t frac = CLAMP((real_t)(hit.block.distance - backoff) / motion_len, (real_t)0.0, (real_t)1.0);
 					if (frac < safe_fraction) {
 						safe_fraction = frac;
 						best_hit = hit.block;

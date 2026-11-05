@@ -45,7 +45,7 @@
 			Evenly spaced cutting planes per axis -- regular, brick-like pieces. Good for crates and walls.
 		</constant>
 		<constant name="PATTERN_CUTOUT" value="2" enum="FracturePattern">
-			Extrudes a caller-supplied grayscale [param cutout_pattern] texture through the mesh -- glass/tile-style breaks. The cracks must reach the texture's edge (like a real broken pane) or the fracture is rejected.
+			Extrudes a caller-supplied grayscale texture ([method fracture_mesh]'s [code]cutout_pattern[/code]) through the mesh -- glass/tile-style breaks. The cracks must reach the texture's edge (like a real broken pane) or the fracture is rejected.
 		</constant>
 	</constants>
 </class>

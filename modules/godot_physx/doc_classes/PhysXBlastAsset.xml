@@ -4,7 +4,7 @@
 		A fractured mesh, ready to drive a [PhysXDestructible3D].
 	</brief_description>
 	<description>
-		Produced by the in-editor [b]Mesh → Fracture with Blast[/b] dialog (or [code]PhysXBlastAuthoring[/code] directly, for scripted/offline authoring), and saved as a normal [code].tres[/code]/[code].res[/code] file next to the scene. Assign it to a [PhysXDestructible3D]'s [member PhysXDestructible3D.blast_asset] to use it -- there's nothing to configure on the asset itself once it's authored.
+		Produced by the in-editor [b]Mesh → Fracture with Blast[/b] dialog (or [PhysXBlastAuthoring] directly, for scripted/offline authoring), and saved as a normal [code].tres[/code]/[code].res[/code] file next to the scene. Assign it to a [PhysXDestructible3D]'s [member PhysXDestructible3D.blast_asset] to use it -- there's nothing to configure on the asset itself once it's authored.
 	</description>
 	<tutorials>
 	</tutorials>

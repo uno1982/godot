@@ -81,7 +81,7 @@
 			The temperature above which fuel burns (see [member combustion]).
 		</member>
 		<member name="light_scattering" type="bool" setter="set_light_scattering" getter="is_light_scattering" default="false">
-			When enabled, nearby [OmniLight3D] and [SpotLight3D] nodes light the gas: each glows in the smoke in its own color, fading with distance the way it fades on surfaces (its [member Light3D.omni_range] / [member Light3D.spot_range], [member Light3D.omni_attenuation], spot cone), dimmed by the gas between it and each point and by the gas in front of the camera. Flow's own renderer only lights the gas with the scene's first [DirectionalLight3D]; this is an extra pass over the pixels the gas covers, so it's off by default.
+			When enabled, nearby [OmniLight3D] and [SpotLight3D] nodes light the gas: each glows in the smoke in its own color, fading with distance the way it fades on surfaces (its [member OmniLight3D.omni_range] / [member SpotLight3D.spot_range], [member OmniLight3D.omni_attenuation] / [member SpotLight3D.spot_attenuation], spot cone), dimmed by the gas between it and each point and by the gas in front of the camera. Flow's own renderer only lights the gas with the scene's first [DirectionalLight3D]; this is an extra pass over the pixels the gas covers, so it's off by default.
 			Up to [member scattering_max_lights] lights are used, the strongest at the gas first. Each light's [member Light3D.light_volumetric_fog_energy] scales its glow, as it does for Godot's volumetric fog: set it to [code]0[/code] to keep a light out of the gas.
 		</member>
 		<member name="max_blocks" type="int" setter="set_max_blocks" getter="get_max_blocks" default="1024">

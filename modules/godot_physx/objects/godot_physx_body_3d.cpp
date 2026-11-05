@@ -1253,14 +1253,7 @@ Vector3 GodotPhysXBody3D::get_velocity_at_position(const Vector3 &p_position) co
 	// kinematic target, which is what a CharacterBody3D standing on a moving
 	// platform needs.
 	const Vector3 com = body_transform.origin + get_center_of_mass_relative();
-	// Spin below ~3 deg/s is left out: a resting box keeps a trace of solver spin, which CharacterBody3D (asking for
-	// the velocity at its origin, well above the box) turned into a drift, and the capsule pushing the box back fed
-	// it -- a character standing still on a stack was walked off it. A platform turning any faster carries it as before.
-	const Vector3 spin = get_angular_velocity();
-	if (spin.length_squared() < MIN_CARRIED_SPIN * MIN_CARRIED_SPIN) {
-		return get_linear_velocity();
-	}
-	return get_linear_velocity() + spin.cross(p_position - com);
+	return get_linear_velocity() + get_angular_velocity().cross(p_position - com);
 }
 
 PxRigidActor *GodotPhysXBody3D::_state_actor() const {

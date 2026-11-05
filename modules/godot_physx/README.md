@@ -381,9 +381,8 @@ shifts or tips underfoot. Put the debris on its own collision layer, include
 that layer in the character's `collision_mask` and leave it out of its
 `platform_floor_layers`: the character stands on, walks over and kicks the
 debris, but doesn't ride its motion. Props and platforms on other layers
-still carry it. (Resting bodies' leftover solver spin, below ~3°/s, is never
-carried, on any layer.) The playground demo (`demo/cpu/physx_playground.tscn`)
-does this with a `debris` layer.
+still carry it. The playground demo (`demo/cpu/physx_playground.tscn`) does
+this with a `debris` layer.
 
 ## Area3D overrides
 

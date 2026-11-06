@@ -8,6 +8,10 @@
 //   MODE_SKIN       targets from this frame's bone matrices (previous kept for
 //                   interpolating across substeps).
 // Per substep:
+//   MODE_AERO       (only with wind) each particle's share of the air force,
+//                   from its normal and the wind. A pass
+//                   of its own: the normal reads neighbours, which MODE_INTEGRATE
+//                   is moving.
 //   MODE_INTEGRATE  pinned particles snap to their (interpolated) target, the
 //                   rest take a Verlet step under gravity with damping, then
 //                   are pulled part of the way back to the target (animation
@@ -48,9 +52,13 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 #define MODE_HASH_INSERT 7
 #define MODE_SELF 8
 #define MODE_SELF_APPLY 9
+#define MODE_AERO 10
+
+// Air force per unit of drag and lift, with the force taken per unit of cloth area, so a denser mesh blows the same.
+#define AERO_SCALE 0.25
 
 layout(set = 0, binding = 0, std140) uniform Params {
-	ivec4 counts; // x particles, y self-collision hash size (power of two), z substeps, w unused
+	ivec4 counts; // x particles, y self-collision hash size (power of two), z substeps, w 1 with wind (MODE_AERO ran)
 	ivec4 counts2; // x capsules, y texture width, z bones, w boxes
 	vec4 step; // x dt (substep), y damping (velocity kept per substep), z animation drive (fraction pulled to the target per substep), w stiffness
 	vec4 gravity; // xyz gravity (m/s^2), w thickness (m)
@@ -62,7 +70,8 @@ layout(set = 0, binding = 0, std140) uniform Params {
 	vec4 out_x;
 	vec4 out_y;
 	vec4 out_z;
-	vec4 self_params; // x self-collision thickness (m), 0 = off
+	vec4 self_params; // x self-collision thickness (m), 0 = off; y lift
+	vec4 air; // xyz wind (m/s), w drag
 };
 
 // Per dispatch (push constants -- the uniform buffer can't change between
@@ -131,7 +140,7 @@ layout(set = 0, binding = 19, std430) restrict buffer CellNext {
 	uint cell_next[];
 };
 layout(set = 0, binding = 20, std430) restrict buffer SelfDelta {
-	vec4 self_delta[];
+	vec4 self_delta[]; // MODE_SELF's push, or MODE_AERO's velocity change: never in use at the same time
 };
 
 uint cell_hash(ivec3 c) {
@@ -442,6 +451,42 @@ void main() {
 	vec3 t = mix(target_prev[i].xyz, target[i].xyz, pass.frac);
 	float max_dist = rest[i].w;
 
+	if (mode == MODE_AERO) {
+		vec4 p = pos[i];
+		if (p.w <= 0.0 || max_dist <= 0.0) {
+			self_delta[i] = vec4(0.0);
+			return;
+		}
+		vec3 n = vec3(0.0);
+		for (uint k = adj_offsets[i]; k < adj_offsets[i + 1]; k++) {
+			uvec2 o = adj_pairs[k];
+			n += cross(pos[o.x].xyz - p.xyz, pos[o.y].xyz - p.xyz);
+		}
+		float nl = length(n);
+		if (nl < 1e-12) {
+			self_delta[i] = vec4(0.0);
+			return;
+		}
+		n /= nl;
+		// The push comes from the wind and the way the cloth faces. The air also damps the cloth's motion relative to the
+		// animated garment (as in MODE_INTEGRATE: running adds no headwind): (U - v)^2 ~ U^2 - 2Uv. Linear in v on purpose:
+		// a garment moves in uneven steps, so v is noisy, and in the full quadratic that noise would bias the push.
+		float vn = dot(n, air.xyz);
+		vec3 tangential = air.xyz - n * vn;
+		vec3 dv = (n * (air.w * vn * abs(vn)) + tangential * (self_params.y * abs(vn))) * AERO_SCALE * step.x;
+		// One step can at most bring the cloth up to the air's speed.
+		float limit = length(air.xyz);
+		float dl = length(dv);
+		if (dl > limit) {
+			dv *= limit / dl;
+		}
+		vec3 t_last = mix(target_prev[i].xyz, target[i].xyz, max(pass.frac - 1.0 / float(max(counts.z, 1)), 0.0));
+		float v_n = dot(n, (p.xyz - prev[i].xyz) - (t - t_last)) / step.x;
+		dv -= n * v_n * min(2.0 * air.w * abs(vn) * AERO_SCALE * step.x, 1.0); // (at most stops it: stable in a gale)
+		self_delta[i] = vec4(dv, 0.0);
+		return;
+	}
+
 	if (mode == MODE_INTEGRATE) {
 		vec4 p = pos[i];
 		if (max_dist <= 0.0) {
@@ -457,6 +502,9 @@ void main() {
 		vec3 v = v_anim + ((p.xyz - prev[i].xyz) - v_anim) * step.y;
 		prev[i] = vec4(p.xyz, 0.0);
 		vec3 np = p.xyz + v + gravity.xyz * step.x * step.x;
+		if (counts.w != 0) {
+			np += self_delta[i].xyz * step.x;
+		}
 		pos[i] = vec4(mix(np, t, step.z), p.w);
 		return;
 	}

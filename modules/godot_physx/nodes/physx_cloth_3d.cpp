@@ -30,6 +30,7 @@
 
 #include "physx_cloth_3d.h"
 
+#include "../cloth/cloth_wind.h"
 #include "../godot_physx_server_3d.h"
 
 #include "core/config/engine.h"
@@ -251,52 +252,18 @@ Vector3 PhysXCloth3D::_sample_wind(double p_delta) {
 		return Vector3();
 	}
 	wind_time += p_delta;
-	Vector3 w = wind;
-
-	// The PhysX module does not expose areas to point queries, so read the
-	// assigned wind Area3D's settings directly (also keeps this backend-agnostic).
-	Area3D *area = Object::cast_to<Area3D>(get_node_or_null(wind_area));
-	if (area && area->get_wind_force_magnitude() > 0.0f) {
-		Node3D *src_node = Object::cast_to<Node3D>(area->get_node_or_null(area->get_wind_source_path()));
-		Vector3 dir(-1, 0, 0);
-		Vector3 src;
-		if (src_node) {
-			const Transform3D sx = src_node->get_global_transform();
-			dir = -sx.basis.get_column(Vector3::AXIS_Z).normalized();
-			src = sx.origin;
+	const Area3D *area = Object::cast_to<Area3D>(get_node_or_null(wind_area));
+	// Cloth centroid, for the downwind attenuation.
+	Vector3 center = get_global_transform().origin;
+	const LocalVector<Vector3> &sp = solver.get_positions();
+	if (area != nullptr && !sp.is_empty()) {
+		center = Vector3();
+		for (uint32_t i = 0; i < sp.size(); i++) {
+			center += sp[i];
 		}
-		// Cloth centroid, for the downwind attenuation.
-		const LocalVector<Vector3> &sp = solver.get_positions();
-		Vector3 center = get_global_transform().origin;
-		if (!sp.is_empty()) {
-			center = Vector3();
-			for (uint32_t i = 0; i < sp.size(); i++) {
-				center += sp[i];
-			}
-			center /= (float)sp.size();
-		}
-		const float att = area->get_wind_attenuation_factor();
-		const float proj = MAX((center - src).dot(dir), 1.0f);
-		w += dir * (area->get_wind_force_magnitude() * Math::pow(proj, -att));
+		center /= (float)sp.size();
 	}
-
-	if (wind_turbulence > 0.0f && w != Vector3()) {
-		const float speed = w.length();
-		const Vector3 dir = w / speed;
-		Vector3 perp = dir.cross(Vector3(0, 1, 0));
-		if (perp.length_squared() < 1.0e-4f) {
-			perp = dir.cross(Vector3(1, 0, 0));
-		}
-		perp.normalize();
-		const Vector3 up = dir.cross(perp).normalized();
-		const float t = (float)wind_time;
-		const float gust = 0.6f * Math::sin(t * 1.7f) + 0.4f * Math::sin(t * 4.3f + 1.3f);
-		const float sway = 0.5f * Math::sin(t * 2.9f + 0.7f);
-		w += dir * (speed * wind_turbulence * gust);
-		w += perp * (speed * wind_turbulence * 0.5f * sway);
-		w += up * (speed * wind_turbulence * 0.3f * Math::sin(t * 3.7f));
-	}
-	return w;
+	return physx_cloth_sample_wind(wind, area, wind_turbulence, wind_time, center);
 }
 
 void PhysXCloth3D::_step(double p_delta) {

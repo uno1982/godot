@@ -42,7 +42,7 @@
 #include "servers/rendering/rendering_server.h"
 
 namespace {
-constexpr int PARAMS_BYTES = 144; // 9 * vec4, std140 -- see skinned_cloth.glsl's Params
+constexpr int PARAMS_BYTES = 160; // 10 * vec4, std140 -- see skinned_cloth.glsl's Params
 constexpr uint32_t GROUP = 64; // local_size_x
 
 uint32_t groups_for(int p_count) {
@@ -60,6 +60,7 @@ enum Mode {
 	MODE_HASH_INSERT = 7,
 	MODE_SELF = 8,
 	MODE_SELF_APPLY = 9,
+	MODE_AERO = 10,
 };
 
 struct PassConstants {
@@ -295,12 +296,13 @@ void SkinnedClothSolverGPU::rt_step(Ref<SkinnedClothSolverGPU> p_self, PackedFlo
 	}
 	// Params: counts (particles), counts2 (capsules, tex width, bones, boxes), then
 	// the float block the caller packed (step, gravity, limits, output
-	// transform rows = 24 floats).
+	// transform rows, self collision, air = 32 floats).
 	uint8_t params[PARAMS_BYTES];
 	memset(params, 0, sizeof(params));
-	int32_t counts[8] = { n, hash_size, MAX(p_substeps, 1), 0, MIN((int)p_capsules.size() / 16, MAX_CAPSULES), tex_width, bone_count, MIN((int)p_boxes.size() / 32, MAX_BOXES) };
+	const bool aero = p_params.size() >= 32 && (p_params[28] != 0.0f || p_params[29] != 0.0f || p_params[30] != 0.0f) && (p_params[31] > 0.0f || p_params[25] > 0.0f);
+	int32_t counts[8] = { n, hash_size, MAX(p_substeps, 1), aero ? 1 : 0, MIN((int)p_capsules.size() / 16, MAX_CAPSULES), tex_width, bone_count, MIN((int)p_boxes.size() / 32, MAX_BOXES) };
 	memcpy(params, counts, sizeof(counts));
-	memcpy(params + 32, p_params.ptr(), MIN(p_params.size(), 28) * 4);
+	memcpy(params + 32, p_params.ptr(), MIN(p_params.size(), 32) * 4);
 	const bool self_collision = p_params.size() > 24 && p_params[24] > 0.0f;
 	rd->buffer_update(buf_params, 0, PARAMS_BYTES, params);
 
@@ -327,6 +329,9 @@ void SkinnedClothSolverGPU::rt_step(Ref<SkinnedClothSolverGPU> p_self, PackedFlo
 	const int batches = batch_offsets.size() - 1;
 	for (int s = 0; s < substeps; s++) {
 		const float frac = (float)(s + 1) / (float)substeps;
+		if (aero) {
+			run(MODE_AERO, 0, 0, frac, n);
+		}
 		run(MODE_INTEGRATE, 0, 0, frac, n);
 		for (int b = 0; b < batches; b++) {
 			const int start = batch_offsets[b];
@@ -425,7 +430,7 @@ void SkinnedClothSolver::step(const PackedFloat32Array &p_bones, const PackedFlo
 	// Velocity kept per substep from a per-second damping fraction.
 	const float keep = Math::pow(1.0f - CLAMP(p_settings.damping, 0.0f, 0.999f), dt);
 	PackedFloat32Array params;
-	params.resize(28);
+	params.resize(32);
 	params.fill(0.0f);
 	float *w = params.ptrw();
 	w[0] = dt;
@@ -442,6 +447,11 @@ void SkinnedClothSolver::step(const PackedFloat32Array &p_bones, const PackedFlo
 	w[10] = p_settings.friction;
 	w[11] = p_settings.backstop;
 	w[24] = MAX(p_settings.self_collision_thickness, 0.0f);
+	w[25] = MAX(p_settings.lift, 0.0f);
+	w[28] = p_settings.wind.x;
+	w[29] = p_settings.wind.y;
+	w[30] = p_settings.wind.z;
+	w[31] = MAX(p_settings.drag, 0.0f);
 	const Transform3D &o = p_settings.output_xform;
 	for (int r = 0; r < 3; r++) {
 		w[12 + r * 4 + 0] = o.basis.rows[r].x;

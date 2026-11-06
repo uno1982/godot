@@ -100,6 +100,9 @@ public:
 		float stiffness = 0.9f; // 0..1, applied per constraint pass on top of each constraint's own stiffness
 		float damping = 0.02f; // fraction of velocity lost per second
 		Vector3 gravity = Vector3(0, -9.8f, 0);
+		Vector3 wind; // world-space air velocity (m/s); zero = no air pass
+		float drag = 1.0f;
+		float lift = 0.2f;
 		float thickness = 0.01f;
 		float tether_slack = 1.03f; // a particle may drift this far beyond its rest distance to its anchor
 		float tether_stiffness = 1.0f;

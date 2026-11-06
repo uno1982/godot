@@ -30,6 +30,8 @@
 
 #include "physx_skinned_cloth_3d.h"
 
+#include "cloth_wind.h"
+
 #include "core/config/engine.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
@@ -191,6 +193,19 @@ void PhysXSkinnedCloth3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_extra_acceleration", "acceleration"), &PhysXSkinnedCloth3D::set_extra_acceleration);
 	ClassDB::bind_method(D_METHOD("get_extra_acceleration"), &PhysXSkinnedCloth3D::get_extra_acceleration);
 	ClassDB::bind_method(D_METHOD("get_effective_gravity"), &PhysXSkinnedCloth3D::get_effective_gravity);
+	ClassDB::bind_method(D_METHOD("set_wind_enabled", "enabled"), &PhysXSkinnedCloth3D::set_wind_enabled);
+	ClassDB::bind_method(D_METHOD("is_wind_enabled"), &PhysXSkinnedCloth3D::is_wind_enabled);
+	ClassDB::bind_method(D_METHOD("set_wind_area", "path"), &PhysXSkinnedCloth3D::set_wind_area);
+	ClassDB::bind_method(D_METHOD("get_wind_area"), &PhysXSkinnedCloth3D::get_wind_area);
+	ClassDB::bind_method(D_METHOD("set_wind", "wind"), &PhysXSkinnedCloth3D::set_wind);
+	ClassDB::bind_method(D_METHOD("get_wind"), &PhysXSkinnedCloth3D::get_wind);
+	ClassDB::bind_method(D_METHOD("set_wind_turbulence", "turbulence"), &PhysXSkinnedCloth3D::set_wind_turbulence);
+	ClassDB::bind_method(D_METHOD("get_wind_turbulence"), &PhysXSkinnedCloth3D::get_wind_turbulence);
+	ClassDB::bind_method(D_METHOD("set_drag", "drag"), &PhysXSkinnedCloth3D::set_drag);
+	ClassDB::bind_method(D_METHOD("get_drag"), &PhysXSkinnedCloth3D::get_drag);
+	ClassDB::bind_method(D_METHOD("set_lift", "lift"), &PhysXSkinnedCloth3D::set_lift);
+	ClassDB::bind_method(D_METHOD("get_lift"), &PhysXSkinnedCloth3D::get_lift);
+	ClassDB::bind_method(D_METHOD("get_effective_wind"), &PhysXSkinnedCloth3D::get_effective_wind);
 	ClassDB::bind_method(D_METHOD("get_animation_drive"), &PhysXSkinnedCloth3D::get_animation_drive);
 	ClassDB::bind_method(D_METHOD("set_collide_with_body", "enabled"), &PhysXSkinnedCloth3D::set_collide_with_body);
 	ClassDB::bind_method(D_METHOD("get_collide_with_body"), &PhysXSkinnedCloth3D::get_collide_with_body);
@@ -233,6 +248,14 @@ void PhysXSkinnedCloth3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "collision_radius_scale", PROPERTY_HINT_RANGE, "0.1,3,0.01"), "set_collision_radius_scale", "get_collision_radius_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "backstop", PROPERTY_HINT_RANGE, "-0.01,0.2,0.001,suffix:m"), "set_backstop", "get_backstop");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "animation_drive", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_animation_drive", "get_animation_drive");
+	ADD_GROUP("Wind", "wind_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "wind_enabled"), "set_wind_enabled", "is_wind_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "wind_area", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Area3D"), "set_wind_area", "get_wind_area");
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "wind", PROPERTY_HINT_NONE, "suffix:m/s"), "set_wind", "get_wind");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "wind_turbulence", PROPERTY_HINT_RANGE, "0,2,0.01"), "set_wind_turbulence", "get_wind_turbulence");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "drag", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_drag", "get_drag");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lift", PROPERTY_HINT_RANGE, "0,2,0.01,or_greater"), "set_lift", "get_lift");
+	ADD_GROUP("", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_world_gravity"), "set_use_world_gravity", "get_use_world_gravity");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "fixed_gravity", PROPERTY_HINT_NONE, "suffix:m/s\u00b2"), "set_fixed_gravity", "get_fixed_gravity");
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "extra_acceleration", PROPERTY_HINT_NONE, "suffix:m/s\u00b2"), "set_extra_acceleration", "get_extra_acceleration");
@@ -1233,6 +1256,14 @@ void PhysXSkinnedCloth3D::_advance(double p_delta) {
 	s.backstop = backstop;
 	s.animation_drive = animation_drive;
 	s.gravity = get_effective_gravity();
+	effective_wind = Vector3();
+	if (wind_enabled) {
+		wind_time += p_delta;
+		effective_wind = physx_cloth_sample_wind(wind, Object::cast_to<Area3D>(get_node_or_null(wind_area)), wind_turbulence, wind_time, get_global_position());
+	}
+	s.wind = effective_wind;
+	s.drag = drag;
+	s.lift = lift;
 	s.self_collision_thickness = self_collision ? self_collision_thickness : 0.0f;
 	s.output_xform = source->get_global_transform_interpolated().affine_inverse(); // (as drawn — matches the capture)
 	solver->step(captured_bones, capsule_data, box_data, p_delta, substeps, s);

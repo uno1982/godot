@@ -37,6 +37,12 @@
 				The max distances the cloth will be built with, one per vertex of [member surface]: [member max_distances] if it has one value per vertex, otherwise the vertex colors if [member use_vertex_color] is on and the mesh has them, otherwise [method compute_height_ramp]. Empty if the source mesh can't be found.
 			</description>
 		</method>
+		<method name="get_effective_wind" qualifiers="const">
+			<return type="Vector3" />
+			<description>
+				The air velocity the cloth last stepped with, in m/s: [member wind], [member wind_area] and [member wind_turbulence] together.
+			</description>
+		</method>
 		<method name="get_particle_count" qualifiers="const">
 			<return type="int" />
 			<description>
@@ -105,11 +111,17 @@
 		<member name="damping" type="float" setter="set_damping" getter="get_damping" default="0.05">
 			Fraction of the cloth's motion relative to the animated garment lost per second: settles swinging and jiggle. Moving the character doesn't count, so running doesn't push the cloth back like a headwind.
 		</member>
+		<member name="drag" type="float" setter="set_drag" getter="get_drag" default="1.0">
+			How hard air pushes on the cloth face-on, which makes it billow. It's per unit of cloth area, so a denser mesh blows the same. Only applies with wind.
+		</member>
 		<member name="extra_acceleration" type="Vector3" setter="set_extra_acceleration" getter="get_extra_acceleration" default="Vector3(0, 0, 0)">
-			A world-space acceleration added to the gravity, in m/s²: a game's own force field or a gust of wind, set every frame from script.
+			A world-space acceleration added to the gravity, in m/s²: a game's own force field, set every frame from script. It pushes all of the cloth equally: for wind, which depends on how the cloth faces, use [member wind].
 		</member>
 		<member name="fixed_gravity" type="Vector3" setter="set_fixed_gravity" getter="get_fixed_gravity" default="Vector3(0, -9.8, 0)">
 			The gravity the cloth uses when [member use_world_gravity] is off, in m/s².
+		</member>
+		<member name="lift" type="float" setter="set_lift" getter="get_lift" default="0.2">
+			Sideways push from air flowing across the cloth, which makes slack cloth ripple. Only applies with wind.
 		</member>
 		<member name="max_distance" type="float" setter="set_max_distance" getter="get_max_distance" default="0.4">
 			The largest max distance (meters) of the automatic painting: the ramp's value at the mesh's lowest point (it rises linearly from [code]0[/code] at [member pin_height]), and the value a vertex colour of [code]1[/code] maps to with [member use_vertex_color].
@@ -186,6 +198,18 @@
 		</member>
 		<member name="use_world_gravity" type="bool" setter="set_use_world_gravity" getter="get_use_world_gravity" default="true">
 			If [code]true[/code], the cloth falls with its world's gravity: the physics space's default (the [code]physics/3d/default_gravity[/code] project settings, or a change made to the space at run time). If [code]false[/code], it uses [member fixed_gravity].
+		</member>
+		<member name="wind" type="Vector3" setter="set_wind" getter="get_wind" default="Vector3(0, 0, 0)">
+			A constant world-space air velocity in m/s, added on top of any [member wind_area]. Cloth facing into it billows and cloth edge-on barely moves. Only the wind counts, not the cloth's own motion, so a running character doesn't get a headwind from its speed: for that, add it to [member wind] from script. [member backstop] still applies, so wind can't blow the cloth inward through the body. With no wind at all, the air pass doesn't run and costs nothing.
+		</member>
+		<member name="wind_area" type="NodePath" setter="set_wind_area" getter="get_wind_area" default="NodePath(&quot;&quot;)">
+			An [Area3D] whose wind settings (force, source, attenuation) drive the cloth, read wherever the cloth is: the cloth doesn't have to be inside the area.
+		</member>
+		<member name="wind_enabled" type="bool" setter="set_wind_enabled" getter="is_wind_enabled" default="true">
+			Master switch for [member wind], [member wind_area] and [member wind_turbulence].
+		</member>
+		<member name="wind_turbulence" type="float" setter="set_wind_turbulence" getter="get_wind_turbulence" default="0.4">
+			Adds a swirling gust on top of the steady wind, as a fraction of its speed. The whole cloth feels the same gust at once.
 		</member>
 	</members>
 </class>

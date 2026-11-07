@@ -54,8 +54,9 @@ inline Vector3 physx_cloth_sample_wind(const Vector3 &p_wind, const Area3D *p_ar
 		w += dir * (p_area->get_wind_force_magnitude() * Math::pow(proj, -att));
 	}
 
-	if (p_turbulence > 0.0f && w != Vector3()) {
-		const float speed = w.length();
+	// (Not on wind next to nothing, a gust fading away: its length can come out 0.)
+	const float speed = w.length();
+	if (p_turbulence > 0.0f && speed > CMP_EPSILON) {
 		const Vector3 dir = w / speed;
 		Vector3 perp = dir.cross(Vector3(0, 1, 0));
 		if (perp.length_squared() < 1.0e-4f) {

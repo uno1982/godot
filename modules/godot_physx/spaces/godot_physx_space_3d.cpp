@@ -1177,7 +1177,9 @@ bool GodotPhysXSpace3D::test_body_motion(GodotPhysXBody3D *p_body, const Physics
 						// into the step a little each frame and be pushed out over
 						// its top.
 						const bool pressed = round && (push_back > 0.02f || (hit.block.normal.y <= 0.3f && hit.block.normal.dot(-unit_dir) >= 0.001f));
-						if (!pressed && hit.block.normal.y > 0.3f && (!has_hit || safe_fraction > (real_t)0.0)) {
+						// A floor it's moving straight away from isn't one: a jump leaves it, however deep it started.
+						const bool leaving = hit.block.normal.dot(unit_dir) > 0.001f;
+						if (!pressed && !leaving && hit.block.normal.y > 0.3f && (!has_hit || safe_fraction > (real_t)0.0)) {
 							best_hit = hit.block;
 							has_hit = true;
 						} else if (pressed) {
@@ -1222,7 +1224,9 @@ bool GodotPhysXSpace3D::test_body_motion(GodotPhysXBody3D *p_body, const Physics
 		r_result->collision_safe_fraction = safe_fraction;
 		r_result->collision_unsafe_fraction = safe_fraction;
 
-		const bool recovery_hit = p_params.recovery_as_collision && rec_actor && rec_depth > (PxReal)CMP_EPSILON;
+		// As for the floor-like overlap above: what the motion moves away from it didn't hit.
+		const bool recovery_hit = p_params.recovery_as_collision && rec_actor && rec_depth > (PxReal)CMP_EPSILON &&
+				(motion_len <= CMP_EPSILON || rec_normal.dot(to_px(p_params.motion / motion_len)) <= 0.001f);
 
 		if (has_hit) {
 			GodotPhysXBody3D *other = static_cast<GodotPhysXBody3D *>(best_hit.actor->userData);

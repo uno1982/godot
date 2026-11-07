@@ -1499,11 +1499,15 @@ int PhysXDestructible3D::_spawn_island_piece(NvBlastActor *p_actor, PhysicsServe
 	return 1;
 }
 
+Transform3D PhysXDestructible3D::_pose_with_scale(const Transform3D &p_body_pose) const {
+	return Transform3D(p_body_pose.basis.orthonormalized().scaled_local(spawn_scale), p_body_pose.origin);
+}
+
 Transform3D PhysXDestructible3D::get_piece_transform(int p_index) const {
 	if (p_index < 0 || p_index >= (int)pieces.size() || !pieces[p_index].body.is_valid()) {
 		return Transform3D();
 	}
-	return PhysicsServer3D::get_singleton()->body_get_state(pieces[p_index].body, PhysicsServer3D::BODY_STATE_TRANSFORM);
+	return _pose_with_scale(PhysicsServer3D::get_singleton()->body_get_state(pieces[p_index].body, PhysicsServer3D::BODY_STATE_TRANSFORM));
 }
 
 uint32_t PhysXDestructible3D::get_piece_chunk(int p_index) const {
@@ -1546,7 +1550,7 @@ int PhysXDestructible3D::apply_radial_damage(const Vector3 &p_world_position, fl
 	if (!fractured && !pieces.is_empty() && pieces[0].body.is_valid()) {
 		const Transform3D t = ps->body_get_state(pieces[0].body, PhysicsServer3D::BODY_STATE_TRANSFORM);
 		if (t != Transform3D()) {
-			base_transform = t;
+			base_transform = _pose_with_scale(t);
 			base_linear = pieces[0].last_linear_velocity; // pre-impact, see ChunkVisual
 			base_angular = pieces[0].last_angular_velocity;
 		}
@@ -1579,7 +1583,7 @@ int PhysXDestructible3D::apply_radial_damage(const Vector3 &p_world_position, fl
 		if (actor_piece >= 0 && pieces[actor_piece].body.is_valid()) {
 			const Transform3D t = ps->body_get_state(pieces[actor_piece].body, PhysicsServer3D::BODY_STATE_TRANSFORM);
 			if (t != Transform3D()) {
-				damage_from_asset = t;
+				damage_from_asset = _pose_with_scale(t);
 			}
 		}
 		const Vector3 local_position = damage_from_asset.affine_inverse().xform(p_world_position);
@@ -1638,7 +1642,7 @@ int PhysXDestructible3D::apply_radial_damage(const Vector3 &p_world_position, fl
 			const RID body = pieces[actor_piece].body;
 			const Transform3D t = ps->body_get_state(body, PhysicsServer3D::BODY_STATE_TRANSFORM);
 			if (t != Transform3D()) {
-				pred_transform = t;
+				pred_transform = _pose_with_scale(t);
 				// The velocity from before this tick's contacts (see ChunkVisual):
 				// an impact's push stays with the chunks near it (their shatter
 				// kick), not with the whole predecessor.

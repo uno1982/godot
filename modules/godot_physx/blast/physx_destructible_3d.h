@@ -523,6 +523,9 @@ private:
 	// i.e. always from a moment before physics has had any chance to
 	// overwrite it.
 	Vector3 spawn_scale = Vector3(1, 1, 1);
+	// A pose read from a body, with that scale back on. A piece spawned from a bare pose collides at scale 1 under a
+	// mesh rendered at spawn_scale, and a damage point mapped through one lands in the wrong place.
+	Transform3D _pose_with_scale(const Transform3D &p_body_pose) const;
 
 	bool _load();
 	bool _load_asset_bytes(const PackedByteArray &p_bytes);

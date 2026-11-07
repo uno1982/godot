@@ -46,4 +46,8 @@ class PhysXBlastAsset;
 // -- both want the exact same "here is what actually broke" picture.
 Ref<ArrayMesh> physx_blast_build_preview_mesh(const Ref<PhysXBlastAsset> &p_asset);
 
+// Rebuilds p_mesh in place, so a preview showing it keeps its rotation, with each piece pushed out from the whole mesh's
+// center of volume by p_explode times its own center's distance from there (0 = the whole mesh, 1 = twice as far out).
+void physx_blast_update_preview_mesh(const Ref<ArrayMesh> &p_mesh, const Ref<PhysXBlastAsset> &p_asset, real_t p_explode);
+
 #endif // GODOT_PHYSX_BLAST

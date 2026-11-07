@@ -35,6 +35,9 @@
 #include "scene/gui/dialogs.h"
 
 class EditorResourcePicker;
+class HBoxContainer;
+class ArrayMesh;
+class HSlider;
 class Label;
 class Mesh;
 class MeshEditor;
@@ -78,6 +81,11 @@ class PhysXBlastFractureDialog : public ConfirmationDialog {
 	// (see PhysXBlastAuthoring's own notes on why), the caller supplies a
 	// grayscale bitmap directly.
 	EditorResourcePicker *cutout_pattern_picker = nullptr;
+	// Pulls the preview's pieces apart, to see their shapes and into the cuts. Only the preview: it changes nothing authored.
+	HBoxContainer *explode_row = nullptr;
+	HSlider *explode_slider = nullptr;
+	Ref<ArrayMesh> preview_mesh;
+	void _update_explode(double p_value);
 	Label *chunk_count_label = nullptr;
 	Label *status_label = nullptr; // why a fracture failed, or its warnings
 	void _show_status(const String &p_text, const Color &p_color);

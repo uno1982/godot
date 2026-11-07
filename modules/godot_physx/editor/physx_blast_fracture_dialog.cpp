@@ -53,6 +53,7 @@
 #include "scene/gui/button.h"
 #include "scene/gui/label.h"
 #include "scene/gui/option_button.h"
+#include "scene/gui/slider.h"
 #include "scene/gui/spin_box.h"
 #include "scene/resources/mesh.h"
 #include "scene/resources/texture.h"
@@ -61,6 +62,7 @@
 void PhysXBlastFractureDialog::_start(const Ref<Mesh> &p_mesh) {
 	source_mesh = p_mesh;
 	seed = 1;
+	explode_slider->set_value_no_signal(0.0);
 	_regenerate();
 	popup_centered(Size2(640, 560));
 }
@@ -106,6 +108,7 @@ void PhysXBlastFractureDialog::_regenerate() {
 		if (preview) {
 			preview->set_visible(false);
 		}
+		explode_row->set_visible(false);
 		get_ok_button()->set_disabled(true);
 		return;
 	}
@@ -121,7 +124,17 @@ void PhysXBlastFractureDialog::_regenerate() {
 
 	if (preview) {
 		preview->set_visible(true);
-		preview->edit(physx_blast_build_preview_mesh(authored_asset));
+		// Whole first: edit() fits the view to what it's given, so the view doesn't change as the pieces move.
+		preview_mesh = physx_blast_build_preview_mesh(authored_asset);
+		preview->edit(preview_mesh);
+		_update_explode(explode_slider->get_value());
+	}
+	explode_row->set_visible(true);
+}
+
+void PhysXBlastFractureDialog::_update_explode(double p_value) {
+	if (preview_mesh.is_valid() && authored_asset.is_valid()) {
+		physx_blast_update_preview_mesh(preview_mesh, authored_asset, p_value);
 	}
 }
 
@@ -248,6 +261,18 @@ PhysXBlastFractureDialog::PhysXBlastFractureDialog() {
 	chunk_count_label->set_h_size_flags(Control::SIZE_EXPAND_FILL);
 	chunk_count_label->set_horizontal_alignment(HORIZONTAL_ALIGNMENT_RIGHT);
 	controls->add_child(chunk_count_label);
+
+	explode_row = memnew(HBoxContainer);
+	root->add_child(explode_row);
+	explode_row->add_child(memnew(Label(TTR("Explode:"))));
+	explode_slider = memnew(HSlider);
+	explode_slider->set_min(0.0);
+	explode_slider->set_max(1.0);
+	explode_slider->set_step(0.01);
+	explode_slider->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	explode_slider->set_v_size_flags(Control::SIZE_SHRINK_CENTER);
+	explode_slider->connect(SceneStringName(value_changed), callable_mp(this, &PhysXBlastFractureDialog::_update_explode));
+	explode_row->add_child(explode_slider);
 
 	// Second row, only relevant (visible) for PATTERN_CUTOUT -- that
 	// pattern doesn't generate its own crack shape the way Voronoi/Slicing

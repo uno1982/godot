@@ -86,6 +86,12 @@ public:
 	// lets stacks and piles sink into each other and slump (a tall wall of loose boxes no longer holds).
 	inline static float max_depenetration_velocity = 0.0f;
 
+	// physics/physx_3d/simulation/jointed_position_iterations, jointed_velocity_iterations
+	// Solver iterations of a body with joints (ragdoll bones, hinged props). Bodies without joints stay at 4 / 1. On the
+	// GPU path the highest count of any body applies to the whole scene. Read once at start.
+	inline static int jointed_position_iterations = 8;
+	inline static int jointed_velocity_iterations = 2;
+
 	// physics/physx_3d/soft_body/mode
 	//
 	// Backend for the stock SoftBody3D node. 0 = Auto (GPU PxDeformableVolume

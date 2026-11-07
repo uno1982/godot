@@ -41,6 +41,8 @@ void GodotPhysXProjectSettings::register_settings() {
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "physics/physx_3d/simulation/max_depenetration_velocity", PROPERTY_HINT_RANGE, "0,100,0.1,suffix:m/s"), 0.0);
 #ifdef GODOT_PHYSX_GPU
 	GLOBAL_DEF(PropertyInfo(Variant::BOOL, "physics/physx_3d/simulation/gpu_dynamics"), true);
+	GLOBAL_DEF(PropertyInfo(Variant::INT, "physics/physx_3d/simulation/jointed_position_iterations", PROPERTY_HINT_RANGE, "1,32,1"), 8);
+	GLOBAL_DEF(PropertyInfo(Variant::INT, "physics/physx_3d/simulation/jointed_velocity_iterations", PROPERTY_HINT_RANGE, "1,32,1"), 2);
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "physics/physx_3d/soft_body/mode", PROPERTY_HINT_ENUM, "Auto,CPU,GPU"), 0);
 #else
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "physics/physx_3d/soft_body/mode", PROPERTY_HINT_ENUM, "Auto,CPU"), 0);
@@ -57,5 +59,7 @@ void GodotPhysXProjectSettings::read_settings() {
 	stabilization = GLOBAL_GET("physics/physx_3d/simulation/stabilization");
 	cpu_worker_threads = GLOBAL_GET("physics/physx_3d/simulation/cpu_worker_threads");
 	max_depenetration_velocity = GLOBAL_GET("physics/physx_3d/simulation/max_depenetration_velocity");
+	jointed_position_iterations = CLAMP((int)GLOBAL_GET("physics/physx_3d/simulation/jointed_position_iterations"), 1, 32);
+	jointed_velocity_iterations = CLAMP((int)GLOBAL_GET("physics/physx_3d/simulation/jointed_velocity_iterations"), 1, 32);
 	soft_body_mode = GLOBAL_GET("physics/physx_3d/soft_body/mode");
 }

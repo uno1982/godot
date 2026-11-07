@@ -1078,7 +1078,7 @@ void GodotPhysXBody3D::_apply_solver_iterations() {
 	if (joints.is_empty()) {
 		dyn->setSolverIterationCounts(SOLVER_ITERS_DEFAULT_POS, SOLVER_ITERS_DEFAULT_VEL);
 	} else {
-		dyn->setSolverIterationCounts(SOLVER_ITERS_JOINTED_POS, SOLVER_ITERS_JOINTED_VEL);
+		dyn->setSolverIterationCounts((PxU32)GodotPhysXProjectSettings::jointed_position_iterations, (PxU32)GodotPhysXProjectSettings::jointed_velocity_iterations);
 	}
 }
 

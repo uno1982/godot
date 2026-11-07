@@ -277,6 +277,46 @@ bool is_closed(const LocalVector<uint32_t> &p_indices) {
 	return !edges.is_empty();
 }
 
+// The UVs of a cut face, in mesh units (1 UV = 1 unit, so a material's uv1_scale sets the tiling). Blast's own come from
+// the corners of a huge cutting box: their density has nothing to do with the mesh's size and each cut gets its own. Each
+// cut plane is projected straight on instead, so nothing stretches and all the pieces share one density. The plane's
+// normal is taken with one sign, so the two faces of a crack read the same part of a texture.
+class CutFaceUVs {
+	struct Plane {
+		Vector3 normal;
+		Vector3 u;
+		Vector3 v;
+	};
+	LocalVector<Plane> planes;
+
+public:
+	Vector2 uv(const Vector3 &p_point, const Vector3 &p_face_normal) {
+		// About 5 degrees: a face's triangles differ by float error, slivers the most, and sharing a plane with one
+		// this close is invisible.
+		const real_t same_plane = 0.996;
+		const Plane *plane = nullptr;
+		for (const Plane &candidate : planes) {
+			if (Math::abs(candidate.normal.dot(p_face_normal)) > same_plane) {
+				plane = &candidate;
+				break;
+			}
+		}
+		if (!plane) {
+			Plane added;
+			const int axis = p_face_normal.abs().max_axis_index();
+			added.normal = p_face_normal[axis] < 0.0 ? -p_face_normal : p_face_normal;
+			// Up stays up on a wall.
+			const Vector3 up = Math::abs(added.normal.y) < 0.9 ? Vector3(0, 1, 0) : Vector3(0, 0, -1);
+			added.u = up.cross(added.normal).normalized();
+			added.v = added.normal.cross(added.u);
+			planes.push_back(added);
+			plane = &planes[planes.size() - 1];
+		}
+		// Texture V runs down.
+		return Vector2(plane->u.dot(p_point), -plane->v.dot(p_point));
+	}
+};
+
 } //namespace
 
 void PhysXBlastAuthoring::_bind_methods() {
@@ -326,6 +366,7 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 		return _fail("PhysXBlastAuthoring: mesh has too few vertices.");
 	}
 	PackedVector3Array src_normals = arrays[Mesh::ARRAY_NORMAL];
+	const PackedVector2Array src_uvs = arrays[Mesh::ARRAY_TEX_UV];
 	PackedInt32Array src_indices = arrays[Mesh::ARRAY_INDEX];
 
 	LocalVector<NvcVec3> positions;
@@ -336,12 +377,11 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 	uvs.resize(verts.size());
 	for (int i = 0; i < verts.size(); i++) {
 		positions[i] = { verts[i].x, verts[i].y, verts[i].z };
-		// A flat placeholder if the mesh has none -- Blast's Voronoi split
-		// doesn't need correct normals, and nothing downstream ever reads
-		// them back (see GodotConvexMeshBuilder's own comment).
+		// A placeholder if the mesh has none: Blast's cuts don't need correct normals, and the pieces get flat ones then.
 		const Vector3 n = (i < src_normals.size()) ? src_normals[i] : Vector3(0, 1, 0);
 		normals[i] = { n.x, n.y, n.z };
-		uvs[i] = { 0.0f, 0.0f };
+		const Vector2 uv = (i < src_uvs.size()) ? src_uvs[i] : Vector2();
+		uvs[i] = { uv.x, uv.y };
 	}
 
 	LocalVector<uint32_t> indices;
@@ -389,7 +429,8 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 		const Vector3 &c = verts[indices[t + 2]];
 		signed_volume += a.dot(c.cross(b));
 	}
-	if (signed_volume < 0.0) {
+	const bool inside_out = signed_volume < 0.0;
+	if (inside_out) {
 		for (uint32_t t = 0; t < indices.size(); t += 3) {
 			SWAP(indices[t + 1], indices[t + 2]);
 		}
@@ -582,24 +623,63 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 			memcpy(asset_bytes.ptrw(), ares->asset, asset_size);
 
 			Array chunk_points;
+			Array chunk_normals;
+			Array chunk_uvs;
+			PackedInt32Array chunk_interior_starts;
 			chunk_points.resize(ares->chunkCount);
+			chunk_normals.resize(ares->chunkCount);
+			chunk_uvs.resize(ares->chunkCount);
+			chunk_interior_starts.resize(ares->chunkCount);
+			CutFaceUVs cut_face_uvs;
 			for (uint32_t c = 0; c < ares->chunkCount; c++) {
+				PackedVector3Array points;
+				PackedVector3Array vertex_normals;
+				PackedVector2Array vertex_uvs;
 				const uint32_t begin = ares->geometryOffset[c];
 				const uint32_t end = ares->geometryOffset[c + 1];
-				PackedVector3Array points;
-				points.resize((end - begin) * 3);
-				for (uint32_t t = begin; t < end; t++) {
-					const Nv::Blast::Triangle &tri = ares->geometry[t];
-					points.write[(t - begin) * 3 + 0] = Vector3(tri.a.p.x, tri.a.p.y, tri.a.p.z);
-					points.write[(t - begin) * 3 + 1] = Vector3(tri.b.p.x, tri.b.p.y, tri.b.p.z);
-					points.write[(t - begin) * 3 + 2] = Vector3(tri.c.p.x, tri.c.p.y, tri.c.p.z);
+				// The source mesh's faces, then the cut ones.
+				for (int interior = 0; interior < 2; interior++) {
+					if (interior == 1) {
+						chunk_interior_starts.write[c] = points.size();
+					}
+					for (uint32_t t = begin; t < end; t++) {
+						const Nv::Blast::Triangle &tri = ares->geometry[t];
+						if ((tri.materialId == (int32_t)Nv::Blast::kMaterialInteriorId) != (interior == 1)) {
+							continue;
+						}
+						const Nv::Blast::Vertex *corners[3] = { &tri.a, &tri.b, &tri.c };
+						Vector3 p[3];
+						for (int v = 0; v < 3; v++) {
+							p[v] = Vector3(corners[v]->p.x, corners[v]->p.y, corners[v]->p.z);
+						}
+						// The winding PhysXDestructible3D renders them with: see _compute_chunk_surfaces().
+						Vector3 face_normal = (p[2] - p[0]).cross(p[1] - p[0]);
+						face_normal = face_normal.is_zero_approx() ? Vector3(0, 1, 0) : face_normal.normalized();
+						for (int v = 0; v < 3; v++) {
+							points.push_back(p[v]);
+							if (interior == 1) {
+								vertex_normals.push_back(face_normal);
+								vertex_uvs.push_back(cut_face_uvs.uv(p[v], face_normal));
+							} else {
+								Vector3 n(corners[v]->n.x, corners[v]->n.y, corners[v]->n.z);
+								n = inside_out ? -n : n;
+								vertex_normals.push_back(src_normals.is_empty() || n.is_zero_approx() ? face_normal : n.normalized());
+								vertex_uvs.push_back(Vector2(corners[v]->uv[0].x, corners[v]->uv[0].y));
+							}
+						}
+					}
 				}
 				chunk_points[c] = points;
+				chunk_normals[c] = vertex_normals;
+				chunk_uvs[c] = vertex_uvs;
 			}
 
 			result.instantiate();
 			result->set_asset_bytes(asset_bytes);
 			result->set_chunk_points(chunk_points);
+			result->set_chunk_normals(chunk_normals);
+			result->set_chunk_uvs(chunk_uvs);
+			result->set_chunk_interior_starts(chunk_interior_starts);
 
 			NvBlastExtAuthoringReleaseAuthoringResult(collision_builder, ares);
 		}

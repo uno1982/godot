@@ -64,7 +64,20 @@ public:
 
 	int get_chunk_count() const { return chunk_points.size(); }
 
+	// Aligned with chunk_points, and empty in an asset fractured before these existed (flat, untextured pieces):
+	// chunk_normals[i] a PackedVector3Array, chunk_uvs[i] a PackedVector2Array.
+	void set_chunk_normals(const Array &p_normals) { chunk_normals = p_normals; }
+	Array get_chunk_normals() const { return chunk_normals; }
+	void set_chunk_uvs(const Array &p_uvs) { chunk_uvs = p_uvs; }
+	Array get_chunk_uvs() const { return chunk_uvs; }
+	// Where each chunk's interior (cut) faces start in its points: the source mesh's faces come first.
+	void set_chunk_interior_starts(const PackedInt32Array &p_starts) { chunk_interior_starts = p_starts; }
+	PackedInt32Array get_chunk_interior_starts() const { return chunk_interior_starts; }
+
 private:
 	PackedByteArray asset_bytes;
 	Array chunk_points;
+	Array chunk_normals;
+	Array chunk_uvs;
+	PackedInt32Array chunk_interior_starts;
 };

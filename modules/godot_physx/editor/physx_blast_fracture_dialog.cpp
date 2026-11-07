@@ -172,6 +172,9 @@ void PhysXBlastFractureDialog::_on_confirmed() {
 		destructible->set_name(old_node->get_name());
 		destructible->set_transform(old_node->get_transform());
 		destructible->set_blast_asset(authored_asset);
+		if (MeshInstance3D *mi = Object::cast_to<MeshInstance3D>(old_node)) {
+			destructible->set_material_override(mi->get_active_material(0));
+		}
 
 		EditorUndoRedoManager *ur = EditorUndoRedoManager::get_singleton();
 		ur->create_action(TTR("Fracture Mesh with Blast"));

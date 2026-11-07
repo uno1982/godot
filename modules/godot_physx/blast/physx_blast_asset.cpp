@@ -38,7 +38,16 @@ void PhysXBlastAsset::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_chunk_points", "points"), &PhysXBlastAsset::set_chunk_points);
 	ClassDB::bind_method(D_METHOD("get_chunk_points"), &PhysXBlastAsset::get_chunk_points);
 	ClassDB::bind_method(D_METHOD("get_chunk_count"), &PhysXBlastAsset::get_chunk_count);
+	ClassDB::bind_method(D_METHOD("set_chunk_normals", "normals"), &PhysXBlastAsset::set_chunk_normals);
+	ClassDB::bind_method(D_METHOD("get_chunk_normals"), &PhysXBlastAsset::get_chunk_normals);
+	ClassDB::bind_method(D_METHOD("set_chunk_uvs", "uvs"), &PhysXBlastAsset::set_chunk_uvs);
+	ClassDB::bind_method(D_METHOD("get_chunk_uvs"), &PhysXBlastAsset::get_chunk_uvs);
+	ClassDB::bind_method(D_METHOD("set_chunk_interior_starts", "starts"), &PhysXBlastAsset::set_chunk_interior_starts);
+	ClassDB::bind_method(D_METHOD("get_chunk_interior_starts"), &PhysXBlastAsset::get_chunk_interior_starts);
 
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_BYTE_ARRAY, "asset_bytes"), "set_asset_bytes", "get_asset_bytes");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "chunk_points"), "set_chunk_points", "get_chunk_points");
+	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "chunk_normals"), "set_chunk_normals", "get_chunk_normals");
+	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "chunk_uvs"), "set_chunk_uvs", "get_chunk_uvs");
+	ADD_PROPERTY(PropertyInfo(Variant::PACKED_INT32_ARRAY, "chunk_interior_starts"), "set_chunk_interior_starts", "get_chunk_interior_starts");
 }

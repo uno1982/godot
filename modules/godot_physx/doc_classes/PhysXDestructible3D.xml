@@ -89,6 +89,9 @@
 		<member name="impact_strength" type="float" setter="set_impact_strength" getter="get_impact_strength" default="5.0">
 			[member dynamic]-only. The minimum contact impulse (roughly mass × velocity change, in Godot's physics units) that counts as an impact worth reacting to at all -- landing softly or a gentle bump below this is ignored entirely, no damage applied. Raise it to make the object tolerate harder knocks before it can self-fracture; it has no effect on how much damage a qualifying impact deals (see [member impact_damage_scale] for that).
 		</member>
+		<member name="interior_material" type="Material" setter="set_interior_material" getter="get_interior_material">
+			Material for the faces a fracture cut, the inside of the mesh. Without one they use [member material_override] like the rest. Their UVs are in mesh units, 1 UV to 1 unit (a texture covers 1 m in a mesh modeled in metres), so set the tiling with the material's [member BaseMaterial3D.uv1_scale]. They don't stretch, every piece has the same texture density, and the two faces of a crack show the same part of the texture. Needs an asset fractured with UVs: see [member PhysXBlastAsset.chunk_uvs].
+		</member>
 		<member name="kill_y" type="float" setter="set_kill_y" getter="get_kill_y" default="-1000.0">
 			A piece (fractured debris, or the intact body itself if [member dynamic]) whose world-space Y position falls below this is freed automatically. Bounds memory/body count for a scene where something can fall indefinitely -- no floor everywhere, a gap, missing the pile entirely -- instead of debris simulating forever off in the void. The default is low enough not to trigger in an ordinary scene; set it to match this scene's actual floor or void.
 		</member>
@@ -102,7 +105,7 @@
 			A second material layered on top of every piece's render mesh, the same as [member GeometryInstance3D.material_overlay] -- decals, damage overlays, and the like, without replacing the base material the way [member material_override] does.
 		</member>
 		<member name="material_override" type="Material" setter="set_material_override" getter="get_material_override">
-			Material applied to every piece's render mesh, intact or fractured, in place of the source mesh's own materials (which aren't carried over by the fracture process).
+			Material applied to every piece's render mesh, intact or fractured. The asset keeps the source mesh's UVs but not its materials; the [b]Fracture with Blast[/b] dialog sets this to the first surface's material when it replaces a [MeshInstance3D]. See also [member interior_material].
 		</member>
 		<member name="piece_lifetime" type="float" setter="set_piece_lifetime" getter="get_piece_lifetime" default="0.0">
 			Seconds a moving piece lives after it breaks off before it's removed, so debris doesn't pile up forever. [code]0[/code] (the default) keeps pieces until they pass [member kill_y]. Only debris ages: a static piece, such as the anchored remainder of a chipped wall, stays. A piece that breaks again starts its own children's clocks afresh. See also [member piece_shrink_time].

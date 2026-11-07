@@ -99,6 +99,8 @@ public:
 
 	void set_material_override(const Ref<Material> &p_material);
 	Ref<Material> get_material_override() const { return material_override_res; }
+	void set_interior_material(const Ref<Material> &p_material);
+	Ref<Material> get_interior_material() const { return interior_material_res; }
 
 	// Every piece's RenderingServer instance is created directly via
 	// instance_create2() (see _spawn_piece()), not through a real
@@ -366,6 +368,7 @@ private:
 	String chunks_path;
 	Ref<PhysXBlastAsset> blast_asset;
 	Ref<Material> material_override_res;
+	Ref<Material> interior_material_res;
 	GIMode gi_mode = GI_MODE_STATIC;
 	ShadowCastingSetting cast_shadow = SHADOW_CASTING_SETTING_ON;
 	float transparency = 0.0f;
@@ -429,16 +432,22 @@ private:
 	RID _chunk_shape(uint32_t p_chunk);
 	// Per-chunk render data, by material slot, computed once per load. A
 	// piece's mesh gets ONE surface per slot (not per chunk: an island of
-	// ~190 chunks was ~190 draw calls). Every chunk is slot 0 today -- the
-	// asset keeps positions only; an interior-face slot (Blast's
-	// kMaterialInteriorId) slots in here once authoring keeps it.
+	// ~190 chunks was ~190 draw calls). Slot 0 is the source mesh's faces,
+	// slot 1 the cut ones. An asset from before these were kept is all slot 0,
+	// without UVs or tangents.
+	static constexpr int SLOT_OUTER = 0;
+	static constexpr int SLOT_INTERIOR = 1;
 	struct ChunkSurface {
-		int slot = 0;
+		int slot = SLOT_OUTER;
 		PackedVector3Array vertices;
 		PackedVector3Array normals;
+		PackedVector2Array uvs;
+		PackedFloat32Array tangents;
 	};
 	LocalVector<LocalVector<ChunkSurface>> chunk_surfaces;
 	void _compute_chunk_surfaces();
+	struct ChunkVisual;
+	void _apply_piece_materials(RenderingServer *p_rs, const ChunkVisual &p_piece) const;
 	void _free_chunk_cache();
 	// Whether an island made of p_chunks stays STATIC under `anchor`.
 	bool _island_anchored(const LocalVector<uint32_t> &p_chunks) const;
@@ -448,6 +457,9 @@ private:
 		RID body; // its shapes are the shared chunk_shapes[] of chunk_indices, not owned
 		RID mesh;
 		RID instance;
+		// The mesh's surface of each slot, -1 for none: a piece may have no cut faces, or nothing but.
+		int outer_surface = -1;
+		int interior_surface = -1;
 		// Which asset chunks this piece renders/collides, aligned with
 		// `shapes`. One entry while intact (chunk 0, the placeholder) and
 		// for a single-chunk (leaf) split product; an island split product

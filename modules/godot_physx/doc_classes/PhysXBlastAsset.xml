@@ -20,8 +20,17 @@
 		<member name="asset_bytes" type="PackedByteArray" setter="set_asset_bytes" getter="get_asset_bytes" default="PackedByteArray()">
 			The raw NvBlast asset data (bond/chunk support-graph structure) -- a single relocatable memory block per NvBlast's own design, stored here as-is. Not meaningful to edit by hand.
 		</member>
+		<member name="chunk_interior_starts" type="PackedInt32Array" setter="set_chunk_interior_starts" getter="get_chunk_interior_starts" default="PackedInt32Array()">
+			For each chunk, the index in its [member chunk_points] where its interior (cut) faces start. The faces of the source mesh come first. Not meaningful to edit by hand.
+		</member>
+		<member name="chunk_normals" type="Array" setter="set_chunk_normals" getter="get_chunk_normals" default="[]">
+			Per-chunk vertex normals, one [PackedVector3Array] per chunk, aligned with [member chunk_points]. Empty in an asset fractured before these were kept: fracture the mesh again to get them. Not meaningful to edit by hand.
+		</member>
 		<member name="chunk_points" type="Array" setter="set_chunk_points" getter="get_chunk_points" default="[]">
 			Per-chunk render-mesh triangle-soup positions, in the source mesh's local space -- one [PackedVector3Array] per chunk, index-matched to [member asset_bytes]' own chunk indices. Not meaningful to edit by hand.
+		</member>
+		<member name="chunk_uvs" type="Array" setter="set_chunk_uvs" getter="get_chunk_uvs" default="[]">
+			Per-chunk vertex UVs, one [PackedVector2Array] per chunk, aligned with [member chunk_points]. Empty in an asset fractured before these were kept: fracture the mesh again to get them. Not meaningful to edit by hand.
 		</member>
 	</members>
 </class>

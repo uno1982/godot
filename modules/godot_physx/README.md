@@ -836,6 +836,17 @@ static/dynamic baking per piece (defaults to Static, matching a plain
 fracture can spawn many pieces at once and a VoxelGI's dynamic-object
 tracking cost scales with how many it has to follow).
 
+Pieces keep the source mesh's UVs and normals through the cuts, and have
+tangents for normal maps. `material_override` textures them (the fracture dialog
+sets it from the mesh's material), and `interior_material` gives the cut faces
+their own: rock inside a painted wall, splinters inside a plank. Cut-face UVs are
+in mesh units, 1 UV to 1 unit, so the material's `uv1_scale` sets the tiling. They
+don't stretch, every piece has the same texture density, and the two faces of a
+crack show the same part of the texture, while each flat cut gets its own
+projection, so the pattern doesn't line up from one face of a piece to the next.
+Only the mesh's first surface is fractured. An asset saved before this keeps
+working, flat-shaded and without UVs: fracture the mesh again to get them.
+
 ## Vehicles — `PhysXVehicle3D`, `PhysXMotorcycle3D`, `PhysXTank3D`
 
 Vehicle nodes backed by PhysX's `PxVehicle2`. The stock `VehicleBody3D` /

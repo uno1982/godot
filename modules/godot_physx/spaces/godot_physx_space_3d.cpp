@@ -681,7 +681,6 @@ public:
 	const GodotPhysXBody3D *self_body = nullptr;
 	const HashSet<RID> *exclude_bodies = nullptr;
 	const HashSet<ObjectID> *exclude_objects = nullptr;
-	uint32_t self_layer = 0;
 	uint32_t self_mask = 0;
 
 	virtual PxQueryHitType::Enum preFilter(const PxFilterData &, const PxShape *p_shape, const PxRigidActor *p_actor, PxHitFlags &) override {
@@ -705,10 +704,9 @@ public:
 		if (exclude_objects && exclude_objects->has(b->get_instance_id())) {
 			return PxQueryHitType::eNONE;
 		}
-		// Same collision-layer/mask rule as regular contacts: hit only if
-		// either side's mask matches the other's layer.
-		const bool collide = (self_layer & b->get_collision_mask()) || (b->get_collision_layer() & self_mask);
-		if (!collide) {
+		// The moving body's own mask only (as Godot Physics' motion test), unlike contacts: what masks this body but
+		// isn't masked by it bounces off it, and is no obstacle or floor to it.
+		if (!(b->get_collision_layer() & self_mask)) {
 			return PxQueryHitType::eNONE;
 		}
 		return PxQueryHitType::eBLOCK;
@@ -921,7 +919,6 @@ bool GodotPhysXSpace3D::test_body_motion(GodotPhysXBody3D *p_body, const Physics
 	filter.self_body = p_body;
 	filter.exclude_bodies = &p_params.exclude_bodies;
 	filter.exclude_objects = &p_params.exclude_objects;
-	filter.self_layer = p_body->get_collision_layer();
 	filter.self_mask = p_body->get_collision_mask();
 	PxQueryFilterData fd(PxQueryFlag::eSTATIC | PxQueryFlag::eDYNAMIC | PxQueryFlag::ePREFILTER);
 	const PxVec3 motion_dir = p_params.motion.length() > CMP_EPSILON ? to_px(p_params.motion.normalized()) : PxVec3(0.0f);
@@ -1286,7 +1283,6 @@ void GodotPhysXSpace3D::_apply_separation_rays(real_t p_step) {
 		MotionFilter filter;
 		filter.self_actor = dyn;
 		filter.self_body = body;
-		filter.self_layer = body->get_collision_layer();
 		filter.self_mask = body->get_collision_mask();
 		const PxQueryFilterData fd(PxQueryFlag::eSTATIC | PxQueryFlag::eDYNAMIC | PxQueryFlag::ePREFILTER);
 

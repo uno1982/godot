@@ -100,6 +100,8 @@ void fragment() {
 	ALPHA_HASH_SCALE = 1.0;
 	light_tangent = normalize(v_tangent);
 	light_shadow = v_shadow;
+	light_roughness = hair_roughness;
+	light_model = float(shading_model);
 	// Ambient light, from every direction: the strands in the way on average.
 	AO = exp(-self_shadow * max(0.0, v_shadow.x * 0.282095));
 }

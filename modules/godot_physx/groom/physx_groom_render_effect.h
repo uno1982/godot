@@ -97,7 +97,7 @@ private:
 	static HashMap<ObjectID, int> worlds; // screen-space grooms, per world
 	// The two proxy quads of each world: the strand behind, then the strand in front.
 	static constexpr int LAYERS = 2;
-	static constexpr int TEXTURES = 5;
+	static constexpr int TEXTURES = 7;
 	static HashMap<ObjectID, RID> proxies[LAYERS];
 	static Ref<QuadMesh> proxy_meshes[LAYERS];
 	static Ref<ShaderMaterial> proxy_materials[LAYERS];
@@ -129,7 +129,8 @@ private:
 	Size2i frame_size;
 	RID coverage_u, depth_u, depth2_u, front_cover;
 	// a: view-space strand direction, place along it; b: eye depth, coverage, the front strand's share, the second
-	// strand's eye depth; c: self-shadowing, view space; a2, c2: a and c of the second strand.
+	// strand's eye depth; c: self-shadowing, view space, times the groom's strength; d: the groom's color at that place
+	// along the strand, roughness + 2 * shading model; a2, c2, d2: a, c and d of the second strand.
 	RID hair[TEXTURES];
 	struct Retired {
 		RID rid;

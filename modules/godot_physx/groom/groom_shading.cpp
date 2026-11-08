@@ -41,6 +41,10 @@ uniform float multiple_scattering = 0.6;
 
 varying vec3 light_tangent;
 varying vec4 light_shadow;
+// The roughness and shading model the light pass uses (fragment() sets them: per pixel in screen space, one groom to a
+// pixel there).
+varying float light_roughness;
+varying float light_model;
 
 // The groom's own strands between a point and the direction d (both in the same space): see groom_self_shadow.h.
 float strands_toward(vec4 sh, vec3 d) {
@@ -88,7 +92,7 @@ void light() {
 	// The hair between this point and the light, from the baked self-shadowing.
 	float through = exp(-self_shadow * strands_toward(light_shadow, LIGHT)) * ATTENUATION;
 
-	if (shading_model == 0) {
+	if (light_model < 0.5) {
 		float tl = dot(light_tangent, LIGHT);
 		float across = sqrt(max(1.0 - tl * tl, 0.0));
 		// Lit from behind, a strand still passes some light through.
@@ -96,7 +100,7 @@ void light() {
 		DIFFUSE_LIGHT += across * facing * through * LIGHT_COLOR / PI;
 		vec3 h = normalize(LIGHT + VIEW);
 		// Rougher, wider highlights: 90 and 24 at the default roughness of 0.35.
-		float sharpness = 11.0 / max(hair_roughness * hair_roughness, 0.01);
+		float sharpness = 11.0 / max(light_roughness * light_roughness, 0.01);
 		float primary = strand_highlight(normalize(light_tangent - NORMAL * 0.08), h, sharpness);
 		float secondary = strand_highlight(normalize(light_tangent + NORMAL * 0.12), h, sharpness / 3.75);
 		SPECULAR_LIGHT += (primary * 0.06 + secondary * 0.12 * ALBEDO) * facing * through * LIGHT_COLOR;
@@ -115,7 +119,7 @@ void light() {
 		float cos_half_phi = sqrt(clamp(0.5 + 0.5 * cos_phi, 0.0, 1.0));
 
 		// Lobe widths and shifts (radians), from the roughness.
-		float r2 = hair_roughness * hair_roughness;
+		float r2 = light_roughness * light_roughness;
 		const float shift = 0.035;
 		float m_r = hair_longitudinal(max(r2, 0.02), theta_h + 2.0 * shift);
 		float m_tt = hair_longitudinal(max(r2 * 0.5, 0.01), theta_h - shift);

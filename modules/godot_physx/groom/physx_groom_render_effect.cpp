@@ -120,11 +120,15 @@ layout(set = 0, binding = 7, r32ui) uniform restrict uimage2D depth2_img;
 layout(set = 0, binding = 8, rgba16f) uniform restrict writeonly image2D hair_a2;
 layout(set = 0, binding = 9, rgba16f) uniform restrict writeonly image2D hair_c2;
 layout(set = 0, binding = 10, r32f) uniform restrict writeonly image2D front_cover_img;
+layout(set = 0, binding = 11, rgba16f) uniform restrict writeonly image2D hair_d;
+layout(set = 0, binding = 12, rgba16f) uniform restrict writeonly image2D hair_d2;
 
 layout(push_constant, std430) uniform Groom {
 	mat4 model;
 	vec4 lod; // x: strands drawn (0-1), y: width scale (the LOD's widening in), z: the model's scale
-	ivec4 info; // x: points, y: 0 coverage and the nearest depth, 1 the second nearest, 2 the two strands' attributes
+	ivec4 info; // x: points, y: 0 coverage and the nearest depth, 1 the second nearest, 2 the two strands' attributes; z: shading model
+	vec4 root; // the groom's look: root color (linear), self-shadowing strength
+	vec4 tip; // tip color (linear), roughness
 } g;
 
 float scene_eye_depth(ivec2 px) {
@@ -197,16 +201,23 @@ void shade_pixel(ivec2 px) {
 	vec4 b1 = data[segment * 3u + 4u];
 	mat3 turn = mat3(p.view * g.model);
 	turn = mat3(normalize(turn[0]), normalize(turn[1]), normalize(turn[2]));
-	vec4 sh = turn_strands(mix(data[segment * 3u + 2u], data[segment * 3u + 5u], so), turn);
+	// The groom's self-shadowing strength in: the lighting's exp(-strength * strands) is linear in the strands.
+	vec4 sh = turn_strands(mix(data[segment * 3u + 2u], data[segment * 3u + 5u], so), turn) * g.root.w;
 	// The direction turns smoothly along the strand, not at each point: a highlight then slides along it.
 	vec4 a = vec4(normalize(mix(ta, tb, so)), mix(a1.x, b1.x, so));
+	// The groom's own look: its color along the strand (as strand_albedo), roughness, and shading model (2 per model).
+	float along = a.w;
+	vec3 albedo = mix(g.root.rgb, g.tip.rgb, along) * mix(0.55, 1.0, smoothstep(0.0, 0.35, along));
+	vec4 look = vec4(albedo, g.tip.w + 2.0 * float(g.info.z));
 	if (first) {
 		imageStore(hair_a, px, a);
 		imageStore(hair_c, px, sh);
+		imageStore(hair_d, px, look);
 		imageStore(front_cover_img, px, vec4(cover));
 	} else {
 		imageStore(hair_a2, px, a);
 		imageStore(hair_c2, px, sh);
+		imageStore(hair_d2, px, look);
 	}
 }
 
@@ -330,6 +341,8 @@ uniform sampler2D hair_b : filter_nearest, repeat_disable;
 uniform sampler2D hair_c : filter_nearest, repeat_disable;
 uniform sampler2D hair_a2 : filter_nearest, repeat_disable;
 uniform sampler2D hair_c2 : filter_nearest, repeat_disable;
+uniform sampler2D hair_d : filter_nearest, repeat_disable;
+uniform sampler2D hair_d2 : filter_nearest, repeat_disable;
 uniform int layer = 0;
 
 void vertex() {
@@ -347,11 +360,13 @@ void fragment() {
 	float eye;
 	vec4 a;
 	vec4 sh;
+	vec4 d;
 	if (layer == 0) {
 		alpha = front;
 		eye = b.x;
 		a = texture(hair_a, SCREEN_UV);
 		sh = texture(hair_c, SCREEN_UV);
+		d = texture(hair_d, SCREEN_UV);
 	} else {
 		// Under the front strand's share, blended over: what covers the rest of the hair's.
 		alpha = front < 0.999 ? max(cover - front, 0.0) / (1.0 - front) : 0.0;
@@ -359,6 +374,7 @@ void fragment() {
 		eye = behind ? b.w : b.x;
 		a = behind ? texture(hair_a2, SCREEN_UV) : texture(hair_a, SCREEN_UV);
 		sh = behind ? texture(hair_c2, SCREEN_UV) : texture(hair_c, SCREEN_UV);
+		d = behind ? texture(hair_d2, SCREEN_UV) : texture(hair_d, SCREEN_UV);
 	}
 	if (alpha <= 0.002) {
 		discard;
@@ -371,9 +387,12 @@ void fragment() {
 	vec3 v = normalize(-at);
 	vec3 facing = v - t * dot(v, t);
 	NORMAL = dot(facing, facing) > 1e-6 ? normalize(facing) : v;
-	ALBEDO = strand_albedo(a.w);
-	if (shading_model == 1) {
-		ROUGHNESS = hair_roughness;
+	// The groom's look, from the compute pass (self_shadow is 1 here: the strength is in sh already).
+	ALBEDO = d.rgb;
+	light_model = d.a >= 1.5 ? 1.0 : 0.0;
+	light_roughness = d.a - 2.0 * light_model;
+	if (light_model > 0.5) {
+		ROUGHNESS = light_roughness;
 		SPECULAR = 0.0;
 	} else {
 		ROUGHNESS = 0.6;
@@ -424,7 +443,7 @@ void PhysXGroomRenderEffect::attach_world(World3D *p_world) {
 	if (proxy_shader.is_null()) {
 		proxy_shader.instantiate();
 		proxy_shader->set_code(String(PROXY_SHADER_HEAD) + GROOM_SHADING_COMMON + PROXY_SHADER_BODY + GROOM_SHADING_LIGHT);
-		const char *names[TEXTURES] = { "hair_a", "hair_b", "hair_c", "hair_a2", "hair_c2" };
+		const char *names[TEXTURES] = { "hair_a", "hair_b", "hair_c", "hair_a2", "hair_c2", "hair_d", "hair_d2" };
 		for (int i = 0; i < TEXTURES; i++) {
 			hair_textures[i].instantiate();
 		}
@@ -435,6 +454,8 @@ void PhysXGroomRenderEffect::attach_world(World3D *p_world) {
 				proxy_materials[l]->set_shader_parameter(names[i], hair_textures[i]);
 			}
 			proxy_materials[l]->set_shader_parameter("layer", l);
+			// Each groom's strength is in its self-shadowing already (the raster pass).
+			proxy_materials[l]->set_shader_parameter("self_shadow", 1.0f);
 			// First among transparent geometry, the strand behind before the one in front.
 			proxy_materials[l]->set_render_priority(l == 1 ? Material::RENDER_PRIORITY_MIN : Material::RENDER_PRIORITY_MIN + 1);
 			proxy_meshes[l].instantiate();
@@ -482,24 +503,13 @@ void PhysXGroomRenderEffect::_update_proxy(Camera3D *p_camera) {
 		return;
 	}
 	RID textures[TEXTURES];
-	Look look;
 	bool found = false;
 	{
 		MutexLock lock(mutex);
 		for (int i = 0; i < TEXTURES; i++) {
 			textures[i] = published[i];
 		}
-		// The look of the groom nearest the camera.
-		const Vector3 eye = p_camera != nullptr ? p_camera->get_global_position() : Vector3();
-		real_t best = 1e30;
-		for (const KeyValue<ObjectID, Groom> &kv : grooms) {
-			const real_t d = eye.distance_squared_to(kv.value.transform.origin);
-			if (d < best) {
-				best = d;
-				look = kv.value.look;
-				found = true;
-			}
-		}
+		found = !grooms.is_empty();
 	}
 	bool hooked = true;
 	for (int i = 0; i < TEXTURES; i++) {
@@ -524,16 +534,6 @@ void PhysXGroomRenderEffect::_update_proxy(Camera3D *p_camera) {
 				RenderingServer::get_singleton()->instance_set_visible(kv.value, show);
 			}
 		}
-	}
-	if (!found) {
-		return;
-	}
-	for (int l = 0; l < LAYERS; l++) {
-		proxy_materials[l]->set_shader_parameter("root_color", look.root_color);
-		proxy_materials[l]->set_shader_parameter("tip_color", look.tip_color);
-		proxy_materials[l]->set_shader_parameter("self_shadow", look.self_shadow);
-		proxy_materials[l]->set_shader_parameter("hair_roughness", look.roughness);
-		proxy_materials[l]->set_shader_parameter("shading_model", look.shading_model);
 	}
 }
 
@@ -629,7 +629,7 @@ bool PhysXGroomRenderEffect::_ensure(RenderingDevice *p_rd) {
 }
 
 void PhysXGroomRenderEffect::_free_targets(RenderingDevice *p_rd, bool p_now) {
-	for (RID *r : { &coverage_u, &depth_u, &depth2_u, &front_cover, &hair[0], &hair[1], &hair[2], &hair[3], &hair[4] }) {
+	for (RID *r : { &coverage_u, &depth_u, &depth2_u, &front_cover, &hair[0], &hair[1], &hair[2], &hair[3], &hair[4], &hair[5], &hair[6] }) {
 		if (r->is_valid()) {
 			if (p_now) {
 				p_rd->free_rid(*r);
@@ -696,6 +696,7 @@ void PhysXGroomRenderEffect::_render(int p_callback_type, const RenderData *p_re
 		Transform3D transform;
 		float strand_fraction = 1.0f;
 		float width_scale = 1.0f;
+		Look look;
 	};
 	LocalVector<Draw> draws;
 	{
@@ -714,6 +715,7 @@ void PhysXGroomRenderEffect::_render(int p_callback_type, const RenderData *p_re
 			draw.transform = kv.value.transform;
 			draw.strand_fraction = kv.value.strand_fraction;
 			draw.width_scale = kv.value.width_scale;
+			draw.look = kv.value.look;
 			draws.push_back(draw);
 		}
 	}
@@ -788,6 +790,8 @@ void PhysXGroomRenderEffect::_render(int p_callback_type, const RenderData *p_re
 				float model[16];
 				float lod[4];
 				int32_t info[4];
+				float root[4];
+				float tip[4];
 			} push;
 			put_matrix(push.model, Projection(draw.transform));
 			const float fraction = MAX(draw.strand_fraction, 0.0001f);
@@ -797,9 +801,20 @@ void PhysXGroomRenderEffect::_render(int p_callback_type, const RenderData *p_re
 			push.lod[3] = 0.0f;
 			push.info[0] = (int32_t)gpu->point_count;
 			push.info[1] = mode;
-			push.info[2] = 0;
+			push.info[2] = draw.look.shading_model;
 			push.info[3] = 0;
-			_dispatch(rd, PASS_RASTER, { params, RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 1, coverage_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 2, depth_u), RD::Uniform(RD::UNIFORM_TYPE_STORAGE_BUFFER, 3, gpu->buffer), RD::Uniform(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 4, Vector<RID>({ point_sampler, depth })), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 5, hair[0]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 6, hair[2]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 7, depth2_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 8, hair[3]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 9, hair[4]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 10, front_cover) }, (gpu->point_count + 63) / 64, 1, &push, sizeof(push));
+			// The colors as the mesh's source_color uniforms see them: linear.
+			const Color root = draw.look.root_color.srgb_to_linear();
+			const Color tip = draw.look.tip_color.srgb_to_linear();
+			push.root[0] = root.r;
+			push.root[1] = root.g;
+			push.root[2] = root.b;
+			push.root[3] = draw.look.self_shadow;
+			push.tip[0] = tip.r;
+			push.tip[1] = tip.g;
+			push.tip[2] = tip.b;
+			push.tip[3] = draw.look.roughness;
+			_dispatch(rd, PASS_RASTER, { params, RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 1, coverage_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 2, depth_u), RD::Uniform(RD::UNIFORM_TYPE_STORAGE_BUFFER, 3, gpu->buffer), RD::Uniform(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 4, Vector<RID>({ point_sampler, depth })), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 5, hair[0]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 6, hair[2]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 7, depth2_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 8, hair[3]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 9, hair[4]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 10, front_cover), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 11, hair[5]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 12, hair[6]) }, (gpu->point_count + 63) / 64, 1, &push, sizeof(push));
 		}
 	}
 	_dispatch(rd, PASS_COMPOSITE, { params, RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 1, coverage_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 2, depth_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 3, hair[1]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 4, depth2_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 5, front_cover) }, fx, fy, nullptr, 0);

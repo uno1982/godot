@@ -30,6 +30,8 @@
 
 #include "physx_groom.h"
 
+#include "groom_self_shadow.h"
+
 #include "core/object/class_db.h"
 
 void PhysXGroom::_bind_methods() {
@@ -39,6 +41,9 @@ void PhysXGroom::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_strand_offsets"), &PhysXGroom::get_strand_offsets);
 	ClassDB::bind_method(D_METHOD("set_widths", "widths"), &PhysXGroom::set_widths);
 	ClassDB::bind_method(D_METHOD("get_widths"), &PhysXGroom::get_widths);
+	ClassDB::bind_method(D_METHOD("set_self_shadow", "self_shadow"), &PhysXGroom::set_self_shadow);
+	ClassDB::bind_method(D_METHOD("get_self_shadow"), &PhysXGroom::get_self_shadow);
+	ClassDB::bind_method(D_METHOD("bake_self_shadow", "rays", "reach"), &PhysXGroom::bake_self_shadow, DEFVAL(32), DEFVAL(0.0));
 	ClassDB::bind_method(D_METHOD("get_strand_count"), &PhysXGroom::get_strand_count);
 	ClassDB::bind_method(D_METHOD("get_point_count"), &PhysXGroom::get_point_count);
 	ClassDB::bind_method(D_METHOD("get_aabb"), &PhysXGroom::get_aabb);
@@ -46,6 +51,7 @@ void PhysXGroom::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_VECTOR3_ARRAY, "points"), "set_points", "get_points");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_INT32_ARRAY, "strand_offsets"), "set_strand_offsets", "get_strand_offsets");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_FLOAT32_ARRAY, "widths"), "set_widths", "get_widths");
+	ADD_PROPERTY(PropertyInfo(Variant::PACKED_FLOAT32_ARRAY, "self_shadow"), "set_self_shadow", "get_self_shadow");
 }
 
 void PhysXGroom::set_points(const PackedVector3Array &p_points) {
@@ -61,6 +67,17 @@ void PhysXGroom::set_strand_offsets(const PackedInt32Array &p_offsets) {
 void PhysXGroom::set_widths(const PackedFloat32Array &p_widths) {
 	widths = p_widths;
 	emit_changed();
+}
+
+void PhysXGroom::set_self_shadow(const PackedFloat32Array &p_self_shadow) {
+	self_shadow = p_self_shadow;
+	emit_changed();
+}
+
+void PhysXGroom::bake_self_shadow(int p_rays, float p_reach) {
+	ERR_FAIL_COND_MSG(!is_valid(), "PhysXGroom: points, strand_offsets and widths don't agree.");
+	const float reach = p_reach > 0.0f ? p_reach : get_aabb().get_longest_axis_size() * 0.15f;
+	set_self_shadow(groom_bake_self_shadow(points, strand_offsets, widths, p_rays, reach));
 }
 
 AABB PhysXGroom::get_aabb() const {

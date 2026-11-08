@@ -52,11 +52,19 @@ uniform vec3 root_color : source_color;
 uniform vec3 tip_color : source_color;
 uniform float width_scale = 1.0;
 uniform float strand_fraction = 1.0;
+uniform float self_shadow = 0.6;
 
 varying vec3 v_tangent;
 varying float v_along;
 varying float v_coverage;
 varying vec3 light_tangent;
+varying vec4 v_shadow;
+varying vec4 light_shadow;
+
+// The groom's own strands between a point and the direction d (the groom's space): see groom_self_shadow.h.
+float strands_toward(vec4 sh, vec3 d) {
+	return max(0.0, dot(sh, vec4(0.282095, 0.488603 * d.y, 0.488603 * d.z, 0.488603 * d.x)));
+}
 
 void vertex() {
 	vec3 pos = (MODELVIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -74,6 +82,7 @@ void vertex() {
 	BINORMAL = across;
 	v_tangent = tangent;
 	v_along = UV.y;
+	v_shadow = CUSTOM0;
 	// Past the strands drawn at this distance: every vertex at one point, nothing to rasterize.
 	if (UV2.y >= strand_fraction) {
 		VERTEX = vec3(0.0);
@@ -87,6 +96,9 @@ void fragment() {
 	ALPHA = v_coverage;
 	ALPHA_HASH_SCALE = 1.0;
 	light_tangent = normalize(v_tangent);
+	light_shadow = v_shadow;
+	// Ambient light, from every direction: the strands in the way on average.
+	AO = exp(-self_shadow * max(0.0, v_shadow.x * 0.282095));
 }
 
 // Kajiya-Kay: light falls across a strand, not on a surface. Two highlights, the second shifted toward the tip and
@@ -97,15 +109,18 @@ float strand_highlight(vec3 tangent, vec3 half_vector, float exponent) {
 }
 
 void light() {
+	// The light's direction in the groom's space, where the strands toward it were counted.
+	vec3 to_light = normalize(transpose(mat3(MODEL_MATRIX)) * (mat3(INV_VIEW_MATRIX) * LIGHT));
+	float through = exp(-self_shadow * strands_toward(light_shadow, to_light));
 	float tl = dot(light_tangent, LIGHT);
 	float across = sqrt(max(1.0 - tl * tl, 0.0));
 	// Lit from behind, a strand still passes some light through.
 	float facing = mix(0.35, 1.0, clamp(dot(NORMAL, LIGHT) * 0.5 + 0.5, 0.0, 1.0));
-	DIFFUSE_LIGHT += across * facing * ATTENUATION * LIGHT_COLOR / PI;
+	DIFFUSE_LIGHT += across * facing * through * ATTENUATION * LIGHT_COLOR / PI;
 	vec3 h = normalize(LIGHT + VIEW);
 	float primary = strand_highlight(normalize(light_tangent - NORMAL * 0.08), h, 90.0);
 	float secondary = strand_highlight(normalize(light_tangent + NORMAL * 0.12), h, 24.0);
-	SPECULAR_LIGHT += (primary * 0.06 + secondary * 0.12 * ALBEDO) * facing * ATTENUATION * LIGHT_COLOR;
+	SPECULAR_LIGHT += (primary * 0.06 + secondary * 0.12 * ALBEDO) * facing * through * ATTENUATION * LIGHT_COLOR;
 }
 )";
 
@@ -138,11 +153,14 @@ void PhysXGroom3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "groom", PROPERTY_HINT_RESOURCE_TYPE, "PhysXGroom"), "set_groom", "get_groom");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "root_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_root_color", "get_root_color");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "tip_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_tip_color", "get_tip_color");
+	ClassDB::bind_method(D_METHOD("set_self_shadow", "amount"), &PhysXGroom3D::set_self_shadow);
+	ClassDB::bind_method(D_METHOD("get_self_shadow"), &PhysXGroom3D::get_self_shadow);
 	ClassDB::bind_method(D_METHOD("set_max_strands", "count"), &PhysXGroom3D::set_max_strands);
 	ClassDB::bind_method(D_METHOD("get_max_strands"), &PhysXGroom3D::get_max_strands);
 	ClassDB::bind_method(D_METHOD("get_drawn_strand_count"), &PhysXGroom3D::get_drawn_strand_count);
 
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "width_scale", PROPERTY_HINT_RANGE, "0.1,10,0.01"), "set_width_scale", "get_width_scale");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "self_shadow", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_self_shadow", "get_self_shadow");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_strands", PROPERTY_HINT_RANGE, "0,1000000,1,or_greater"), "set_max_strands", "get_max_strands");
 }
 
@@ -171,6 +189,11 @@ void PhysXGroom3D::set_width_scale(float p_scale) {
 	width_scale = MAX(p_scale, 0.0f);
 	_update_material();
 	_rebuild();
+}
+
+void PhysXGroom3D::set_self_shadow(float p_amount) {
+	self_shadow = MAX(p_amount, 0.0f);
+	_update_material();
 }
 
 void PhysXGroom3D::set_max_strands(int p_count) {
@@ -243,6 +266,7 @@ void PhysXGroom3D::_update_material() {
 	rs->material_set_param(material, "tip_color", tip_color);
 	rs->material_set_param(material, "width_scale", width_scale);
 	rs->material_set_param(material, "strand_fraction", strand_fraction);
+	rs->material_set_param(material, "self_shadow", self_shadow);
 }
 
 void PhysXGroom3D::_rebuild() {
@@ -258,6 +282,8 @@ void PhysXGroom3D::_rebuild() {
 	const PackedVector3Array points = groom->get_points();
 	const PackedInt32Array offsets = groom->get_strand_offsets();
 	const PackedFloat32Array widths = groom->get_widths();
+	const PackedFloat32Array baked_shadow = groom->get_self_shadow();
+	const bool has_shadow = baked_shadow.size() == points.size() * 4;
 	const int strand_count = groom->get_strand_count();
 
 	PackedVector3Array vertices;
@@ -265,6 +291,9 @@ void PhysXGroom3D::_rebuild() {
 	PackedVector2Array uvs;
 	PackedVector2Array uv2s;
 	PackedInt32Array indices;
+	PackedFloat32Array shadow;
+	shadow.resize(points.size() * 2 * 4);
+	float *sw = shadow.ptrw();
 	vertices.resize(points.size() * 2);
 	directions.resize(points.size() * 2);
 	uvs.resize(points.size() * 2);
@@ -289,6 +318,9 @@ void PhysXGroom3D::_rebuild() {
 				dw[v] = direction;
 				uw[v] = Vector2(side == 0 ? -1.0f : 1.0f, along);
 				u2w[v] = Vector2(widths[p] * 0.5f, ((float)s + 0.5f) / (float)strand_count);
+				for (int i = 0; i < 4; i++) {
+					sw[v * 4 + i] = has_shadow ? baked_shadow[p * 4 + i] : 0.0f;
+				}
 			}
 			if (j + 1 < count) {
 				const int a = p * 2;
@@ -309,7 +341,8 @@ void PhysXGroom3D::_rebuild() {
 	arrays[RSE::ARRAY_TEX_UV] = uvs;
 	arrays[RSE::ARRAY_TEX_UV2] = uv2s;
 	arrays[RSE::ARRAY_INDEX] = indices;
-	rs->mesh_add_surface_from_arrays(mesh, RSE::PRIMITIVE_TRIANGLES, arrays);
+	arrays[RSE::ARRAY_CUSTOM0] = shadow;
+	rs->mesh_add_surface_from_arrays(mesh, RSE::PRIMITIVE_TRIANGLES, arrays, Array(), Dictionary(), (uint64_t)RSE::ARRAY_CUSTOM_RGBA_FLOAT << RSE::ARRAY_FORMAT_CUSTOM0_SHIFT);
 	rs->mesh_surface_set_material(mesh, 0, material);
 	// The vertex shader widens the ribbons, at least a pixel at any distance: a little room for that.
 	aabb = groom->get_aabb();

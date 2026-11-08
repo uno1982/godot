@@ -44,6 +44,7 @@ class PhysXGroom3D : public GeometryInstance3D {
 	Color root_color = Color(0.09, 0.055, 0.035);
 	Color tip_color = Color(0.32, 0.2, 0.11);
 	float width_scale = 1.0f;
+	float self_shadow = 0.6f;
 	int max_strands = 0;
 	float strand_fraction = 1.0f;
 
@@ -70,6 +71,9 @@ public:
 	Color get_tip_color() const { return tip_color; }
 	void set_width_scale(float p_scale);
 	float get_width_scale() const { return width_scale; }
+	// How much light a strand of the groom between a point and the light takes away (each one, as exp(-self_shadow)).
+	void set_self_shadow(float p_amount);
+	float get_self_shadow() const { return self_shadow; }
 
 	void set_max_strands(int p_count);
 	int get_max_strands() const { return max_strands; }

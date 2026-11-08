@@ -36,6 +36,7 @@
 #include "core/config/project_settings.h"
 #include "core/io/resource_saver.h"
 #include "core/math/random_pcg.h"
+#include "core/os/os.h"
 
 // The strands in a random order, the same every import: PhysXGroom3D draws fewer of them at a distance by drawing the
 // first ones, which are then spread over the whole groom (Indiana Jones and the Great Circle's hair LOD, after
@@ -78,6 +79,10 @@ void ResourceImporterAlembicGroom::get_import_options(const String &p_path, List
 	r_options->push_back(ImportOption(PropertyInfo(Variant::FLOAT, "scale", PROPERTY_HINT_RANGE, "0.0001,100,0.0001,or_greater"), 1.0));
 	// For strands the file gives no width: about a human hair's.
 	r_options->push_back(ImportOption(PropertyInfo(Variant::FLOAT, "default_width", PROPERTY_HINT_RANGE, "0.00001,0.01,0.00001,suffix:m"), 0.00008));
+	// Rays from each point for the precomputed self-shadowing; 0 leaves it out (no shading from the groom's own hair).
+	r_options->push_back(ImportOption(PropertyInfo(Variant::INT, "self_shadow/rays", PROPERTY_HINT_RANGE, "0,256,1"), 32));
+	// How far the rays look, as a share of the groom's size: what shadows a strand is mostly close to it.
+	r_options->push_back(ImportOption(PropertyInfo(Variant::FLOAT, "self_shadow/reach", PROPERTY_HINT_RANGE, "0.01,1,0.01"), 0.15));
 }
 
 Error ResourceImporterAlembicGroom::import(ResourceUID::ID p_source_id, const String &p_source_file, const String &p_save_path, const HashMap<StringName, Variant> &p_options, List<String> *r_platform_variants, List<String> *r_gen_files, Variant *r_metadata) {
@@ -94,5 +99,11 @@ Error ResourceImporterAlembicGroom::import(ResourceUID::ID p_source_id, const St
 	groom->set_points(data.points);
 	groom->set_strand_offsets(data.strand_offsets);
 	groom->set_widths(data.widths);
+	const int rays = p_options["self_shadow/rays"];
+	if (rays > 0) {
+		const uint64_t started = OS::get_singleton()->get_ticks_msec();
+		groom->bake_self_shadow(rays, groom->get_aabb().get_longest_axis_size() * (float)p_options["self_shadow/reach"]);
+		print_verbose(vformat("%s: self-shadowing baked in %d ms.", p_source_file, OS::get_singleton()->get_ticks_msec() - started));
+	}
 	return ResourceSaver::save(groom, p_save_path + ".res");
 }

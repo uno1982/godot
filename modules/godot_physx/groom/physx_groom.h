@@ -42,6 +42,8 @@ class PhysXGroom : public Resource {
 	PackedInt32Array strand_offsets;
 	// Per point: the strand's thickness there (a diameter, as Alembic and Unreal have it).
 	PackedFloat32Array widths;
+	// Four numbers per point, or empty: see groom_self_shadow.h.
+	PackedFloat32Array self_shadow;
 
 protected:
 	static void _bind_methods();
@@ -53,6 +55,10 @@ public:
 	PackedInt32Array get_strand_offsets() const { return strand_offsets; }
 	void set_widths(const PackedFloat32Array &p_widths);
 	PackedFloat32Array get_widths() const { return widths; }
+	void set_self_shadow(const PackedFloat32Array &p_self_shadow);
+	PackedFloat32Array get_self_shadow() const { return self_shadow; }
+	// p_reach 0: 15% of the groom's size.
+	void bake_self_shadow(int p_rays = 32, float p_reach = 0.0f);
 
 	int get_strand_count() const { return MAX(strand_offsets.size() - 1, 0); }
 	int get_point_count() const { return points.size(); }

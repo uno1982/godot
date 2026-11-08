@@ -42,7 +42,7 @@ namespace {
 // The texture's width in texels: a point at i is at (i % width, i / width).
 constexpr int TEXTURE_WIDTH = 2048;
 // Floats in the parameters buffer: see Params below.
-constexpr int PARAMS_FLOATS = 52 + GroomSim::MAX_COLLIDERS * 8;
+constexpr int PARAMS_FLOATS = 52 + GroomSim::MAX_COLLIDERS * 16;
 
 const char *SIM_SHADER = R"(
 #[compute]
@@ -57,7 +57,7 @@ layout(set = 0, binding = 0, std430) restrict readonly buffer Params {
 	vec4 wind; // air velocity xyz, drag
 	vec4 shape; // bend kept per substep, 1 to start over from the groomed shape, margin off the colliders
 	vec4 counts; // strands, texture width
-	vec4 colliders[]; // two a capsule: a.xyz, radius; b.xyz
+	vec4 colliders[]; // four a capsule: a.xyz, radius; b.xyz; last frame's a and b
 } p;
 layout(set = 0, binding = 1, std430) restrict readonly buffer Rest {
 	vec4 rest[]; // the groom's space; w: the length of the segment from the point before
@@ -84,16 +84,18 @@ mat3 turn_onto(vec3 a, vec3 b) {
 	return mat3(1.0) + vx + vx * vx / (1.0 + c);
 }
 
-vec3 collide(vec3 x) {
+// Out of the colliders, each where it is f of the way through the frame.
+vec3 collide(vec3 x, float f) {
 	int count = int(p.step.w);
 	for (int c = 0; c < count; c++) {
-		vec4 a = p.colliders[c * 2];
-		vec3 b = p.colliders[c * 2 + 1].xyz;
-		vec3 ab = b - a.xyz;
-		float t = dot(ab, ab) > 1e-12 ? clamp(dot(x - a.xyz, ab) / dot(ab, ab), 0.0, 1.0) : 0.0;
-		vec3 closest = a.xyz + ab * t;
+		vec4 now_a = p.colliders[c * 4];
+		vec3 a = mix(p.colliders[c * 4 + 2].xyz, now_a.xyz, f);
+		vec3 b = mix(p.colliders[c * 4 + 3].xyz, p.colliders[c * 4 + 1].xyz, f);
+		vec3 ab = b - a;
+		float t = dot(ab, ab) > 1e-12 ? clamp(dot(x - a, ab) / dot(ab, ab), 0.0, 1.0) : 0.0;
+		vec3 closest = a + ab * t;
 		vec3 d = x - closest;
-		float r = a.w + p.shape.z;
+		float r = now_a.w + p.shape.z;
 		float dist2 = dot(d, d);
 		if (dist2 < r * r) {
 			x = closest + (dist2 > 1e-12 ? d * inversesqrt(dist2) : vec3(0.0, 1.0, 0.0)) * r;
@@ -191,7 +193,7 @@ void main() {
 			}
 
 			for (uint i = pinned; i < to; i++) {
-				pos[i].xyz = collide(pos[i].xyz);
+				pos[i].xyz = collide(pos[i].xyz, f);
 			}
 		}
 	}
@@ -385,15 +387,15 @@ void GroomSim::step(const Transform3D &p_from, const Transform3D &p_to, double p
 	w[48] = (float)gpu->strand_count;
 	w[49] = (float)gpu->width;
 	for (int c = 0; c < collider_count; c++) {
-		float *cw = w + 52 + c * 8;
+		float *cw = w + 52 + c * 16;
 		const Collider &col = p_colliders[c];
-		cw[0] = col.a.x;
-		cw[1] = col.a.y;
-		cw[2] = col.a.z;
+		const Vector3 ends[4] = { col.a, col.b, col.a_prev, col.b_prev };
+		for (int e = 0; e < 4; e++) {
+			cw[e * 4 + 0] = ends[e].x;
+			cw[e * 4 + 1] = ends[e].y;
+			cw[e * 4 + 2] = ends[e].z;
+		}
 		cw[3] = col.radius;
-		cw[4] = col.b.x;
-		cw[5] = col.b.y;
-		cw[6] = col.b.z;
 	}
 
 	Ref<GPU> g = gpu;

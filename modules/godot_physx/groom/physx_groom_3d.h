@@ -33,6 +33,7 @@
 #include "groom_sim.h"
 #include "physx_groom.h"
 
+#include "core/variant/typed_array.h"
 #include "scene/3d/visual_instance_3d.h"
 
 class Texture2DRD;
@@ -92,6 +93,7 @@ private:
 	Vector3 wind;
 	NodePath wind_area;
 	bool collide_with_head = true;
+	TypedArray<NodePath> colliders;
 	GroomSim *sim = nullptr;
 	Ref<Texture2DRD> sim_texture;
 	Transform3D sim_last;
@@ -100,6 +102,14 @@ private:
 	Vector3 head_center;
 	float head_radius = 0.0f;
 	float longest_strand = 0.0f;
+	// Where each collider was last frame, by its CollisionShape3D (the head's: by this node).
+	struct ColliderEnds {
+		ObjectID id;
+		Vector3 a;
+		Vector3 b;
+	};
+	LocalVector<ColliderEnds> collider_ends;
+	void _gather_colliders(const Transform3D &p_xform, LocalVector<GroomSim::Collider> &r_colliders);
 	bool _wants_simulation() const;
 	void _start_simulation();
 	void _stop_simulation();
@@ -151,6 +161,10 @@ public:
 	NodePath get_wind_area() const { return wind_area; }
 	void set_collide_with_head(bool p_enabled);
 	bool is_colliding_with_head() const { return collide_with_head; }
+	// Capsule and sphere CollisionShape3D nodes the strands stay out of: a shape, a body (its shapes) or a Skeleton3D
+	// (its physical bones' shapes).
+	void set_colliders(const TypedArray<NodePath> &p_colliders);
+	TypedArray<NodePath> get_colliders() const { return colliders; }
 	// The strands start again from the groomed shape, at rest (after a teleport, say).
 	void reset_simulation();
 

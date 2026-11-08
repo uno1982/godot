@@ -39,7 +39,14 @@
 #include "core/object/class_db.h"
 #include "core/config/project_settings.h"
 #include "scene/3d/camera_3d.h"
+#include "core/math/geometry_3d.h"
 #include "scene/3d/physics/area_3d.h"
+#include "scene/3d/physics/collision_shape_3d.h"
+#include "scene/3d/physics/physical_bone_3d.h"
+#include "scene/3d/physics/physical_bone_simulator_3d.h"
+#include "scene/3d/skeleton_3d.h"
+#include "scene/resources/3d/capsule_shape_3d.h"
+#include "scene/resources/3d/sphere_shape_3d.h"
 #include "scene/resources/texture_rd.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/main/viewport.h"
@@ -189,6 +196,8 @@ void PhysXGroom3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_wind_area"), &PhysXGroom3D::get_wind_area);
 	ClassDB::bind_method(D_METHOD("set_collide_with_head", "enabled"), &PhysXGroom3D::set_collide_with_head);
 	ClassDB::bind_method(D_METHOD("is_colliding_with_head"), &PhysXGroom3D::is_colliding_with_head);
+	ClassDB::bind_method(D_METHOD("set_colliders", "colliders"), &PhysXGroom3D::set_colliders);
+	ClassDB::bind_method(D_METHOD("get_colliders"), &PhysXGroom3D::get_colliders);
 	ClassDB::bind_method(D_METHOD("reset_simulation"), &PhysXGroom3D::reset_simulation);
 
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "width_scale", PROPERTY_HINT_RANGE, "0.1,10,0.01"), "set_width_scale", "get_width_scale");
@@ -207,6 +216,7 @@ void PhysXGroom3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "wind", PROPERTY_HINT_NONE, "suffix:m/s"), "set_wind", "get_wind");
 	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "wind_area", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Area3D"), "set_wind_area", "get_wind_area");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "collide_with_head"), "set_collide_with_head", "is_colliding_with_head");
+	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "colliders", PROPERTY_HINT_TYPE_STRING, vformat("%s/%s:%s", Variant::NODE_PATH, PROPERTY_HINT_NODE_PATH_VALID_TYPES, "CollisionShape3D,CollisionObject3D,Skeleton3D")), "set_colliders", "get_colliders");
 
 	BIND_ENUM_CONSTANT(RENDER_MODE_MESH);
 	BIND_ENUM_CONSTANT(RENDER_MODE_SCREEN_SPACE);
@@ -385,9 +395,14 @@ void PhysXGroom3D::set_collide_with_head(bool p_enabled) {
 	collide_with_head = p_enabled;
 }
 
+void PhysXGroom3D::set_colliders(const TypedArray<NodePath> &p_colliders) {
+	colliders = p_colliders;
+}
+
 void PhysXGroom3D::reset_simulation() {
 	if (sim_running) {
 		sim->reset();
+		collider_ends.clear();
 		sim_last = get_global_transform();
 	}
 }
@@ -412,6 +427,7 @@ void PhysXGroom3D::_start_simulation() {
 	rs->mesh_set_custom_aabb(mesh, aabb.grow(longest_strand));
 	sim_last = get_global_transform();
 	sim->reset();
+	collider_ends.clear();
 	sim_running = true;
 }
 
@@ -443,6 +459,7 @@ void PhysXGroom3D::_update_simulation(double p_delta) {
 	// Moved further than the hair could swing in a frame: a teleport, not motion.
 	if (xform.origin.distance_to(sim_last.origin) > MAX(longest_strand, 0.1f) * 4.0f) {
 		sim->reset();
+		collider_ends.clear();
 		sim_last = xform;
 	}
 	GroomSim::Settings settings;
@@ -454,17 +471,146 @@ void PhysXGroom3D::_update_simulation(double p_delta) {
 	settings.gravity = gravity_direction * gravity * gravity_scale;
 	const Area3D *area = Object::cast_to<Area3D>(get_node_or_null(wind_area));
 	settings.wind = physx_cloth_sample_wind(wind, area, 0.0f, 0.0, xform.origin);
-	LocalVector<GroomSim::Collider> colliders;
-	if (collide_with_head && head_radius > 0.0f) {
-		GroomSim::Collider head;
-		head.a = xform.xform(head_center);
-		head.b = head.a;
-		const Vector3 scale = xform.basis.get_scale().abs();
-		head.radius = head_radius * MAX(scale.x, MAX(scale.y, scale.z));
-		colliders.push_back(head);
-	}
-	sim->step(sim_last, xform, p_delta, settings, colliders);
+	LocalVector<GroomSim::Collider> shapes;
+	_gather_colliders(xform, shapes);
+	sim->step(sim_last, xform, p_delta, settings, shapes);
 	sim_last = xform;
+}
+
+// A capsule or sphere CollisionShape3D's ends and radius where it is now. One on a physical bone is placed where its
+// bone is, as the PhysicalBone3D follows it: the simulator moves the PhysicalBone3D only while it's active.
+static bool shape_capsule(const CollisionShape3D *p_shape, Vector3 &r_a, Vector3 &r_b, float &r_radius) {
+	if (p_shape->is_disabled() || !p_shape->is_inside_tree() || p_shape->get_shape().is_null()) {
+		return false;
+	}
+	Transform3D x = p_shape->get_global_transform();
+	PhysicalBone3D *bone = Object::cast_to<PhysicalBone3D>(p_shape->get_parent());
+	const Skeleton3D *skeleton = bone ? bone->get_skeleton() : nullptr;
+	if (skeleton) {
+		const int id = bone->get_bone_id() >= 0 ? bone->get_bone_id() : skeleton->find_bone(bone->get_bone_name());
+		if (id >= 0) {
+			x = skeleton->get_global_transform() * skeleton->get_bone_global_pose(id) * bone->get_body_offset() * p_shape->get_transform();
+		}
+	}
+	const Ref<Shape3D> shape = p_shape->get_shape();
+	const float sx = x.basis.get_column(0).length();
+	const float sy = x.basis.get_column(1).length();
+	const float sz = x.basis.get_column(2).length();
+	if (const CapsuleShape3D *capsule = Object::cast_to<CapsuleShape3D>(shape.ptr())) {
+		const float half = MAX(capsule->get_height() * 0.5f - capsule->get_radius(), 0.0f);
+		r_a = x.xform(Vector3(0, -half, 0));
+		r_b = x.xform(Vector3(0, half, 0));
+		r_radius = capsule->get_radius() * MAX(sx, sz);
+		return true;
+	}
+	if (const SphereShape3D *sphere = Object::cast_to<SphereShape3D>(shape.ptr())) {
+		r_a = x.origin;
+		r_b = x.origin;
+		r_radius = sphere->get_radius() * MAX(sx, MAX(sy, sz));
+		return true;
+	}
+	return false;
+}
+
+static void add_shapes_under(Node *p_node, LocalVector<CollisionShape3D *> &r_shapes) {
+	for (int i = 0; i < p_node->get_child_count(); i++) {
+		if (CollisionShape3D *shape = Object::cast_to<CollisionShape3D>(p_node->get_child(i))) {
+			r_shapes.push_back(shape);
+		}
+	}
+}
+
+// The head's sphere, then the colliders' shapes within the hair's reach, nearest first (at most GroomSim::MAX_COLLIDERS),
+// each with where it was last frame.
+void PhysXGroom3D::_gather_colliders(const Transform3D &p_xform, LocalVector<GroomSim::Collider> &r_colliders) {
+	struct Found {
+		ObjectID id;
+		Vector3 a;
+		Vector3 b;
+		float radius = 0.0f;
+	};
+	LocalVector<Found> found;
+	const Vector3 scale = p_xform.basis.get_scale().abs();
+	const float largest = MAX(scale.x, MAX(scale.y, scale.z));
+	if (collide_with_head && head_radius > 0.0f) {
+		Found head;
+		head.id = get_instance_id();
+		head.a = p_xform.xform(head_center);
+		head.b = head.a;
+		head.radius = head_radius * largest;
+		found.push_back(head);
+	}
+	LocalVector<CollisionShape3D *> shapes;
+	for (int i = 0; i < colliders.size(); i++) {
+		Node *node = get_node_or_null(colliders[i]);
+		if (node == nullptr) {
+			continue;
+		}
+		if (CollisionShape3D *shape = Object::cast_to<CollisionShape3D>(node)) {
+			shapes.push_back(shape);
+		} else if (Object::cast_to<Skeleton3D>(node)) {
+			for (int j = 0; j < node->get_child_count(true); j++) {
+				if (PhysicalBoneSimulator3D *simulator = Object::cast_to<PhysicalBoneSimulator3D>(node->get_child(j, true))) {
+					for (int k = 0; k < simulator->get_child_count(); k++) {
+						if (PhysicalBone3D *bone = Object::cast_to<PhysicalBone3D>(simulator->get_child(k))) {
+							add_shapes_under(bone, shapes);
+						}
+					}
+				}
+			}
+		} else {
+			add_shapes_under(node, shapes);
+		}
+	}
+	// As far as a strand can reach: the groom's box and its longest strand around it.
+	const Vector3 reach_center = p_xform.xform(aabb.get_center());
+	const float reach = (aabb.size.length() * 0.5f + longest_strand) * largest;
+	// The nearest first: a whole ragdoll can be in reach (lying down), and its far side matters least.
+	struct Near {
+		Found found;
+		float gap = 0.0f;
+		bool operator<(const Near &p_other) const { return gap < p_other.gap; }
+	};
+	LocalVector<Near> near;
+	for (CollisionShape3D *shape : shapes) {
+		Near n;
+		if (!shape_capsule(shape, n.found.a, n.found.b, n.found.radius)) {
+			continue;
+		}
+		n.gap = Geometry3D::get_closest_point_to_segment(reach_center, n.found.a, n.found.b).distance_to(reach_center) - n.found.radius;
+		if (n.gap > reach) {
+			continue;
+		}
+		n.found.id = shape->get_instance_id();
+		near.push_back(n);
+	}
+	near.sort();
+	for (const Near &n : near) {
+		if (found.size() >= (uint32_t)GroomSim::MAX_COLLIDERS) {
+			break;
+		}
+		found.push_back(n.found);
+	}
+	LocalVector<ColliderEnds> ends;
+	for (const Found &f : found) {
+		GroomSim::Collider c;
+		c.a = f.a;
+		c.b = f.b;
+		c.radius = f.radius;
+		// New this frame: still.
+		c.a_prev = f.a;
+		c.b_prev = f.b;
+		for (const ColliderEnds &e : collider_ends) {
+			if (e.id == f.id) {
+				c.a_prev = e.a;
+				c.b_prev = e.b;
+				break;
+			}
+		}
+		r_colliders.push_back(c);
+		ends.push_back({ f.id, f.a, f.b });
+	}
+	collider_ends = ends;
 }
 
 int PhysXGroom3D::get_drawn_strand_count() const {

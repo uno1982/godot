@@ -811,8 +811,27 @@ one: the importer shuffles the strands so any count drawn is an even sample.
 `GeometryInstance3D.lod_bias` keeps more of them, `max_strands` caps them (a
 quality setting), and `get_drawn_strand_count()` reports the current count.
 
+In a running game the hair **moves** (`simulate`, on by default): every
+strand is simulated on the GPU (AMD's TressFX method), in both render modes.
+The roots follow the node, so on a character put the groom under a
+`BoneAttachment3D` on the head bone. The rest of each strand swings with the
+head, falls under gravity (`gravity_scale` times the project's gravity) and
+blows in the `wind` (m/s), or in an `Area3D`'s wind (`wind_area`), while
+`stiffness` pulls it back toward the groomed shape (most at the roots) and
+`bend_stiffness` keeps its curls and waves; `damping` settles it. The strands
+stay off a sphere fitted to their roots (`collide_with_head`) and off the
+capsule and sphere shapes in `colliders`: a `CollisionShape3D`, a body's
+shapes, or a `Skeleton3D`'s physical bones (shoulders, neck, hands; placed
+from the bones' poses, ragdoll simulating or not). A teleport (the node moved
+further than the hair could swing) starts it over from the groomed shape, as
+does `reset_simulation()`. It costs about 0.16 ms of GPU time a frame for
+11 thousand strands and 0.28 ms for 22 thousand (RTX 5070). The grooms must
+be in meters, life size, for gravity and wind to look right (`scale` in the
+Import dock). Hidden grooms and grooms in the editor aren't simulated.
+
 The editor demo `demo/editor/hair/hair_styles.tscn` in the example project
-shows two of Blender's demo hairstyles; Tab switches between the two render
+shows two of Blender's demo hairstyles on heads that turn, nod, tilt and sway
+(keys 1-5), with gusts of wind (G); Tab switches between the two render
 modes.
 
 ## Soft bodies — stock `SoftBody3D`
@@ -1251,8 +1270,9 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   canceling the other side's bounce. Friction matches Godot's rule (`rough`
   wins), except that a `rough` material against a higher-friction one gets the
   higher friction.
-- **Hair (`PhysXGroom3D`)** doesn't move yet: a groom is drawn as imported,
-  in its node's space (no simulation, wind or skinning to a skeleton). Screen
+- **Hair (`PhysXGroom3D`)** simulation keeps strands off capsules and
+  spheres only (no boxes, meshes or the floor) and off at most 16 of them,
+  and the strands don't collide with each other. Screen
   Space hair writes no depth, so effects that read the depth buffer (depth of
   field, fog volumes, SSAO, SSR) don't see it. Unreal's groom attributes
   (per-strand colour, root UVs, guide strands) aren't read.

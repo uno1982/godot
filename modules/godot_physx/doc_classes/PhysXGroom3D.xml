@@ -32,6 +32,9 @@
 		<member name="collide_with_head" type="bool" setter="set_collide_with_head" getter="is_colliding_with_head" default="true">
 			Keeps the strands off a sphere fitted to their roots, the head they grow from (in the groom's space, following the node).
 		</member>
+		<member name="colliders" type="NodePath[]" setter="set_colliders" getter="get_colliders" default="[]">
+			Capsule and sphere [CollisionShape3D] nodes the strands stay out of, such as shoulders, neck and hands, as each path finds them: a [CollisionShape3D] itself; a [CollisionObject3D] (its [CollisionShape3D] children); or a [Skeleton3D] (the shapes on its [PhysicalBone3D] nodes, placed where their bones are whether or not the ragdoll is simulating). Disabled shapes and shapes beyond the hair's reach are left out, and at most 16 colliders count, the head's and then the nearest. A moving shape is swept from where it was last frame through the simulation's substeps.
+		</member>
 		<member name="damping" type="float" setter="set_damping" getter="get_damping" default="0.05">
 			How much of its speed the hair loses every 1/60 s: higher settles sooner and moves as if through thicker air.
 		</member>

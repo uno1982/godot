@@ -48,10 +48,13 @@ class GroomSim {
 public:
 	static constexpr int MAX_COLLIDERS = 16;
 
-	// A capsule (a sphere when a == b), world space.
+	// A capsule (a sphere when a == b), world space: where it is this frame and where it was last, swept between them
+	// through the substeps (a fast shoulder moves with the hair instead of jumping into it once a frame).
 	struct Collider {
 		Vector3 a;
 		Vector3 b;
+		Vector3 a_prev;
+		Vector3 b_prev;
 		float radius = 0.0f;
 	};
 
@@ -65,7 +68,7 @@ public:
 		Vector3 gravity;
 		// Air velocity (m/s) and how strongly the strands are pushed across by it.
 		Vector3 wind;
-		float drag = 1.0f;
+		float drag = 3.0f;
 		// How far the strands stay off the colliders.
 		float margin = 0.002f;
 	};

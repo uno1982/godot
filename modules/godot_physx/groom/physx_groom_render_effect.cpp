@@ -122,11 +122,12 @@ layout(set = 0, binding = 9, rgba16f) uniform restrict writeonly image2D hair_c2
 layout(set = 0, binding = 10, r32f) uniform restrict writeonly image2D front_cover_img;
 layout(set = 0, binding = 11, rgba16f) uniform restrict writeonly image2D hair_d;
 layout(set = 0, binding = 12, rgba16f) uniform restrict writeonly image2D hair_d2;
+layout(set = 0, binding = 13) uniform sampler2D sim_points;
 
 layout(push_constant, std430) uniform Groom {
 	mat4 model;
 	vec4 lod; // x: strands drawn (0-1), y: width scale (the LOD's widening in), z: the model's scale
-	ivec4 info; // x: points, y: 0 coverage and the nearest depth, 1 the second nearest, 2 the two strands' attributes; z: shading model
+	ivec4 info; // x: points, y: 0 coverage and the nearest depth, 1 the second nearest, 2 the two strands' attributes; z: shading model; w: simulated, the points texture's width (0: not)
 	vec4 root; // the groom's look: root color (linear), self-shadowing strength
 	vec4 tip; // tip color (linear), roughness
 } g;
@@ -141,6 +142,14 @@ float scene_eye_depth(ivec2 px) {
 vec4 turn_strands(vec4 sh, mat3 rotation) {
 	vec3 v = rotation * vec3(sh.w, sh.y, sh.z);
 	return vec4(sh.x, v.y, v.z, v.x);
+}
+
+// A point in world space: simulated (GroomSim's texture), or the groom's own placed by its transform.
+vec3 world_point(uint i) {
+	if (g.info.w > 0) {
+		return texelFetch(sim_points, ivec2(int(i) % g.info.w, int(i) / g.info.w), 0).xyz;
+	}
+	return (g.model * vec4(data[i * 3u].xyz, 1.0)).xyz;
 }
 
 vec2 to_pixels(vec3 v) {
@@ -233,8 +242,8 @@ void main() {
 	}
 	vec4 b0 = data[segment * 3u + 3u];
 	last_segment = data[segment * 3u + 4u].z > 0.5;
-	va = (p.view * (g.model * vec4(a0.xyz, 1.0))).xyz;
-	vb = (p.view * (g.model * vec4(b0.xyz, 1.0))).xyz;
+	va = (p.view * vec4(world_point(segment), 1.0)).xyz;
+	vb = (p.view * vec4(world_point(segment + 1u), 1.0)).xyz;
 	// The part in front of the camera.
 	const float near = 0.01;
 	s0 = 0.0;
@@ -249,9 +258,8 @@ void main() {
 	}
 	if (g.info.y == 2) {
 		// At each point, the direction from the point before it to the one after (only one side at a strand's ends).
-		mat4 to_view = p.view * g.model;
-		vec3 before = a1.x > 0.0 ? (to_view * vec4(data[segment * 3u - 3u].xyz, 1.0)).xyz : va;
-		vec3 after = last_segment ? vb : (to_view * vec4(data[segment * 3u + 6u].xyz, 1.0)).xyz;
+		vec3 before = a1.x > 0.0 ? (p.view * vec4(world_point(segment - 1u), 1.0)).xyz : va;
+		vec3 after = last_segment ? vb : (p.view * vec4(world_point(segment + 2u), 1.0)).xyz;
 		ta = normalize(vb - before);
 		tb = normalize(after - va);
 	}
@@ -421,13 +429,15 @@ void PhysXGroomRenderEffect::set_points(const ObjectID &p_groom, uint64_t p_vers
 	groom.points = p_points;
 }
 
-void PhysXGroomRenderEffect::set_state(const ObjectID &p_groom, const Transform3D &p_transform, float p_strand_fraction, float p_width_scale, const Look &p_look) {
+void PhysXGroomRenderEffect::set_state(const ObjectID &p_groom, const Transform3D &p_transform, float p_strand_fraction, float p_width_scale, const Look &p_look, const RID &p_sim_points, int p_sim_width) {
 	MutexLock lock(mutex);
 	Groom &groom = grooms[p_groom];
 	groom.transform = p_transform;
 	groom.strand_fraction = p_strand_fraction;
 	groom.width_scale = p_width_scale;
 	groom.look = p_look;
+	groom.sim_points = p_sim_points;
+	groom.sim_width = p_sim_points.is_valid() ? p_sim_width : 0;
 }
 
 void PhysXGroomRenderEffect::remove_groom(const ObjectID &p_groom) {
@@ -591,7 +601,7 @@ PhysXGroomRenderEffect::~PhysXGroomRenderEffect() {
 				rd->free_rid(shaders[i]);
 			}
 		}
-		for (RID r : { point_sampler, params_buffer }) {
+		for (RID r : { point_sampler, params_buffer, no_sim_points }) {
 			if (r.is_valid()) {
 				rd->free_rid(r);
 			}
@@ -624,6 +634,12 @@ bool PhysXGroomRenderEffect::_ensure(RenderingDevice *p_rd) {
 	RD::SamplerState point;
 	point_sampler = p_rd->sampler_create(point);
 	params_buffer = p_rd->uniform_buffer_create(PARAMS_FLOATS * 4);
+	RD::TextureFormat tf;
+	tf.format = RD::DATA_FORMAT_R32G32B32A32_SFLOAT;
+	tf.width = 1;
+	tf.height = 1;
+	tf.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_UPDATE_BIT;
+	no_sim_points = p_rd->texture_create(tf, RD::TextureView());
 	failed = false;
 	return true;
 }
@@ -697,6 +713,8 @@ void PhysXGroomRenderEffect::_render(int p_callback_type, const RenderData *p_re
 		float strand_fraction = 1.0f;
 		float width_scale = 1.0f;
 		Look look;
+		RID sim_points;
+		int sim_width = 0;
 	};
 	LocalVector<Draw> draws;
 	{
@@ -716,6 +734,8 @@ void PhysXGroomRenderEffect::_render(int p_callback_type, const RenderData *p_re
 			draw.strand_fraction = kv.value.strand_fraction;
 			draw.width_scale = kv.value.width_scale;
 			draw.look = kv.value.look;
+			draw.sim_points = kv.value.sim_points;
+			draw.sim_width = kv.value.sim_width;
 			draws.push_back(draw);
 		}
 	}
@@ -802,7 +822,9 @@ void PhysXGroomRenderEffect::_render(int p_callback_type, const RenderData *p_re
 			push.info[0] = (int32_t)gpu->point_count;
 			push.info[1] = mode;
 			push.info[2] = draw.look.shading_model;
-			push.info[3] = 0;
+			// Its simulation may have just gone (freed on this thread before this frame).
+			const bool simulated = draw.sim_width > 0 && rd->texture_is_valid(draw.sim_points);
+			push.info[3] = simulated ? draw.sim_width : 0;
 			// The colors as the mesh's source_color uniforms see them: linear.
 			const Color root = draw.look.root_color.srgb_to_linear();
 			const Color tip = draw.look.tip_color.srgb_to_linear();
@@ -814,7 +836,7 @@ void PhysXGroomRenderEffect::_render(int p_callback_type, const RenderData *p_re
 			push.tip[1] = tip.g;
 			push.tip[2] = tip.b;
 			push.tip[3] = draw.look.roughness;
-			_dispatch(rd, PASS_RASTER, { params, RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 1, coverage_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 2, depth_u), RD::Uniform(RD::UNIFORM_TYPE_STORAGE_BUFFER, 3, gpu->buffer), RD::Uniform(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 4, Vector<RID>({ point_sampler, depth })), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 5, hair[0]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 6, hair[2]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 7, depth2_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 8, hair[3]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 9, hair[4]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 10, front_cover), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 11, hair[5]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 12, hair[6]) }, (gpu->point_count + 63) / 64, 1, &push, sizeof(push));
+			_dispatch(rd, PASS_RASTER, { params, RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 1, coverage_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 2, depth_u), RD::Uniform(RD::UNIFORM_TYPE_STORAGE_BUFFER, 3, gpu->buffer), RD::Uniform(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 4, Vector<RID>({ point_sampler, depth })), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 5, hair[0]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 6, hair[2]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 7, depth2_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 8, hair[3]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 9, hair[4]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 10, front_cover), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 11, hair[5]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 12, hair[6]), RD::Uniform(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 13, Vector<RID>({ point_sampler, simulated ? draw.sim_points : no_sim_points })) }, (gpu->point_count + 63) / 64, 1, &push, sizeof(push));
 		}
 	}
 	_dispatch(rd, PASS_COMPOSITE, { params, RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 1, coverage_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 2, depth_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 3, hair[1]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 4, depth2_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 5, front_cover) }, fx, fy, nullptr, 0);

@@ -30,9 +30,12 @@
 
 #pragma once
 
+#include "groom_sim.h"
 #include "physx_groom.h"
 
 #include "scene/3d/visual_instance_3d.h"
+
+class Texture2DRD;
 
 // Draws a PhysXGroom: each strand a ribbon turned to face the camera in the vertex shader (and the light, in its
 // shadow pass), at least a pixel wide, thinner strands fading to cover what they would. Hair shading: Marschner's
@@ -80,6 +83,28 @@ private:
 	RID material;
 	AABB aabb;
 
+	// Simulation (see GroomSim): in a running game, while the groom is visible.
+	bool simulate = true;
+	float stiffness = 0.3f;
+	float bend_stiffness = 0.5f;
+	float damping = 0.05f;
+	float gravity_scale = 1.0f;
+	Vector3 wind;
+	NodePath wind_area;
+	bool collide_with_head = true;
+	GroomSim *sim = nullptr;
+	Ref<Texture2DRD> sim_texture;
+	Transform3D sim_last;
+	bool sim_running = false;
+	// The head the roots sit on, fitted to them (the groom's space), and the longest strand.
+	Vector3 head_center;
+	float head_radius = 0.0f;
+	float longest_strand = 0.0f;
+	bool _wants_simulation() const;
+	void _start_simulation();
+	void _stop_simulation();
+	void _update_simulation(double p_delta);
+
 	static RID shared_shader;
 	static RID _shader();
 	void _rebuild();
@@ -109,6 +134,25 @@ public:
 	// How wide the strands' highlights spread along them (Marschner's longitudinal lobe widths; Marschner only).
 	void set_roughness(float p_roughness);
 	float get_roughness() const { return roughness; }
+
+	void set_simulate(bool p_enabled);
+	bool is_simulating() const { return simulate; }
+	void set_stiffness(float p_stiffness);
+	float get_stiffness() const { return stiffness; }
+	void set_bend_stiffness(float p_stiffness);
+	float get_bend_stiffness() const { return bend_stiffness; }
+	void set_damping(float p_damping);
+	float get_damping() const { return damping; }
+	void set_gravity_scale(float p_scale);
+	float get_gravity_scale() const { return gravity_scale; }
+	void set_wind(const Vector3 &p_wind);
+	Vector3 get_wind() const { return wind; }
+	void set_wind_area(const NodePath &p_path);
+	NodePath get_wind_area() const { return wind_area; }
+	void set_collide_with_head(bool p_enabled);
+	bool is_colliding_with_head() const { return collide_with_head; }
+	// The strands start again from the groomed shape, at rest (after a teleport, say).
+	void reset_simulation();
 
 	void set_max_strands(int p_count);
 	int get_max_strands() const { return max_strands; }

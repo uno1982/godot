@@ -18,8 +18,26 @@
 				Returns how many of the groom's strands are drawn now, after the distance and [member max_strands].
 			</description>
 		</method>
+		<method name="reset_simulation">
+			<return type="void" />
+			<description>
+				Starts the strands over from the groomed shape, at rest: after a teleport, say, or a cut in a cutscene. Moving the node further than the hair could swing in a frame does it on its own.
+			</description>
+		</method>
 	</methods>
 	<members>
+		<member name="bend_stiffness" type="float" setter="set_bend_stiffness" getter="get_bend_stiffness" default="0.5">
+			How much each segment keeps its groomed bend from the one before it: curls stay curls, waves stay waves. 0 lets the strands hang straight under gravity; 1 keeps their shape stiffly.
+		</member>
+		<member name="collide_with_head" type="bool" setter="set_collide_with_head" getter="is_colliding_with_head" default="true">
+			Keeps the strands off a sphere fitted to their roots, the head they grow from (in the groom's space, following the node).
+		</member>
+		<member name="damping" type="float" setter="set_damping" getter="get_damping" default="0.05">
+			How much of its speed the hair loses every 1/60 s: higher settles sooner and moves as if through thicker air.
+		</member>
+		<member name="gravity_scale" type="float" setter="set_gravity_scale" getter="get_gravity_scale" default="1.0">
+			Scales the project's default gravity ([member ProjectSettings.physics/3d/default_gravity]) on the hair. A groom much larger than life falls slowly at its size: scale it up to match.
+		</member>
 		<member name="groom" type="PhysXGroom" setter="set_groom" getter="get_groom">
 			The strands to draw, imported from an Alembic ([code].abc[/code]) file.
 		</member>
@@ -41,11 +59,23 @@
 		<member name="shading_model" type="int" setter="set_shading_model" getter="get_shading_model" enum="PhysXGroom3D.ShadingModel" default="0">
 			How the strands are lit: a choice of look more than of cost. [constant SHADING_MODEL_KAJIYA_KAY] is stylized, bright and saturated with a crisp highlight; [constant SHADING_MODEL_MARSCHNER] is realistic, a softer, more neutral sheen and the glow of backlit hair. With [constant RENDER_MODE_SCREEN_SPACE] they cost the same (drawing the strands is the cost, not lighting them). With [constant RENDER_MODE_MESH], Marschner does more math per light per pixel of hair: on a head filling a 1280×720 view (an RTX 5070), 0.02 ms more GPU time per frame with only the sun, 0.12 ms more with 4 more lights on the hair.
 		</member>
+		<member name="simulate" type="bool" setter="set_simulate" getter="is_simulating" default="true">
+			Moves the strands in a running game: their roots follow the node (put it under a [BoneAttachment3D] on a character's head) and the rest swing, fall and blow in the wind, on the GPU (compute shaders, Forward+ and Mobile). In the editor and with this off, the strands are drawn as groomed. Every strand is simulated: about 0.2 ms of GPU time for 11-22 thousand strands (an RTX 5070).
+		</member>
+		<member name="stiffness" type="float" setter="set_stiffness" getter="get_stiffness" default="0.3">
+			How strongly the strands are pulled back toward the groomed shape: most at the root, none at the tip. Keeps a style (a parting, hair swept back) from collapsing under gravity; 0 lets the hair fall where it will.
+		</member>
 		<member name="tip_color" type="Color" setter="set_tip_color" getter="get_tip_color" default="Color(0.32, 0.2, 0.11, 1)">
 			The hair's color at the tip. See [member root_color].
 		</member>
 		<member name="width_scale" type="float" setter="set_width_scale" getter="get_width_scale" default="1.0">
 			Scales the strands' widths from the groom's: hair drawn a little thicker than real reads fuller, as groomers often do.
+		</member>
+		<member name="wind" type="Vector3" setter="set_wind" getter="get_wind" default="Vector3(0, 0, 0)">
+			Air velocity on the hair, in m/s: the strands catch it side-on.
+		</member>
+		<member name="wind_area" type="NodePath" setter="set_wind_area" getter="get_wind_area" default="NodePath(&quot;&quot;)">
+			An [Area3D] whose wind settings ([member Area3D.wind_force_magnitude], [member Area3D.wind_source_path], [member Area3D.wind_attenuation_factor]) add to [member wind].
 		</member>
 	</members>
 	<constants>

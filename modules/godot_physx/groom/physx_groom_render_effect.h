@@ -69,8 +69,9 @@ public:
 	// place in the groom's random strand order (0-1), 1 on a strand's last point; the baked self-shadowing (zeros
 	// without). Sent when they change (p_version), not every frame.
 	static void set_points(const ObjectID &p_groom, uint64_t p_version, const PackedFloat32Array &p_points);
-	// Every frame: where the groom is, its LOD and its look.
-	static void set_state(const ObjectID &p_groom, const Transform3D &p_transform, float p_strand_fraction, float p_width_scale, const Look &p_look);
+	// Every frame: where the groom is, its LOD and its look, and its simulated points (GroomSim's texture, world space,
+	// p_sim_width texels a row; an invalid RID when it isn't simulated).
+	static void set_state(const ObjectID &p_groom, const Transform3D &p_transform, float p_strand_fraction, float p_width_scale, const Look &p_look, const RID &p_sim_points = RID(), int p_sim_width = 0);
 	static void remove_groom(const ObjectID &p_groom);
 
 	static void attach_world(World3D *p_world);
@@ -90,6 +91,8 @@ private:
 		float strand_fraction = 1.0f;
 		float width_scale = 1.0f;
 		Look look;
+		RID sim_points;
+		int sim_width = 0;
 	};
 	static Mutex mutex;
 	static HashMap<ObjectID, Groom> grooms;
@@ -125,6 +128,8 @@ private:
 	RID pipelines[PASS_MAX];
 	RID point_sampler;
 	RID params_buffer;
+	// Bound for the simulated points when a groom isn't simulated.
+	RID no_sim_points;
 	HashMap<ObjectID, GpuGroom> gpu_grooms;
 	Size2i frame_size;
 	RID coverage_u, depth_u, depth2_u, front_cover;

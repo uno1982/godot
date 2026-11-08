@@ -30,13 +30,17 @@
 
 #include "physx_groom_3d.h"
 
+#include "../cloth/cloth_wind.h"
 #include "groom_shading.h"
 #include "physx_groom_render_effect.h"
 
 #include "core/config/engine.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
+#include "core/config/project_settings.h"
 #include "scene/3d/camera_3d.h"
+#include "scene/3d/physics/area_3d.h"
+#include "scene/resources/texture_rd.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/main/viewport.h"
 #include "servers/rendering/rendering_server.h"
@@ -48,10 +52,19 @@ RID PhysXGroom3D::shared_shader;
 // NORMAL the strand's direction. The vertex shader spreads them apart across the strand, facing the camera, at least a
 // pixel apart; a strand thinner than that draws less of its pixel (alpha hash). Strands past strand_fraction aren't
 // drawn (collapsed to a point), and the rest widen to cover for them.
+// Simulated (GroomSim), the points come from its texture instead, in world space: a point is two vertices, so the
+// vertex's point is VERTEX_ID / 2, and its direction runs from the point before to the one after.
 // The strand mesh's own part of its shader (see groom_shading.h for the rest).
 static const char *GROOM_MESH_SHADER = R"(
 uniform float width_scale = 1.0;
 uniform float strand_fraction = 1.0;
+uniform bool simulated = false;
+uniform sampler2D sim_points : filter_nearest, repeat_disable;
+uniform int sim_width = 1;
+
+vec3 sim_point(int i) {
+	return texelFetch(sim_points, ivec2(i % sim_width, i / sim_width), 0).xyz;
+}
 
 varying vec3 v_tangent;
 varying float v_along;
@@ -59,8 +72,20 @@ varying float v_coverage;
 varying vec4 v_shadow;
 
 void vertex() {
-	vec3 pos = (MODELVIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
-	vec3 tangent = normalize((MODELVIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+	vec3 pos;
+	vec3 tangent;
+	if (simulated) {
+		int i = VERTEX_ID / 2;
+		vec3 here = sim_point(i);
+		vec3 ahead = UV.y < 0.9999 ? sim_point(i + 1) : here;
+		vec3 behind = UV.y > 0.0001 ? sim_point(i - 1) : here;
+		pos = (VIEW_MATRIX * vec4(here, 1.0)).xyz;
+		vec3 along = mat3(VIEW_MATRIX) * (ahead - behind);
+		tangent = dot(along, along) > 1e-20 ? normalize(along) : normalize((MODELVIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+	} else {
+		pos = (MODELVIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		tangent = normalize((MODELVIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+	}
 	vec3 across = cross(tangent, pos);
 	across = dot(across, across) > 1e-12 ? normalize(across) : normalize(cross(tangent, vec3(0.0, 1.0, 0.0)));
 	// The strands left out at a distance widen to cover for them on screen; in the shadow map they'd only blot.
@@ -117,6 +142,7 @@ RID PhysXGroom3D::_shader() {
 }
 
 void PhysXGroom3D::free_shared() {
+	GroomSim::free_shared();
 	if (shared_shader.is_valid()) {
 		RenderingServer::get_singleton()->free_rid(shared_shader);
 		shared_shader = RID();
@@ -147,6 +173,23 @@ void PhysXGroom3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_max_strands", "count"), &PhysXGroom3D::set_max_strands);
 	ClassDB::bind_method(D_METHOD("get_max_strands"), &PhysXGroom3D::get_max_strands);
 	ClassDB::bind_method(D_METHOD("get_drawn_strand_count"), &PhysXGroom3D::get_drawn_strand_count);
+	ClassDB::bind_method(D_METHOD("set_simulate", "enabled"), &PhysXGroom3D::set_simulate);
+	ClassDB::bind_method(D_METHOD("is_simulating"), &PhysXGroom3D::is_simulating);
+	ClassDB::bind_method(D_METHOD("set_stiffness", "stiffness"), &PhysXGroom3D::set_stiffness);
+	ClassDB::bind_method(D_METHOD("get_stiffness"), &PhysXGroom3D::get_stiffness);
+	ClassDB::bind_method(D_METHOD("set_bend_stiffness", "stiffness"), &PhysXGroom3D::set_bend_stiffness);
+	ClassDB::bind_method(D_METHOD("get_bend_stiffness"), &PhysXGroom3D::get_bend_stiffness);
+	ClassDB::bind_method(D_METHOD("set_damping", "damping"), &PhysXGroom3D::set_damping);
+	ClassDB::bind_method(D_METHOD("get_damping"), &PhysXGroom3D::get_damping);
+	ClassDB::bind_method(D_METHOD("set_gravity_scale", "scale"), &PhysXGroom3D::set_gravity_scale);
+	ClassDB::bind_method(D_METHOD("get_gravity_scale"), &PhysXGroom3D::get_gravity_scale);
+	ClassDB::bind_method(D_METHOD("set_wind", "wind"), &PhysXGroom3D::set_wind);
+	ClassDB::bind_method(D_METHOD("get_wind"), &PhysXGroom3D::get_wind);
+	ClassDB::bind_method(D_METHOD("set_wind_area", "path"), &PhysXGroom3D::set_wind_area);
+	ClassDB::bind_method(D_METHOD("get_wind_area"), &PhysXGroom3D::get_wind_area);
+	ClassDB::bind_method(D_METHOD("set_collide_with_head", "enabled"), &PhysXGroom3D::set_collide_with_head);
+	ClassDB::bind_method(D_METHOD("is_colliding_with_head"), &PhysXGroom3D::is_colliding_with_head);
+	ClassDB::bind_method(D_METHOD("reset_simulation"), &PhysXGroom3D::reset_simulation);
 
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "width_scale", PROPERTY_HINT_RANGE, "0.1,10,0.01"), "set_width_scale", "get_width_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "render_mode", PROPERTY_HINT_ENUM, "Mesh,Screen Space"), "set_render_mode", "get_render_mode");
@@ -154,6 +197,16 @@ void PhysXGroom3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness", PROPERTY_HINT_RANGE, "0.1,1,0.01"), "set_roughness", "get_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "self_shadow", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_self_shadow", "get_self_shadow");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_strands", PROPERTY_HINT_RANGE, "0,1000000,1,or_greater"), "set_max_strands", "get_max_strands");
+
+	ADD_GROUP("Simulation", "");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "simulate"), "set_simulate", "is_simulating");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "stiffness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_stiffness", "get_stiffness");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bend_stiffness", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_bend_stiffness", "get_bend_stiffness");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "damping", PROPERTY_HINT_RANGE, "0,1,0.01"), "set_damping", "get_damping");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "gravity_scale", PROPERTY_HINT_RANGE, "-2,4,0.01"), "set_gravity_scale", "get_gravity_scale");
+	ADD_PROPERTY(PropertyInfo(Variant::VECTOR3, "wind", PROPERTY_HINT_NONE, "suffix:m/s"), "set_wind", "get_wind");
+	ADD_PROPERTY(PropertyInfo(Variant::NODE_PATH, "wind_area", PROPERTY_HINT_NODE_PATH_VALID_TYPES, "Area3D"), "set_wind_area", "get_wind_area");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "collide_with_head"), "set_collide_with_head", "is_colliding_with_head");
 
 	BIND_ENUM_CONSTANT(RENDER_MODE_MESH);
 	BIND_ENUM_CONSTANT(RENDER_MODE_SCREEN_SPACE);
@@ -273,7 +326,7 @@ void PhysXGroom3D::_update_screen_space() {
 	look.self_shadow = self_shadow;
 	look.roughness = roughness;
 	look.shading_model = shading_model;
-	PhysXGroomRenderEffect::set_state(get_instance_id(), get_global_transform(), strand_fraction, width_scale, look);
+	PhysXGroomRenderEffect::set_state(get_instance_id(), get_global_transform(), strand_fraction, width_scale, look, sim_running ? sim->get_texture() : RID(), sim_running ? sim->get_width() : 0);
 	Viewport *viewport = get_viewport();
 	PhysXGroomRenderEffect::install(world, viewport ? viewport->get_camera_3d() : nullptr);
 	RenderingServer::get_singleton()->instance_geometry_set_cast_shadows_setting(get_instance(), get_cast_shadows_setting() == SHADOW_CASTING_SETTING_OFF ? RSE::SHADOW_CASTING_SETTING_OFF : RSE::SHADOW_CASTING_SETTING_SHADOWS_ONLY);
@@ -300,6 +353,120 @@ void PhysXGroom3D::set_max_strands(int p_count) {
 	_update_lod();
 }
 
+void PhysXGroom3D::set_simulate(bool p_enabled) {
+	simulate = p_enabled;
+}
+
+void PhysXGroom3D::set_stiffness(float p_stiffness) {
+	stiffness = CLAMP(p_stiffness, 0.0f, 1.0f);
+}
+
+void PhysXGroom3D::set_bend_stiffness(float p_stiffness) {
+	bend_stiffness = CLAMP(p_stiffness, 0.0f, 1.0f);
+}
+
+void PhysXGroom3D::set_damping(float p_damping) {
+	damping = CLAMP(p_damping, 0.0f, 1.0f);
+}
+
+void PhysXGroom3D::set_gravity_scale(float p_scale) {
+	gravity_scale = p_scale;
+}
+
+void PhysXGroom3D::set_wind(const Vector3 &p_wind) {
+	wind = p_wind;
+}
+
+void PhysXGroom3D::set_wind_area(const NodePath &p_path) {
+	wind_area = p_path;
+}
+
+void PhysXGroom3D::set_collide_with_head(bool p_enabled) {
+	collide_with_head = p_enabled;
+}
+
+void PhysXGroom3D::reset_simulation() {
+	if (sim_running) {
+		sim->reset();
+		sim_last = get_global_transform();
+	}
+}
+
+bool PhysXGroom3D::_wants_simulation() const {
+	return simulate && !Engine::get_singleton()->is_editor_hint() && groom.is_valid() && groom->is_valid() && groom->get_strand_count() > 0 && is_inside_tree() && is_visible_in_tree();
+}
+
+void PhysXGroom3D::_start_simulation() {
+	sim->build(groom);
+	if (!sim->is_built()) {
+		WARN_PRINT_ONCE("PhysXGroom3D: the hair simulation needs a RenderingDevice (Forward+ or Mobile); the strands stay as groomed.");
+		simulate = false;
+		return;
+	}
+	sim_texture->set_texture_rd_rid(sim->get_texture());
+	RenderingServer *rs = RenderingServer::get_singleton();
+	rs->material_set_param(material, "sim_points", sim_texture->get_rid());
+	rs->material_set_param(material, "sim_width", sim->get_width());
+	rs->material_set_param(material, "simulated", true);
+	// Room for the strands to swing out to their full length.
+	rs->mesh_set_custom_aabb(mesh, aabb.grow(longest_strand));
+	sim_last = get_global_transform();
+	sim->reset();
+	sim_running = true;
+}
+
+void PhysXGroom3D::_stop_simulation() {
+	if (!sim_running) {
+		return;
+	}
+	sim_running = false;
+	RenderingServer *rs = RenderingServer::get_singleton();
+	rs->material_set_param(material, "simulated", false);
+	rs->material_set_param(material, "sim_points", Variant());
+	rs->mesh_set_custom_aabb(mesh, aabb);
+	sim_texture->set_texture_rd_rid(RID());
+	sim->clear();
+}
+
+void PhysXGroom3D::_update_simulation(double p_delta) {
+	if (!_wants_simulation()) {
+		_stop_simulation();
+		return;
+	}
+	if (!sim_running) {
+		_start_simulation();
+		if (!sim_running) {
+			return;
+		}
+	}
+	const Transform3D xform = get_global_transform();
+	// Moved further than the hair could swing in a frame: a teleport, not motion.
+	if (xform.origin.distance_to(sim_last.origin) > MAX(longest_strand, 0.1f) * 4.0f) {
+		sim->reset();
+		sim_last = xform;
+	}
+	GroomSim::Settings settings;
+	settings.stiffness = stiffness;
+	settings.bend_stiffness = bend_stiffness;
+	settings.damping = damping;
+	const Vector3 gravity_direction = GLOBAL_GET("physics/3d/default_gravity_vector");
+	const float gravity = GLOBAL_GET("physics/3d/default_gravity");
+	settings.gravity = gravity_direction * gravity * gravity_scale;
+	const Area3D *area = Object::cast_to<Area3D>(get_node_or_null(wind_area));
+	settings.wind = physx_cloth_sample_wind(wind, area, 0.0f, 0.0, xform.origin);
+	LocalVector<GroomSim::Collider> colliders;
+	if (collide_with_head && head_radius > 0.0f) {
+		GroomSim::Collider head;
+		head.a = xform.xform(head_center);
+		head.b = head.a;
+		const Vector3 scale = xform.basis.get_scale().abs();
+		head.radius = head_radius * MAX(scale.x, MAX(scale.y, scale.z));
+		colliders.push_back(head);
+	}
+	sim->step(sim_last, xform, p_delta, settings, colliders);
+	sim_last = xform;
+}
+
 int PhysXGroom3D::get_drawn_strand_count() const {
 	const int count = groom.is_valid() ? groom->get_strand_count() : 0;
 	return MIN(count, (int)Math::ceil(strand_fraction * count));
@@ -314,6 +481,7 @@ void PhysXGroom3D::_notification(int p_what) {
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			set_process_internal(false);
+			_stop_simulation();
 			if (screen_space_world.is_valid()) {
 				PhysXGroomRenderEffect::detach_world(screen_space_world);
 				screen_space_world = ObjectID();
@@ -322,6 +490,7 @@ void PhysXGroom3D::_notification(int p_what) {
 			sent_to_effect = false;
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
+			_update_simulation(get_process_delta_time());
 			_update_lod();
 			_update_screen_space();
 		} break;
@@ -378,10 +547,62 @@ void PhysXGroom3D::_update_material() {
 	rs->material_set_param(material, "shading_model", (int)shading_model);
 }
 
+// The sphere the points lie closest to (least squares), for the head the roots sit on; false when they don't make one.
+static bool fit_sphere(const LocalVector<Vector3> &p_points, Vector3 &r_center, float &r_radius) {
+	if (p_points.size() < 4) {
+		return false;
+	}
+	// |p|^2 = 2 c . p + k, k = r^2 - |c|^2: linear in (c, k). Normal equations, solved by Gaussian elimination.
+	double m[4][5] = {};
+	for (const Vector3 &p : p_points) {
+		const double row[4] = { 2.0 * p.x, 2.0 * p.y, 2.0 * p.z, 1.0 };
+		const double rhs = (double)p.length_squared();
+		for (int i = 0; i < 4; i++) {
+			for (int j = 0; j < 4; j++) {
+				m[i][j] += row[i] * row[j];
+			}
+			m[i][4] += row[i] * rhs;
+		}
+	}
+	for (int c = 0; c < 4; c++) {
+		int pivot = c;
+		for (int r = c + 1; r < 4; r++) {
+			if (Math::abs(m[r][c]) > Math::abs(m[pivot][c])) {
+				pivot = r;
+			}
+		}
+		if (Math::abs(m[pivot][c]) < 1e-18) {
+			return false;
+		}
+		for (int j = 0; j < 5; j++) {
+			SWAP(m[c][j], m[pivot][j]);
+		}
+		for (int r = 0; r < 4; r++) {
+			if (r != c) {
+				const double f = m[r][c] / m[c][c];
+				for (int j = c; j < 5; j++) {
+					m[r][j] -= f * m[c][j];
+				}
+			}
+		}
+	}
+	const Vector3 center((real_t)(m[0][4] / m[0][0]), (real_t)(m[1][4] / m[1][1]), (real_t)(m[2][4] / m[2][2]));
+	const double r2 = m[3][4] / m[3][3] + (double)center.length_squared();
+	if (r2 <= 0.0) {
+		return false;
+	}
+	r_center = center;
+	r_radius = (float)Math::sqrt(r2);
+	return true;
+}
+
 void PhysXGroom3D::_rebuild() {
+	_stop_simulation();
 	RenderingServer *rs = RenderingServer::get_singleton();
 	rs->mesh_clear(mesh);
 	aabb = AABB();
+	head_radius = 0.0f;
+	longest_strand = 0.0f;
 	if (groom.is_null() || groom->get_strand_count() == 0) {
 		update_gizmos();
 		return;
@@ -457,6 +678,24 @@ void PhysXGroom3D::_rebuild() {
 	aabb = groom->get_aabb();
 	aabb = aabb.grow(MAX(aabb.get_longest_axis_size() * 0.01f, 0.001f) * MAX(width_scale, 1.0f));
 	rs->mesh_set_custom_aabb(mesh, aabb);
+
+	// For the simulation: the head the roots sit on (a sphere through them, if they make one no bigger than the groom),
+	// and how far a strand can swing.
+	LocalVector<Vector3> roots;
+	for (int s = 0; s < strand_count; s++) {
+		roots.push_back(points[offsets[s]]);
+		float length = 0.0f;
+		for (int i = offsets[s] + 1; i < offsets[s + 1]; i++) {
+			length += points[i].distance_to(points[i - 1]);
+		}
+		longest_strand = MAX(longest_strand, length);
+	}
+	Vector3 center;
+	float radius = 0.0f;
+	if (fit_sphere(roots, center, radius) && radius < aabb.get_longest_axis_size()) {
+		head_center = center;
+		head_radius = radius;
+	}
 	update_gizmos();
 	_update_lod();
 	_send_points();
@@ -469,10 +708,14 @@ PhysXGroom3D::PhysXGroom3D() {
 	rs->material_set_shader(material, _shader());
 	_update_material();
 	set_base(mesh);
+	sim = memnew(GroomSim);
+	sim_texture.instantiate();
 }
 
 PhysXGroom3D::~PhysXGroom3D() {
 	PhysXGroomRenderEffect::remove_groom(get_instance_id());
+	sim_texture.unref();
+	memdelete(sim);
 	RenderingServer *rs = RenderingServer::get_singleton();
 	rs->free_rid(mesh);
 	rs->free_rid(material);

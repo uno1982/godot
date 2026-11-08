@@ -29,14 +29,17 @@
 		<member name="root_color" type="Color" setter="set_root_color" getter="get_root_color" default="Color(0.09, 0.055, 0.035, 1)">
 			The hair's color at the root; it blends to [member tip_color] along each strand.
 		</member>
+		<member name="render_mode" type="int" setter="set_render_mode" getter="get_render_mode" enum="PhysXGroom3D.RenderMode" default="0">
+			How the strands are drawn. See [enum RenderMode].
+		</member>
 		<member name="roughness" type="float" setter="set_roughness" getter="get_roughness" default="0.35">
-			How far the highlights spread along the strands: lower is sharper and glossier. [constant SHADING_MODEL_MARSCHNER] only.
+			How far the highlights spread along the strands: lower is sharper and glossier, higher a softer, wider sheen. Both shading models.
 		</member>
 		<member name="self_shadow" type="float" setter="set_self_shadow" getter="get_self_shadow" default="0.6">
 			How much light each strand between a point and a light takes away: the light is scaled by [code]exp(-self_shadow)[/code] per strand in its way, as [member PhysXGroom.self_shadow] counted them. It also darkens ambient light inside the hair. 0 turns self-shadowing off; a groom without the bake has none.
 		</member>
 		<member name="shading_model" type="int" setter="set_shading_model" getter="get_shading_model" enum="PhysXGroom3D.ShadingModel" default="0">
-			How the strands are lit. The two cost about the same: [constant SHADING_MODEL_MARSCHNER] does more math in each light's shading of each pixel of hair, which measured 0.02 ms or less of GPU time per frame more than [constant SHADING_MODEL_KAJIYA_KAY] with one light on a head filling a 1280×720 view, and 0.2-0.3 ms more (8-10%) with 8 more lights on it (an RTX 5070). The difference grows with the lights on the hair and the pixels it covers.
+			How the strands are lit: a choice of look more than of cost. [constant SHADING_MODEL_KAJIYA_KAY] is stylized, bright and saturated with a crisp highlight; [constant SHADING_MODEL_MARSCHNER] is realistic, a softer, more neutral sheen and the glow of backlit hair. With [constant RENDER_MODE_SCREEN_SPACE] they cost the same (drawing the strands is the cost, not lighting them). With [constant RENDER_MODE_MESH], Marschner does more math per light per pixel of hair: on a head filling a 1280×720 view (an RTX 5070), 0.02 ms more GPU time per frame with only the sun, 0.12 ms more with 4 more lights on the hair.
 		</member>
 		<member name="tip_color" type="Color" setter="set_tip_color" getter="get_tip_color" default="Color(0.32, 0.2, 0.11, 1)">
 			The hair's color at the tip. See [member root_color].
@@ -46,6 +49,12 @@
 		</member>
 	</members>
 	<constants>
+		<constant name="RENDER_MODE_MESH" value="0" enum="RenderMode">
+			A ribbon per strand, turned to face the camera: an ordinary mesh, in every renderer, with every effect that applies to one. Strands thinner than a pixel are dithered, so they need antialiasing (MSAA or TAA) to look smooth. The cheaper mode: on a head filling a 1280×720 view (an RTX 5070), 0.7-1.4 ms of GPU time per frame for 11-29 thousand strands.
+		</constant>
+		<constant name="RENDER_MODE_SCREEN_SPACE" value="1" enum="RenderMode">
+			The module's own compute passes draw the strands, each with its exact share of every pixel it crosses (as Indiana Jones and the Great Circle does, SIGGRAPH 2025), and the scene's lights and shadows light the two nearest strands in each pixel. Smooth, thin hair with no antialiasing at all, and hair that stays whole when [member width_scale] makes it very thin. Forward+ and Mobile. Costs more close up (1.8-3.0 ms in the view above) and about the same as [constant RENDER_MODE_MESH] at a distance. The mesh still casts the hair's shadows. The hair doesn't write depth, so effects that read the depth buffer don't see it.
+		</constant>
 		<constant name="SHADING_MODEL_KAJIYA_KAY" value="0" enum="ShadingModel">
 			Two highlights along each strand, the second tinted by the hair's color (Kajiya and Kay's model). Warm, and holds the hair's color in dark grooms.
 		</constant>

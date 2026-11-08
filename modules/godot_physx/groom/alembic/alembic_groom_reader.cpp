@@ -46,6 +46,7 @@ struct GroomWalk {
 	AlembicGroomData *data = nullptr;
 	bool warned_basis = false;
 	bool warned_widths = false;
+	int closed_skipped = 0;
 
 	void walk(const Alembic::Abc::IObject &p_object, const Imath::M44d &p_parent) {
 		Imath::M44d world = p_parent;
@@ -70,6 +71,12 @@ struct GroomWalk {
 		const Alembic::Abc::P3fArraySamplePtr positions = sample.getPositions();
 		const Alembic::Abc::Int32ArraySamplePtr counts = sample.getCurvesNumVertices();
 		if (!positions || !counts) {
+			return;
+		}
+		// Hair is never a closed loop: closed curves are something else in the groom (Blender's braids demo ties
+		// its braids with rings), and drawn as strands they'd be loops of hair.
+		if (sample.getWrap() == AbcGeom::kPeriodic) {
+			closed_skipped += (int)counts->size();
 			return;
 		}
 		// A cubic Bezier or B-spline curve doesn't pass through its points: drawn through them, it's close, not exact.
@@ -143,6 +150,9 @@ void alembic_read_groom(const String &p_path, float p_scale, float p_default_wid
 		Imath::M44d identity;
 		identity.makeIdentity();
 		walk.walk(archive.getTop(), identity);
+		if (walk.closed_skipped > 0) {
+			r_data.warnings.push_back(vformat("%d closed curves left out: hair strands are open curves.", walk.closed_skipped));
+		}
 	} catch (const std::exception &e) {
 		r_data.error = String("the Alembic library failed: ") + e.what();
 	} catch (...) {

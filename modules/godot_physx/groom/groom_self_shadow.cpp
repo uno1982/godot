@@ -53,8 +53,11 @@ struct Segment {
 	int strand = 0;
 };
 
-// The squared distance between segments [p0, p1] and [q0, q1] (Ericson, Real-Time Collision Detection, 5.1.9).
+// The squared distance between segments [p0, p1] and [q0, q1] (Ericson, Real-Time Collision Detection, 5.1.9). Hair is
+// small: a segment is millimeters long, its squared length far under CMP_EPSILON, so the tests for a segment that's a
+// point, and for two that are parallel, scale with the segments.
 float segment_distance_squared(const Vector3 &p0, const Vector3 &p1, const Vector3 &q0, const Vector3 &q1) {
+	constexpr float POINT_LENGTH_SQUARED = 1e-16f; // 0.1 nm, squared
 	const Vector3 d1 = p1 - p0;
 	const Vector3 d2 = q1 - q0;
 	const Vector3 r = p0 - q0;
@@ -63,21 +66,22 @@ float segment_distance_squared(const Vector3 &p0, const Vector3 &p1, const Vecto
 	const float f = d2.dot(r);
 	float s;
 	float t;
-	if (e <= CMP_EPSILON) {
+	if (e <= POINT_LENGTH_SQUARED) {
 		t = 0.0f;
-		s = a > CMP_EPSILON ? CLAMP(-d1.dot(r) / a, 0.0f, 1.0f) : 0.0f;
+		s = a > POINT_LENGTH_SQUARED ? CLAMP(-d1.dot(r) / a, 0.0f, 1.0f) : 0.0f;
 	} else {
 		const float c = d1.dot(r);
 		const float b = d1.dot(d2);
 		const float denom = a * e - b * b;
-		s = denom > CMP_EPSILON ? CLAMP((b * f - c * e) / denom, 0.0f, 1.0f) : 0.0f;
+		// Parallel: the sine of the angle between them squared, under a millionth.
+		s = denom > 1e-6f * a * e ? CLAMP((b * f - c * e) / denom, 0.0f, 1.0f) : 0.0f;
 		t = (b * s + f) / e;
 		if (t < 0.0f) {
 			t = 0.0f;
-			s = a > CMP_EPSILON ? CLAMP(-c / a, 0.0f, 1.0f) : 0.0f;
+			s = a > POINT_LENGTH_SQUARED ? CLAMP(-c / a, 0.0f, 1.0f) : 0.0f;
 		} else if (t > 1.0f) {
 			t = 1.0f;
-			s = a > CMP_EPSILON ? CLAMP((b - c) / a, 0.0f, 1.0f) : 0.0f;
+			s = a > POINT_LENGTH_SQUARED ? CLAMP((b - c) / a, 0.0f, 1.0f) : 0.0f;
 		}
 	}
 	return (p0 + d1 * s).distance_squared_to(q0 + d2 * t);

@@ -151,6 +151,7 @@ float wa, wb; // width, px
 float s0, s1; // the visible part's ends, as a share of the whole segment
 bool last_segment;
 uint segment;
+vec3 ta, tb; // the strand's direction at the segment's ends, view space (the attributes pass)
 
 void shade_pixel(ivec2 px) {
 	if (any(lessThan(px, ivec2(0))) || any(greaterThanEqual(px, p.frame.xy))) {
@@ -197,7 +198,8 @@ void shade_pixel(ivec2 px) {
 	mat3 turn = mat3(p.view * g.model);
 	turn = mat3(normalize(turn[0]), normalize(turn[1]), normalize(turn[2]));
 	vec4 sh = turn_strands(mix(data[segment * 3u + 2u], data[segment * 3u + 5u], so), turn);
-	vec4 a = vec4(normalize(vb - va), mix(a1.x, b1.x, so));
+	// The direction turns smoothly along the strand, not at each point: a highlight then slides along it.
+	vec4 a = vec4(normalize(mix(ta, tb, so)), mix(a1.x, b1.x, so));
 	if (first) {
 		imageStore(hair_a, px, a);
 		imageStore(hair_c, px, sh);
@@ -233,6 +235,14 @@ void main() {
 		s0 = (-near - va.z) / (vb.z - va.z);
 	} else if (vb.z > -near) {
 		s1 = (-near - va.z) / (vb.z - va.z);
+	}
+	if (g.info.y == 2) {
+		// At each point, the direction from the point before it to the one after (only one side at a strand's ends).
+		mat4 to_view = p.view * g.model;
+		vec3 before = a1.x > 0.0 ? (to_view * vec4(data[segment * 3u - 3u].xyz, 1.0)).xyz : va;
+		vec3 after = last_segment ? vb : (to_view * vec4(data[segment * 3u + 6u].xyz, 1.0)).xyz;
+		ta = normalize(vb - before);
+		tb = normalize(after - va);
 	}
 	vec3 v0 = mix(va, vb, s0);
 	vec3 v1 = mix(va, vb, s1);

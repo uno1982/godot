@@ -95,8 +95,10 @@ void light() {
 		float facing = mix(0.35, 1.0, clamp(dot(NORMAL, LIGHT) * 0.5 + 0.5, 0.0, 1.0));
 		DIFFUSE_LIGHT += across * facing * through * LIGHT_COLOR / PI;
 		vec3 h = normalize(LIGHT + VIEW);
-		float primary = strand_highlight(normalize(light_tangent - NORMAL * 0.08), h, 90.0);
-		float secondary = strand_highlight(normalize(light_tangent + NORMAL * 0.12), h, 24.0);
+		// Rougher, wider highlights: 90 and 24 at the default roughness of 0.35.
+		float sharpness = 11.0 / max(hair_roughness * hair_roughness, 0.01);
+		float primary = strand_highlight(normalize(light_tangent - NORMAL * 0.08), h, sharpness);
+		float secondary = strand_highlight(normalize(light_tangent + NORMAL * 0.12), h, sharpness / 3.75);
 		SPECULAR_LIGHT += (primary * 0.06 + secondary * 0.12 * ALBEDO) * facing * through * LIGHT_COLOR;
 	} else {
 		vec3 t = light_tangent;

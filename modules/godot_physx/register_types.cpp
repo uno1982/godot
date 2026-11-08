@@ -42,6 +42,7 @@
 #include "cloth/physx_skinned_cloth_3d.h"
 #include "groom/physx_groom.h"
 #include "groom/physx_groom_3d.h"
+#include "groom/physx_groom_render_effect.h"
 #ifdef GODOT_PHYSX_FLOW
 #include "flow/physx_flow_3d.h"
 #include "flow/physx_flow_emitter_3d.h"
@@ -133,6 +134,7 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(PhysXChunkEmitter3D);
 		GDREGISTER_CLASS(PhysXGroom);
 		GDREGISTER_CLASS(PhysXGroom3D);
+		GDREGISTER_INTERNAL_CLASS(PhysXGroomRenderEffect);
 		GDREGISTER_CLASS(PhysXLightShafts3D);
 		GDREGISTER_INTERNAL_CLASS(PhysXLightShaftsEffect);
 		GDREGISTER_CLASS(PXTGI3D);
@@ -192,6 +194,7 @@ void uninitialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		PhysXGIEffect::free_shared();
 		PXTGI3D::free_shared();
 		PhysXGroom3D::free_shared();
+		PhysXGroomRenderEffect::free_shared();
 	}
 #ifdef GODOT_PHYSX_FLOW
 	if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE) {

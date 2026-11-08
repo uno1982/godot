@@ -41,6 +41,14 @@ class PhysXGroom3D : public GeometryInstance3D {
 	GDCLASS(PhysXGroom3D, GeometryInstance3D);
 
 public:
+	enum RenderMode {
+		// A ribbon per strand, an ordinary mesh: every renderer, every effect on it, strands thinner than a pixel dithered.
+		RENDER_MODE_MESH,
+		// Drawn by the module's own compute passes with each strand's exact share of each pixel, lit by Godot through a
+		// screen-covering proxy (PhysXGroomRenderEffect): smooth thin hair with or without MSAA. Forward+ and Mobile.
+		RENDER_MODE_SCREEN_SPACE,
+	};
+
 	enum ShadingModel {
 		// Two highlights along the strand; warm, and the cheaper of the two.
 		SHADING_MODEL_KAJIYA_KAY,
@@ -50,7 +58,14 @@ public:
 	};
 
 private:
+	RenderMode render_mode = RENDER_MODE_MESH;
 	ShadingModel shading_model = SHADING_MODEL_KAJIYA_KAY;
+	// The world the screen-space effect knows this groom in, and the strands it has (see _send_points).
+	ObjectID screen_space_world;
+	uint64_t points_version = 0;
+	bool sent_to_effect = false;
+	void _send_points();
+	void _update_screen_space();
 
 	Ref<PhysXGroom> groom;
 	Color root_color = Color(0.09, 0.055, 0.035);
@@ -87,6 +102,8 @@ public:
 	// How much light a strand of the groom between a point and the light takes away (each one, as exp(-self_shadow)).
 	void set_self_shadow(float p_amount);
 	float get_self_shadow() const { return self_shadow; }
+	void set_render_mode(RenderMode p_mode);
+	RenderMode get_render_mode() const { return render_mode; }
 	void set_shading_model(ShadingModel p_model);
 	ShadingModel get_shading_model() const { return shading_model; }
 	// How wide the strands' highlights spread along them (Marschner's longitudinal lobe widths; Marschner only).
@@ -106,4 +123,5 @@ public:
 	~PhysXGroom3D();
 };
 
+VARIANT_ENUM_CAST(PhysXGroom3D::RenderMode);
 VARIANT_ENUM_CAST(PhysXGroom3D::ShadingModel);

@@ -56,6 +56,7 @@ public:
 		ORDER_LENS_FLARE = 3,
 		ORDER_LENS_DIRT = 4, // last: the shafts and the flare light it too
 		ORDER_GI = 5, // before the opaque pass: its place among the others is moot
+		ORDER_GROOM = 6, // before the transparent pass, as the fluid, and independent of it
 	};
 
 	// Every frame (cheap when nothing changed): the world's compositor, and the

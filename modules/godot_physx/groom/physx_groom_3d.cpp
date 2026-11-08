@@ -30,10 +30,14 @@
 
 #include "physx_groom_3d.h"
 
+#include "groom_shading.h"
+#include "physx_groom_render_effect.h"
+
 #include "core/config/engine.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
 #include "scene/3d/camera_3d.h"
+#include "scene/resources/3d/world_3d.h"
 #include "scene/main/viewport.h"
 #include "servers/rendering/rendering_server.h"
 
@@ -44,31 +48,15 @@ RID PhysXGroom3D::shared_shader;
 // NORMAL the strand's direction. The vertex shader spreads them apart across the strand, facing the camera, at least a
 // pixel apart; a strand thinner than that draws less of its pixel (alpha hash). Strands past strand_fraction aren't
 // drawn (collapsed to a point), and the rest widen to cover for them.
-static const char *GROOM_SHADER = R"(
-shader_type spatial;
-render_mode skip_vertex_transform, cull_disabled;
-
-uniform vec3 root_color : source_color;
-uniform vec3 tip_color : source_color;
+// The strand mesh's own part of its shader (see groom_shading.h for the rest).
+static const char *GROOM_MESH_SHADER = R"(
 uniform float width_scale = 1.0;
 uniform float strand_fraction = 1.0;
-uniform float self_shadow = 0.6;
-uniform float hair_roughness = 0.35;
-// 0: Kajiya-Kay, 1: Marschner (PhysXGroom3D.ShadingModel).
-uniform int shading_model = 0;
-uniform float multiple_scattering = 0.6;
 
 varying vec3 v_tangent;
 varying float v_along;
 varying float v_coverage;
-varying vec3 light_tangent;
 varying vec4 v_shadow;
-varying vec4 light_shadow;
-
-// The groom's own strands between a point and the direction d (the groom's space): see groom_self_shadow.h.
-float strands_toward(vec4 sh, vec3 d) {
-	return max(0.0, dot(sh, vec4(0.282095, 0.488603 * d.y, 0.488603 * d.z, 0.488603 * d.x)));
-}
 
 void vertex() {
 	vec3 pos = (MODELVIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -86,7 +74,9 @@ void vertex() {
 	BINORMAL = across;
 	v_tangent = tangent;
 	v_along = UV.y;
-	v_shadow = CUSTOM0;
+	// Baked in the groom's space; lit in view space.
+	mat3 turn = mat3(normalize(MODELVIEW_MATRIX[0].xyz), normalize(MODELVIEW_MATRIX[1].xyz), normalize(MODELVIEW_MATRIX[2].xyz));
+	v_shadow = turn_strands(CUSTOM0, turn);
 	// Past the strands drawn at this distance: every vertex at one point, nothing to rasterize.
 	if (UV2.y >= strand_fraction) {
 		VERTEX = vec3(0.0);
@@ -94,8 +84,7 @@ void vertex() {
 }
 
 void fragment() {
-	// Darker toward the root, where the strands shade each other.
-	ALBEDO = mix(root_color, tip_color, v_along) * mix(0.55, 1.0, smoothstep(0.0, 0.35, v_along));
+	ALBEDO = strand_albedo(v_along);
 	if (shading_model == 1) {
 		ROUGHNESS = hair_roughness;
 		// Its own lighting carries the strand's highlights.
@@ -110,100 +99,13 @@ void fragment() {
 	// Ambient light, from every direction: the strands in the way on average.
 	AO = exp(-self_shadow * max(0.0, v_shadow.x * 0.282095));
 }
-
-// Kajiya-Kay: light falls across a strand, not on a surface. Two highlights, the second shifted toward the tip and
-// tinted by the hair's color.
-float strand_highlight(vec3 tangent, vec3 half_vector, float exponent) {
-	float th = dot(tangent, half_vector);
-	return pow(sqrt(max(1.0 - th * th, 0.0)), exponent);
-}
-
-// Marschner's hair model (Marschner et al. 2003), with the real-time approximations of Karis (Physically Based Hair
-// Shading in Unreal, 2016). Light leaves a strand three ways: R, reflected off its surface (untinted, a highlight
-// shifted toward the root); TT, through it (tinted by the hair, the glow of backlit hair); TRT, in, reflected inside
-// and out again (tinted, a second highlight shifted toward the tip). Each is a longitudinal lobe M (along the strand)
-// times an azimuthal one N (around it) times its attenuation A.
-const float HAIR_IOR = 1.55;
-
-float hair_fresnel(float cos_theta) {
-	// Schlick, F0 of hair's index of refraction.
-	float f0 = (1.0 - HAIR_IOR) * (1.0 - HAIR_IOR) / ((1.0 + HAIR_IOR) * (1.0 + HAIR_IOR));
-	return f0 + (1.0 - f0) * pow(1.0 - clamp(cos_theta, 0.0, 1.0), 5.0);
-}
-
-float hair_longitudinal(float beta, float theta_h) {
-	return exp(-theta_h * theta_h / (2.0 * beta * beta)) / (sqrt(2.0 * PI) * beta);
-}
-
-void light() {
-	// The light's direction in the groom's space, where the strands toward it were counted.
-	vec3 to_light = normalize(transpose(mat3(MODEL_MATRIX)) * (mat3(INV_VIEW_MATRIX) * LIGHT));
-	float through = exp(-self_shadow * strands_toward(light_shadow, to_light)) * ATTENUATION;
-
-	if (shading_model == 0) {
-		float tl = dot(light_tangent, LIGHT);
-		float across = sqrt(max(1.0 - tl * tl, 0.0));
-		// Lit from behind, a strand still passes some light through.
-		float facing = mix(0.35, 1.0, clamp(dot(NORMAL, LIGHT) * 0.5 + 0.5, 0.0, 1.0));
-		DIFFUSE_LIGHT += across * facing * through * LIGHT_COLOR / PI;
-		vec3 h = normalize(LIGHT + VIEW);
-		float primary = strand_highlight(normalize(light_tangent - NORMAL * 0.08), h, 90.0);
-		float secondary = strand_highlight(normalize(light_tangent + NORMAL * 0.12), h, 24.0);
-		SPECULAR_LIGHT += (primary * 0.06 + secondary * 0.12 * ALBEDO) * facing * through * LIGHT_COLOR;
-	} else {
-		vec3 t = light_tangent;
-		float sin_i = clamp(dot(LIGHT, t), -1.0, 1.0);
-		float sin_o = clamp(dot(VIEW, t), -1.0, 1.0);
-		float theta_i = asin(sin_i);
-		float theta_o = asin(sin_o);
-		float cos_theta_d = cos(0.5 * (theta_i - theta_o));
-		float theta_h = 0.5 * (theta_i + theta_o);
-		// The angle between light and view around the strand.
-		vec3 l_across = LIGHT - t * sin_i;
-		vec3 v_across = VIEW - t * sin_o;
-		float cos_phi = dot(l_across, v_across) * inversesqrt(max(dot(l_across, l_across) * dot(v_across, v_across), 1e-8));
-		float cos_half_phi = sqrt(clamp(0.5 + 0.5 * cos_phi, 0.0, 1.0));
-
-		// Lobe widths and shifts (radians), from the roughness.
-		float r2 = hair_roughness * hair_roughness;
-		const float shift = 0.035;
-		float m_r = hair_longitudinal(max(r2, 0.02), theta_h + 2.0 * shift);
-		float m_tt = hair_longitudinal(max(r2 * 0.5, 0.01), theta_h - shift);
-		float m_trt = hair_longitudinal(max(r2 * 2.0, 0.04), theta_h - 4.0 * shift);
-
-		// R.
-		float n_r = 0.25 * cos_half_phi;
-		float a_r = hair_fresnel(sqrt(clamp(0.5 + 0.5 * dot(LIGHT, VIEW), 0.0, 1.0)));
-		// TT: the path through the strand, attenuated by its color (absorption) over the path's length.
-		float ior_prime = 1.19 / cos_theta_d + 0.36 * cos_theta_d;
-		float a = 1.0 / ior_prime;
-		float h_tt = cos_half_phi * (1.0 + a * (0.6 - 0.8 * cos_phi));
-		vec3 absorb_tt = pow(max(ALBEDO, vec3(1e-4)), vec3(sqrt(max(1.0 - h_tt * h_tt * a * a, 0.0)) / (2.0 * cos_theta_d)));
-		float f_tt = hair_fresnel(cos_theta_d * sqrt(max(1.0 - h_tt * h_tt, 0.0)));
-		vec3 a_tt = (1.0 - f_tt) * (1.0 - f_tt) * absorb_tt;
-		float n_tt = exp(-3.65 * cos_phi - 3.98);
-		// TRT.
-		vec3 absorb_trt = pow(max(ALBEDO, vec3(1e-4)), vec3(0.8 / cos_theta_d));
-		float f_trt = hair_fresnel(cos_theta_d * 0.5);
-		vec3 a_trt = (1.0 - f_trt) * (1.0 - f_trt) * f_trt * absorb_trt * absorb_trt;
-		float n_trt = exp(17.0 * cos_phi - 16.78);
-
-		vec3 strand = m_r * n_r * a_r + m_tt * n_tt * a_tt + m_trt * n_trt * a_trt;
-		// The hair rendering equation's cos(theta_i), over cos^2(theta_d) of the far-field model.
-		float cos_i = sqrt(max(1.0 - sin_i * sin_i, 0.0));
-		SPECULAR_LIGHT += strand * cos_i / max(cos_theta_d * cos_theta_d, 0.05) * through * LIGHT_COLOR;
-
-		// Light scattered between strands, beyond what the three paths above carry: soft, colored, from every side.
-		DIFFUSE_LIGHT += cos_i * mix(0.3, 1.0, clamp(dot(NORMAL, LIGHT) * 0.5 + 0.5, 0.0, 1.0)) * multiple_scattering * through * LIGHT_COLOR / PI;
-	}
-}
 )";
 
 RID PhysXGroom3D::_shader() {
 	if (!shared_shader.is_valid()) {
 		RenderingServer *rs = RenderingServer::get_singleton();
 		shared_shader = rs->shader_create();
-		rs->shader_set_code(shared_shader, GROOM_SHADER);
+		rs->shader_set_code(shared_shader, String("shader_type spatial;\nrender_mode skip_vertex_transform, cull_disabled;\n") + GROOM_SHADING_COMMON + GROOM_MESH_SHADER + GROOM_SHADING_LIGHT);
 	}
 	return shared_shader;
 }
@@ -228,6 +130,8 @@ void PhysXGroom3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "groom", PROPERTY_HINT_RESOURCE_TYPE, "PhysXGroom"), "set_groom", "get_groom");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "root_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_root_color", "get_root_color");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "tip_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_tip_color", "get_tip_color");
+	ClassDB::bind_method(D_METHOD("set_render_mode", "mode"), &PhysXGroom3D::set_render_mode);
+	ClassDB::bind_method(D_METHOD("get_render_mode"), &PhysXGroom3D::get_render_mode);
 	ClassDB::bind_method(D_METHOD("set_shading_model", "model"), &PhysXGroom3D::set_shading_model);
 	ClassDB::bind_method(D_METHOD("get_shading_model"), &PhysXGroom3D::get_shading_model);
 	ClassDB::bind_method(D_METHOD("set_roughness", "roughness"), &PhysXGroom3D::set_roughness);
@@ -239,11 +143,14 @@ void PhysXGroom3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_drawn_strand_count"), &PhysXGroom3D::get_drawn_strand_count);
 
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "width_scale", PROPERTY_HINT_RANGE, "0.1,10,0.01"), "set_width_scale", "get_width_scale");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "render_mode", PROPERTY_HINT_ENUM, "Mesh,Screen Space"), "set_render_mode", "get_render_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "shading_model", PROPERTY_HINT_ENUM, "Kajiya-Kay,Marschner"), "set_shading_model", "get_shading_model");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "roughness", PROPERTY_HINT_RANGE, "0.1,1,0.01"), "set_roughness", "get_roughness");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "self_shadow", PROPERTY_HINT_RANGE, "0,4,0.01"), "set_self_shadow", "get_self_shadow");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_strands", PROPERTY_HINT_RANGE, "0,1000000,1,or_greater"), "set_max_strands", "get_max_strands");
 
+	BIND_ENUM_CONSTANT(RENDER_MODE_MESH);
+	BIND_ENUM_CONSTANT(RENDER_MODE_SCREEN_SPACE);
 	BIND_ENUM_CONSTANT(SHADING_MODEL_KAJIYA_KAY);
 	BIND_ENUM_CONSTANT(SHADING_MODEL_MARSCHNER);
 }
@@ -273,6 +180,97 @@ void PhysXGroom3D::set_width_scale(float p_scale) {
 	width_scale = MAX(p_scale, 0.0f);
 	_update_material();
 	_rebuild();
+}
+
+void PhysXGroom3D::set_render_mode(RenderMode p_mode) {
+	if (render_mode == p_mode) {
+		return;
+	}
+	render_mode = p_mode;
+	if (render_mode == RENDER_MODE_SCREEN_SPACE) {
+		_send_points();
+	}
+	_update_screen_space();
+	// Back to drawing itself: the shadow setting it had.
+	if (render_mode == RENDER_MODE_MESH) {
+		set_cast_shadows_setting(get_cast_shadows_setting());
+	}
+}
+
+// The strands as the screen-space passes read them: see PhysXGroomRenderEffect::set_points.
+void PhysXGroom3D::_send_points() {
+	if (render_mode != RENDER_MODE_SCREEN_SPACE) {
+		return;
+	}
+	PackedFloat32Array packed;
+	if (groom.is_valid() && groom->is_valid()) {
+		const PackedVector3Array points = groom->get_points();
+		const PackedInt32Array offsets = groom->get_strand_offsets();
+		const PackedFloat32Array widths = groom->get_widths();
+		const PackedFloat32Array shadow = groom->get_self_shadow();
+		const bool has_shadow = shadow.size() == points.size() * 4;
+		const int strand_count = groom->get_strand_count();
+		packed.resize(points.size() * 12);
+		float *w = packed.ptrw();
+		for (int s = 0; s < strand_count; s++) {
+			const int from = offsets[s];
+			const int count = offsets[s + 1] - from;
+			const float rank = ((float)s + 0.5f) / (float)strand_count;
+			for (int j = 0; j < count; j++) {
+				const int p = from + j;
+				float *o = w + p * 12;
+				o[0] = points[p].x;
+				o[1] = points[p].y;
+				o[2] = points[p].z;
+				o[3] = widths[p] * 0.5f;
+				o[4] = count > 1 ? (float)j / (float)(count - 1) : 0.0f;
+				o[5] = rank;
+				o[6] = j == count - 1 ? 1.0f : 0.0f;
+				o[7] = 0.0f;
+				for (int i = 0; i < 4; i++) {
+					o[8 + i] = has_shadow ? shadow[p * 4 + i] : 0.0f;
+				}
+			}
+		}
+	}
+	PhysXGroomRenderEffect::set_points(get_instance_id(), ++points_version, packed);
+}
+
+// Joins or leaves the screen-space effect's world, and in it hands the effect where the groom is each frame. The mesh
+// still casts the shadows: it's drawn for nothing else.
+void PhysXGroom3D::_update_screen_space() {
+	World3D *world = is_inside_tree() && get_world_3d().is_valid() ? get_world_3d().ptr() : nullptr;
+	const bool wanted = render_mode == RENDER_MODE_SCREEN_SPACE && world != nullptr && is_visible_in_tree();
+	const ObjectID world_id = wanted ? world->get_instance_id() : ObjectID();
+	if (screen_space_world != world_id) {
+		if (screen_space_world.is_valid()) {
+			PhysXGroomRenderEffect::detach_world(screen_space_world);
+		}
+		screen_space_world = world_id;
+		if (wanted) {
+			PhysXGroomRenderEffect::attach_world(world);
+		}
+	}
+	if (!wanted) {
+		PhysXGroomRenderEffect::remove_groom(get_instance_id());
+		sent_to_effect = false;
+		return;
+	}
+	// Gone from the effect while out of a world (or not yet sent): the strands again.
+	if (!sent_to_effect) {
+		sent_to_effect = true;
+		_send_points();
+	}
+	PhysXGroomRenderEffect::Look look;
+	look.root_color = root_color;
+	look.tip_color = tip_color;
+	look.self_shadow = self_shadow;
+	look.roughness = roughness;
+	look.shading_model = shading_model;
+	PhysXGroomRenderEffect::set_state(get_instance_id(), get_global_transform(), strand_fraction, width_scale, look);
+	Viewport *viewport = get_viewport();
+	PhysXGroomRenderEffect::install(world, viewport ? viewport->get_camera_3d() : nullptr);
+	RenderingServer::get_singleton()->instance_geometry_set_cast_shadows_setting(get_instance(), get_cast_shadows_setting() == SHADOW_CASTING_SETTING_OFF ? RSE::SHADOW_CASTING_SETTING_OFF : RSE::SHADOW_CASTING_SETTING_SHADOWS_ONLY);
 }
 
 void PhysXGroom3D::set_shading_model(ShadingModel p_model) {
@@ -306,12 +304,20 @@ void PhysXGroom3D::_notification(int p_what) {
 		case NOTIFICATION_ENTER_TREE: {
 			set_process_internal(true);
 			_update_lod();
+			_update_screen_space();
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			set_process_internal(false);
+			if (screen_space_world.is_valid()) {
+				PhysXGroomRenderEffect::detach_world(screen_space_world);
+				screen_space_world = ObjectID();
+			}
+			PhysXGroomRenderEffect::remove_groom(get_instance_id());
+			sent_to_effect = false;
 		} break;
 		case NOTIFICATION_INTERNAL_PROCESS: {
 			_update_lod();
+			_update_screen_space();
 		} break;
 	}
 }
@@ -447,6 +453,7 @@ void PhysXGroom3D::_rebuild() {
 	rs->mesh_set_custom_aabb(mesh, aabb);
 	update_gizmos();
 	_update_lod();
+	_send_points();
 }
 
 PhysXGroom3D::PhysXGroom3D() {
@@ -459,6 +466,7 @@ PhysXGroom3D::PhysXGroom3D() {
 }
 
 PhysXGroom3D::~PhysXGroom3D() {
+	PhysXGroomRenderEffect::remove_groom(get_instance_id());
 	RenderingServer *rs = RenderingServer::get_singleton();
 	rs->free_rid(mesh);
 	rs->free_rid(material);

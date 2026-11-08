@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXGroom" inherits="Resource" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Hair strands, drawn by a [PhysXGroom3D].
+	</brief_description>
+	<description>
+		A groom: hair or fur as strands, each a polyline of points from root to tip with a width at every point. Made by importing an Alembic ([code].abc[/code]) file, the format Blender, Houdini, Maya and Unreal Engine exchange grooms in: every open curve in the file becomes a strand, through its transforms. Closed curves are left out (they're never hair: Blender's braids demo ties its braids with rings). The importer needs an editor built with [code]alembic_sdk=[/code]; the imported resource itself works in any build and in exported games.
+		The importer shuffles the strands into a random order, the same every import, so that [PhysXGroom3D] can draw fewer of them at a distance by drawing the first ones. It also bakes the groom's self-shadowing (see [member self_shadow]); the import options [code]self_shadow/rays[/code] (0 leaves it out) and [code]self_shadow/reach[/code] control it. [code]scale[/code] converts the file's units (Blender writes meters), and [code]default_width[/code] is the width of strands the file gives none.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="bake_self_shadow">
+			<return type="void" />
+			<param index="0" name="rays" type="int" default="32" />
+			<param index="1" name="reach" type="float" default="0.0" />
+			<description>
+				Bakes [member self_shadow] from the strands as they are now: from each point, [param rays] rays count the groom's other strands they pass within [param reach] of it (0: 15% of the groom's size). The importer does this; call it after changing the strands from a script. It takes seconds on a large groom (13-20 seconds for Blender's demo hairstyles, up to 1.4 million points), on worker threads.
+			</description>
+		</method>
+		<method name="get_aabb" qualifiers="const">
+			<return type="AABB" />
+			<description>
+				Returns the bounding box of the strands, widths included.
+			</description>
+		</method>
+		<method name="get_point_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns how many points the strands have in all.
+			</description>
+		</method>
+		<method name="get_strand_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns how many strands the groom has.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="points" type="PackedVector3Array" setter="set_points" getter="get_points" default="PackedVector3Array()">
+			Every strand's points, one strand after another, each from root to tip. [member strand_offsets] says where each starts.
+		</member>
+		<member name="self_shadow" type="PackedFloat32Array" setter="set_self_shadow" getter="get_self_shadow" default="PackedFloat32Array()">
+			Four numbers per point, or empty: how many of the groom's own strands lie between the point and each direction, as an L1 spherical harmonic, so that [PhysXGroom3D] can shade a strand by the hair between it and each light, for every light and at no cost per frame (the precomputed self-shadowing of [i]Indiana Jones and the Great Circle[/i]). It's baked for the strands as they are: hair that moves far from them keeps the shading of where it was. See [method bake_self_shadow].
+		</member>
+		<member name="strand_offsets" type="PackedInt32Array" setter="set_strand_offsets" getter="get_strand_offsets" default="PackedInt32Array()">
+			Where each strand starts in [member points], and one more entry, the point count: strand [code]i[/code] is [code]points[strand_offsets[i]][/code] up to (not including) [code]points[strand_offsets[i + 1]][/code].
+		</member>
+		<member name="widths" type="PackedFloat32Array" setter="set_widths" getter="get_widths" default="PackedFloat32Array()">
+			Each point's strand width there, a diameter, as Alembic files and Unreal Engine have it.
+		</member>
+	</members>
+</class>

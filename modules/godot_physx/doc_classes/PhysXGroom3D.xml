@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXGroom3D" inherits="GeometryInstance3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Draws hair strands: a [PhysXGroom].
+	</brief_description>
+	<description>
+		Draws each strand of a [PhysXGroom] as a thin ribbon turned toward the camera, at least a pixel wide; a strand thinner than a pixel draws that share of it. It's an ordinary mesh to the renderer, so the hair casts and receives shadows and takes the scene's lights like any other, and it shades itself with a hair model (see [member shading_model]) and the groom's baked self-shadowing (see [member self_shadow]).
+		At a distance it draws fewer strands, wider, so the hair keeps its look while it costs less: as many as keep it under about half a strand segment per pixel of its size on screen. [member GeometryInstance3D.lod_bias] keeps more of them (2.0: twice as many), and [member max_strands] caps them. Drawing every strand of a distant groom costs more, not less, than drawing it close up: all of them, a pixel wide each, pile onto the same few pixels.
+		[b]Anti-aliasing:[/b] hair is made of edges thinner than a pixel. MSAA smooths it well; SMAA and FXAA do little for it.
+		[b]Note:[/b] Strands don't move yet: the groom is drawn as imported, in this node's space.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_drawn_strand_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns how many of the groom's strands are drawn now, after the distance and [member max_strands].
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="groom" type="PhysXGroom" setter="set_groom" getter="get_groom">
+			The strands to draw, imported from an Alembic ([code].abc[/code]) file.
+		</member>
+		<member name="max_strands" type="int" setter="set_max_strands" getter="get_max_strands" default="0">
+			The most strands drawn at any distance, 0 for no limit: a quality setting, as games cap grooms at lower settings. The rest of the strands widen to cover the same area.
+		</member>
+		<member name="root_color" type="Color" setter="set_root_color" getter="get_root_color" default="Color(0.09, 0.055, 0.035, 1)">
+			The hair's color at the root; it blends to [member tip_color] along each strand.
+		</member>
+		<member name="roughness" type="float" setter="set_roughness" getter="get_roughness" default="0.35">
+			How far the highlights spread along the strands: lower is sharper and glossier. [constant SHADING_MODEL_MARSCHNER] only.
+		</member>
+		<member name="self_shadow" type="float" setter="set_self_shadow" getter="get_self_shadow" default="0.6">
+			How much light each strand between a point and a light takes away: the light is scaled by [code]exp(-self_shadow)[/code] per strand in its way, as [member PhysXGroom.self_shadow] counted them. It also darkens ambient light inside the hair. 0 turns self-shadowing off; a groom without the bake has none.
+		</member>
+		<member name="shading_model" type="int" setter="set_shading_model" getter="get_shading_model" enum="PhysXGroom3D.ShadingModel" default="0">
+			How the strands are lit. The two cost about the same: [constant SHADING_MODEL_MARSCHNER] does more math in each light's shading of each pixel of hair, which measured 0.02 ms or less of GPU time per frame more than [constant SHADING_MODEL_KAJIYA_KAY] with one light on a head filling a 1280×720 view, and 0.2-0.3 ms more (8-10%) with 8 more lights on it (an RTX 5070). The difference grows with the lights on the hair and the pixels it covers.
+		</member>
+		<member name="tip_color" type="Color" setter="set_tip_color" getter="get_tip_color" default="Color(0.32, 0.2, 0.11, 1)">
+			The hair's color at the tip. See [member root_color].
+		</member>
+		<member name="width_scale" type="float" setter="set_width_scale" getter="get_width_scale" default="1.0">
+			Scales the strands' widths from the groom's: hair drawn a little thicker than real reads fuller, as groomers often do.
+		</member>
+	</members>
+	<constants>
+		<constant name="SHADING_MODEL_KAJIYA_KAY" value="0" enum="ShadingModel">
+			Two highlights along each strand, the second tinted by the hair's color (Kajiya and Kay's model). Warm, and holds the hair's color in dark grooms.
+		</constant>
+		<constant name="SHADING_MODEL_MARSCHNER" value="1" enum="ShadingModel">
+			Light reflected off each strand, passed through it, and reflected inside it (Marschner's model, with Karis's real-time approximations): physically based, with the glow of backlit hair. Dark hair looks darker and glossier than with [constant SHADING_MODEL_KAJIYA_KAY], as it does in life. See [member shading_model] for what it costs.
+		</constant>
+	</constants>
+</class>

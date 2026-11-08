@@ -28,13 +28,12 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-// The Alembic library's headers before Godot's: Godot's macros (MIN, MAX, ...) would otherwise reach into them.
+#include "alembic_groom_reader.h"
+
 #include <Alembic/AbcCoreFactory/All.h>
 #include <Alembic/AbcGeom/All.h>
 
 #include <exception>
-
-#include "alembic_groom_reader.h"
 
 namespace {
 

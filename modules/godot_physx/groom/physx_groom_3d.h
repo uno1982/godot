@@ -35,16 +35,29 @@
 #include "scene/3d/visual_instance_3d.h"
 
 // Draws a PhysXGroom: each strand a ribbon turned to face the camera in the vertex shader (and the light, in its
-// shadow pass), at least a pixel wide, thinner strands fading to cover what they would. Hair shading: two highlights
-// along the strand (Kajiya-Kay), the root darker than the tip.
+// shadow pass), at least a pixel wide, thinner strands fading to cover what they would. Hair shading: Marschner's
+// model (R, TT and TRT), lit through the groom's precomputed self-shadowing; the root darker than the tip.
 class PhysXGroom3D : public GeometryInstance3D {
 	GDCLASS(PhysXGroom3D, GeometryInstance3D);
+
+public:
+	enum ShadingModel {
+		// Two highlights along the strand; warm, and the cheaper of the two.
+		SHADING_MODEL_KAJIYA_KAY,
+		// Light reflected, through and inside the strand: physically based, with the glow of backlit hair. More math per
+		// pixel (see the class docs for what it costs).
+		SHADING_MODEL_MARSCHNER,
+	};
+
+private:
+	ShadingModel shading_model = SHADING_MODEL_KAJIYA_KAY;
 
 	Ref<PhysXGroom> groom;
 	Color root_color = Color(0.09, 0.055, 0.035);
 	Color tip_color = Color(0.32, 0.2, 0.11);
 	float width_scale = 1.0f;
 	float self_shadow = 0.6f;
+	float roughness = 0.35f;
 	int max_strands = 0;
 	float strand_fraction = 1.0f;
 
@@ -74,6 +87,11 @@ public:
 	// How much light a strand of the groom between a point and the light takes away (each one, as exp(-self_shadow)).
 	void set_self_shadow(float p_amount);
 	float get_self_shadow() const { return self_shadow; }
+	void set_shading_model(ShadingModel p_model);
+	ShadingModel get_shading_model() const { return shading_model; }
+	// How wide the strands' highlights spread along them (Marschner's longitudinal lobe widths; Marschner only).
+	void set_roughness(float p_roughness);
+	float get_roughness() const { return roughness; }
 
 	void set_max_strands(int p_count);
 	int get_max_strands() const { return max_strands; }
@@ -87,3 +105,5 @@ public:
 	PhysXGroom3D();
 	~PhysXGroom3D();
 };
+
+VARIANT_ENUM_CAST(PhysXGroom3D::ShadingModel);

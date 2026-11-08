@@ -203,7 +203,10 @@ directory beside the PhysX checkout, builds both as static libraries (Ogawa
 only, the static CRT on Windows as Godot links it) and adds
 `alembic_sdk=<that directory>/install` to the printed `scons` command. To
 build them by hand, use the same CMake options: see `build_alembic()` in
-`misc/build_physx.py`. Both are BSD-3-Clause, and `SCsub` copies their notice,
+`misc/build_physx.py`. Alembic 1.8.12 needs **CMake 3.29 or newer**; Ubuntu
+22.04 ships 3.22, so there install a newer one first (for example
+`python3 -m pip install --user "cmake>=3.29"`, with `~/.local/bin` on `PATH`).
+Both are BSD-3-Clause, and `SCsub` copies their notice,
 `ALEMBIC-LICENSE.md`, next to the editor (see License below).
 
 ## Exporting a game

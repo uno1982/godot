@@ -845,9 +845,9 @@ body or the floor it does.
 - **Gameplay** (the default settings): hair shadows the body and the world,
   not the skin under it.
 - **Close-ups and cinematics:** fit the light's shadow to the shot. The demo's
-  sun uses `directional_shadow_max_distance` 3 m, `shadow_bias` 0.02 and
-  `shadow_normal_bias` 0.5 (the omni backlight the same biases), and the hair
-  shadows the face and neck.
+  sun uses `directional_shadow_max_distance` 5 m, `shadow_bias` 0.03,
+  `shadow_normal_bias` 0.5 and `shadow_blur` 1.5 (the omni backlight bias
+  0.02 and normal bias 0.5), and the hair shadows the face and neck.
 
 The editor demo `demo/editor/hair/hair_styles.tscn` in the example project
 shows two of Blender's demo hairstyles on heads that turn, nod, tilt and sway
@@ -1292,10 +1292,15 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   higher friction.
 - **Hair (`PhysXGroom3D`)** simulation keeps strands off capsules and
   spheres only (no boxes, meshes or the floor) and off at most 16 of them,
-  and the strands don't collide with each other. Screen
-  Space hair writes no depth, so effects that read the depth buffer (depth of
-  field, fog volumes, SSAO, SSR) don't see it. Unreal's groom attributes
-  (per-strand colour, root UVs, guide strands) aren't read.
+  and the strands don't collide with each other. Screen Space hair writes its
+  depth before transparent objects are drawn, where it covers at least half a
+  pixel: transparent objects, Flow's gas, the light shafts and depth of field
+  sort against it, but thinner edges and stray strands count as what's behind
+  them, and what's worked out before it (SSAO, SSR, volumetric fog) doesn't
+  see it. On the Mobile renderer with MSAA the effects that read depth (the
+  hair's own test against the scene, Flow, the light shafts) get none, and
+  draw over what's in front of them. Unreal's groom attributes (per-strand
+  colour, root UVs, guide strands) aren't read.
 - **`SeparationRayShape3D`** has no PhysX geometry: it's cast as a ray. In
   `move_and_slide` it lifts a character until its tip sits on what it hits
   (stairs), as on Godot Physics and Jolt. On a rigid body it's applied before

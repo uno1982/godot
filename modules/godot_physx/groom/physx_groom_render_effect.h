@@ -142,12 +142,16 @@ private:
 		uint64_t frame = 0;
 	};
 	LocalVector<Retired> retired;
+	// The hair's depth into the scene's (see _write_depth), one pipeline per depth format.
+	RID depth_shader;
+	HashMap<int64_t, RID> depth_pipelines;
 
 	bool _ensure(RenderingDevice *p_rd);
 	void _ensure_targets(RenderingDevice *p_rd, const Size2i &p_frame);
 	void _free_targets(RenderingDevice *p_rd, bool p_now);
 	void _dispatch(RenderingDevice *p_rd, int p_pass, const Vector<RD::Uniform> &p_uniforms, uint32_t p_x, uint32_t p_y, const void *p_push, uint32_t p_push_size);
 	void _render(int p_callback_type, const RenderData *p_render_data);
+	void _write_depth(RenderingDevice *p_rd, const RID &p_depth, const RD::Uniform &p_params);
 
 protected:
 	static void _bind_methods() {}

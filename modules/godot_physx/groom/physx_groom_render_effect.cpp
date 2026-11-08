@@ -42,6 +42,7 @@
 #include "scene/resources/material.h"
 #include "scene/resources/shader.h"
 #include "scene/resources/texture_rd.h"
+#include "servers/rendering/renderer_rd/framebuffer_cache_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/render_scene_data_rd.h"
 #include "servers/rendering/rendering_device_binds.h"
@@ -335,6 +336,31 @@ void main() {
 )",
 };
 
+// The hair's depth written into the scene's, where it covers at least half the pixel: before the transparent pass, so
+// what draws after the hair (transparent objects, Flow's gas, the light shafts) is hidden behind it. The proxies below
+// don't test depth, so they still draw all of it. A pixel the hair covers less is left to what's behind (a depth
+// buffer can't be half covered): stray strands' edges sort as the scene does.
+const char *DEPTH_SHADER = R"(
+#[vertex]
+#version 450
+void main() {
+	vec2 q = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2);
+	gl_Position = vec4(q * 2.0 - 1.0, 0.0, 1.0);
+}
+#[fragment]
+#version 450
+@PARAMS@
+layout(set = 0, binding = 1, rgba16f) uniform restrict readonly image2D hair_b;
+void main() {
+	vec4 b = imageLoad(hair_b, ivec2(gl_FragCoord.xy));
+	if (b.y < 0.5) {
+		discard;
+	}
+	vec4 c = p.proj * vec4(0.0, 0.0, -b.x, 1.0);
+	gl_FragDepth = c.z / c.w;
+}
+)";
+
 // The hair the compute passes left, shaded in Godot's transparent pass (first there) on two quads over the screen, lit by
 // the scene's lights and shadows with the hair lighting: layer 1, the strand behind, over what the hair covers beyond the
 // front strand (the front strand again where there's none behind it); then layer 0, the front strand, over its own
@@ -593,6 +619,12 @@ PhysXGroomRenderEffect::~PhysXGroomRenderEffect() {
 		for (const KeyValue<ObjectID, GpuGroom> &kv : gpu_grooms) {
 			rd->free_rid(kv.value.buffer);
 		}
+		for (const KeyValue<int64_t, RID> &kv : depth_pipelines) {
+			rd->free_rid(kv.value);
+		}
+		if (depth_shader.is_valid()) {
+			rd->free_rid(depth_shader);
+		}
 		for (int i = 0; i < PASS_MAX; i++) {
 			if (pipelines[i].is_valid()) {
 				rd->free_rid(pipelines[i]);
@@ -631,6 +663,19 @@ bool PhysXGroomRenderEffect::_ensure(RenderingDevice *p_rd) {
 		pipelines[i] = p_rd->compute_pipeline_create(shaders[i]);
 		ERR_FAIL_COND_V(!pipelines[i].is_valid(), false);
 	}
+	{
+		Ref<RDShaderFile> file;
+		file.instantiate();
+		ERR_FAIL_COND_V_MSG(file->parse_versions_from_text(String(DEPTH_SHADER).replace("@PARAMS@", PARAMS)) != OK, false, "PhysXGroom3D: screen-space depth shader failed to compile.");
+		Ref<RDShaderSPIRV> spirv = file->get_spirv();
+		ERR_FAIL_COND_V(spirv.is_null(), false);
+		for (RD::ShaderStage stage : { RD::SHADER_STAGE_VERTEX, RD::SHADER_STAGE_FRAGMENT }) {
+			const String err = spirv->get_stage_compile_error(stage);
+			ERR_FAIL_COND_V_MSG(!err.is_empty(), false, "PhysXGroom3D: screen-space depth shader: " + err);
+		}
+		depth_shader = p_rd->shader_create_from_spirv(file->get_spirv_stages());
+		ERR_FAIL_COND_V(!depth_shader.is_valid(), false);
+	}
 	RD::SamplerState point;
 	point_sampler = p_rd->sampler_create(point);
 	params_buffer = p_rd->uniform_buffer_create(PARAMS_FLOATS * 4);
@@ -642,6 +687,37 @@ bool PhysXGroomRenderEffect::_ensure(RenderingDevice *p_rd) {
 	no_sim_points = p_rd->texture_create(tf, RD::TextureView());
 	failed = false;
 	return true;
+}
+
+void PhysXGroomRenderEffect::_write_depth(RenderingDevice *p_rd, const RID &p_depth, const RD::Uniform &p_params) {
+	// A depth buffer that can't be drawn into (a resolved copy under MSAA): the hair just doesn't hide what's behind it.
+	if (!(p_rd->texture_get_format(p_depth).usage_bits & RD::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) {
+		return;
+	}
+	const RID framebuffer = FramebufferCacheRD::get_singleton()->get_cache(p_depth);
+	ERR_FAIL_COND(!framebuffer.is_valid());
+	const RD::FramebufferFormatID format = p_rd->framebuffer_get_format(framebuffer);
+	RID *pipeline = depth_pipelines.getptr(format);
+	if (pipeline == nullptr) {
+		// Always written where the hair is: it was already tested against the scene's depth.
+		RD::PipelineDepthStencilState depth_state;
+		depth_state.enable_depth_test = true;
+		depth_state.enable_depth_write = true;
+		depth_state.depth_compare_operator = RD::COMPARE_OP_ALWAYS;
+		RD::PipelineMultisampleState multisample;
+		multisample.sample_count = p_rd->framebuffer_format_get_texture_samples(format);
+		const RID created = p_rd->render_pipeline_create(depth_shader, format, RD::INVALID_ID, RD::RENDER_PRIMITIVE_TRIANGLES, RD::PipelineRasterizationState(), multisample, depth_state, RD::PipelineColorBlendState());
+		ERR_FAIL_COND(!created.is_valid());
+		pipeline = &depth_pipelines.insert(format, created)->value;
+	}
+	const RID set = p_rd->uniform_set_create(Vector<RD::Uniform>({ p_params, RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 1, hair[1]) }), depth_shader, 0);
+	ERR_FAIL_COND(!set.is_valid());
+	const RD::DrawListID list = p_rd->draw_list_begin(framebuffer, RD::DRAW_DEFAULT_ALL);
+	p_rd->draw_list_bind_render_pipeline(list, *pipeline);
+	p_rd->draw_list_bind_uniform_set(list, set, 0);
+	p_rd->draw_list_draw(list, false, 1, 3);
+	p_rd->draw_list_end();
+	p_rd->free_rid(set);
 }
 
 void PhysXGroomRenderEffect::_free_targets(RenderingDevice *p_rd, bool p_now) {
@@ -840,6 +916,7 @@ void PhysXGroomRenderEffect::_render(int p_callback_type, const RenderData *p_re
 		}
 	}
 	_dispatch(rd, PASS_COMPOSITE, { params, RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 1, coverage_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 2, depth_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 3, hair[1]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 4, depth2_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 5, front_cover) }, fx, fy, nullptr, 0);
+	_write_depth(rd, depth, params);
 
 	// Retired targets the proxy can no longer be reading.
 	for (uint32_t i = 0; i < retired.size();) {

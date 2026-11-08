@@ -63,7 +63,8 @@ void vertex() {
 	vec3 tangent = normalize((MODELVIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
 	vec3 across = cross(tangent, pos);
 	across = dot(across, across) > 1e-12 ? normalize(across) : normalize(cross(tangent, vec3(0.0, 1.0, 0.0)));
-	float radius = UV2.x * width_scale / strand_fraction * length(MODELVIEW_MATRIX[0].xyz);
+	// The strands left out at a distance widen to cover for them on screen; in the shadow map they'd only blot.
+	float radius = UV2.x * width_scale / (IN_SHADOW_PASS ? 1.0 : strand_fraction) * length(MODELVIEW_MATRIX[0].xyz);
 	float pixel = -pos.z * 2.0 / (PROJECTION_MATRIX[1][1] * VIEWPORT_SIZE.y);
 	float half_width = max(radius, pixel * 0.5);
 	v_coverage = clamp(radius / half_width, 0.0, 1.0);

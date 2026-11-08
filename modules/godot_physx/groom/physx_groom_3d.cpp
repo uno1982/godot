@@ -30,15 +30,20 @@
 
 #include "physx_groom_3d.h"
 
+#include "core/config/engine.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
+#include "scene/3d/camera_3d.h"
+#include "scene/main/viewport.h"
 #include "servers/rendering/rendering_server.h"
 
 RID PhysXGroom3D::shared_shader;
 
 // Each point is two vertices at the same place: UV.x says which side of the strand (-1, 1), UV.y how far along it
-// (0 root, 1 tip), UV2.x the radius there, NORMAL the strand's direction. The vertex shader spreads them apart across
-// the strand, facing the camera, at least a pixel apart; a strand thinner than that draws less of its pixel (alpha hash).
+// (0 root, 1 tip), UV2.x the radius there, UV2.y the strand's place in the groom's (random) order, from 0 to 1,
+// NORMAL the strand's direction. The vertex shader spreads them apart across the strand, facing the camera, at least a
+// pixel apart; a strand thinner than that draws less of its pixel (alpha hash). Strands past strand_fraction aren't
+// drawn (collapsed to a point), and the rest widen to cover for them.
 static const char *GROOM_SHADER = R"(
 shader_type spatial;
 render_mode skip_vertex_transform, cull_disabled;
@@ -46,6 +51,7 @@ render_mode skip_vertex_transform, cull_disabled;
 uniform vec3 root_color : source_color;
 uniform vec3 tip_color : source_color;
 uniform float width_scale = 1.0;
+uniform float strand_fraction = 1.0;
 
 varying vec3 v_tangent;
 varying float v_along;
@@ -57,7 +63,7 @@ void vertex() {
 	vec3 tangent = normalize((MODELVIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
 	vec3 across = cross(tangent, pos);
 	across = dot(across, across) > 1e-12 ? normalize(across) : normalize(cross(tangent, vec3(0.0, 1.0, 0.0)));
-	float radius = UV2.x * width_scale * length(MODELVIEW_MATRIX[0].xyz);
+	float radius = UV2.x * width_scale / strand_fraction * length(MODELVIEW_MATRIX[0].xyz);
 	float pixel = -pos.z * 2.0 / (PROJECTION_MATRIX[1][1] * VIEWPORT_SIZE.y);
 	float half_width = max(radius, pixel * 0.5);
 	v_coverage = clamp(radius / half_width, 0.0, 1.0);
@@ -68,6 +74,10 @@ void vertex() {
 	BINORMAL = across;
 	v_tangent = tangent;
 	v_along = UV.y;
+	// Past the strands drawn at this distance: every vertex at one point, nothing to rasterize.
+	if (UV2.y >= strand_fraction) {
+		VERTEX = vec3(0.0);
+	}
 }
 
 void fragment() {
@@ -128,7 +138,12 @@ void PhysXGroom3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "groom", PROPERTY_HINT_RESOURCE_TYPE, "PhysXGroom"), "set_groom", "get_groom");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "root_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_root_color", "get_root_color");
 	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "tip_color", PROPERTY_HINT_COLOR_NO_ALPHA), "set_tip_color", "get_tip_color");
+	ClassDB::bind_method(D_METHOD("set_max_strands", "count"), &PhysXGroom3D::set_max_strands);
+	ClassDB::bind_method(D_METHOD("get_max_strands"), &PhysXGroom3D::get_max_strands);
+	ClassDB::bind_method(D_METHOD("get_drawn_strand_count"), &PhysXGroom3D::get_drawn_strand_count);
+
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "width_scale", PROPERTY_HINT_RANGE, "0.1,10,0.01"), "set_width_scale", "get_width_scale");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "max_strands", PROPERTY_HINT_RANGE, "0,1000000,1,or_greater"), "set_max_strands", "get_max_strands");
 }
 
 void PhysXGroom3D::set_groom(const Ref<PhysXGroom> &p_groom) {
@@ -158,11 +173,76 @@ void PhysXGroom3D::set_width_scale(float p_scale) {
 	_rebuild();
 }
 
+void PhysXGroom3D::set_max_strands(int p_count) {
+	max_strands = MAX(p_count, 0);
+	_update_lod();
+}
+
+int PhysXGroom3D::get_drawn_strand_count() const {
+	const int count = groom.is_valid() ? groom->get_strand_count() : 0;
+	return MIN(count, (int)Math::ceil(strand_fraction * count));
+}
+
+void PhysXGroom3D::_notification(int p_what) {
+	switch (p_what) {
+		case NOTIFICATION_ENTER_TREE: {
+			set_process_internal(true);
+			_update_lod();
+		} break;
+		case NOTIFICATION_EXIT_TREE: {
+			set_process_internal(false);
+		} break;
+		case NOTIFICATION_INTERNAL_PROCESS: {
+			_update_lod();
+		} break;
+	}
+}
+
+// At most this many strand segments per pixel of the groom's size on screen, at GeometryInstance3D.lod_bias 1 (higher
+// keeps more): Indiana Jones and the Great Circle's 2000 per 64x64 tile. Beyond it they pile up on the same pixels,
+// each drawn at least a pixel wide, and cost more the further away the groom is.
+static constexpr float LOD_SEGMENTS_PER_PIXEL = 2000.0f / (64.0f * 64.0f);
+
+void PhysXGroom3D::_update_lod() {
+	const int count = groom.is_valid() ? groom->get_strand_count() : 0;
+	float fraction = 1.0f;
+	if (count > 0) {
+		if (max_strands > 0) {
+			fraction = MIN(fraction, (float)max_strands / (float)count);
+		}
+		Viewport *viewport = is_inside_tree() ? get_viewport() : nullptr;
+		Camera3D *camera = viewport ? viewport->get_camera_3d() : nullptr;
+		// Not in the editor: its camera isn't the viewport's.
+		if (camera && !Engine::get_singleton()->is_editor_hint()) {
+			const AABB box = get_global_transform().xform(aabb);
+			const float radius = box.size.length() * 0.5f;
+			const float height = viewport->get_visible_rect().size.y;
+			// The groom's bounding sphere across, on screen.
+			float pixels;
+			if (camera->get_projection() == Camera3D::PROJECTION_ORTHOGONAL) {
+				pixels = 2.0f * radius / MAX(camera->get_size(), 0.0001f) * height;
+			} else {
+				const float distance = MAX(camera->get_global_position().distance_to(box.get_center()) - radius, 0.01f);
+				pixels = radius / (distance * Math::tan(Math::deg_to_rad(camera->get_fov()) * 0.5f)) * height;
+			}
+			const float segments = (float)MAX(groom->get_point_count() - count, 1);
+			fraction = MIN(fraction, pixels * pixels * LOD_SEGMENTS_PER_PIXEL * get_lod_bias() / segments);
+		}
+		// At least a few strands, however far.
+		fraction = CLAMP(fraction, MIN(64.0f / count, 1.0f), 1.0f);
+	}
+	if (!Math::is_equal_approx(fraction, strand_fraction)) {
+		strand_fraction = fraction;
+		RenderingServer::get_singleton()->material_set_param(material, "strand_fraction", strand_fraction);
+	}
+}
+
 void PhysXGroom3D::_update_material() {
 	RenderingServer *rs = RenderingServer::get_singleton();
 	rs->material_set_param(material, "root_color", root_color);
 	rs->material_set_param(material, "tip_color", tip_color);
 	rs->material_set_param(material, "width_scale", width_scale);
+	rs->material_set_param(material, "strand_fraction", strand_fraction);
 }
 
 void PhysXGroom3D::_rebuild() {
@@ -208,7 +288,7 @@ void PhysXGroom3D::_rebuild() {
 				vw[v] = points[p];
 				dw[v] = direction;
 				uw[v] = Vector2(side == 0 ? -1.0f : 1.0f, along);
-				u2w[v] = Vector2(widths[p] * 0.5f, 0.0f);
+				u2w[v] = Vector2(widths[p] * 0.5f, ((float)s + 0.5f) / (float)strand_count);
 			}
 			if (j + 1 < count) {
 				const int a = p * 2;
@@ -236,6 +316,7 @@ void PhysXGroom3D::_rebuild() {
 	aabb = aabb.grow(MAX(aabb.get_longest_axis_size() * 0.01f, 0.001f) * MAX(width_scale, 1.0f));
 	rs->mesh_set_custom_aabb(mesh, aabb);
 	update_gizmos();
+	_update_lod();
 }
 
 PhysXGroom3D::PhysXGroom3D() {

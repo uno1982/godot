@@ -35,6 +35,43 @@
 
 #include "core/config/project_settings.h"
 #include "core/io/resource_saver.h"
+#include "core/math/random_pcg.h"
+
+// The strands in a random order, the same every import: PhysXGroom3D draws fewer of them at a distance by drawing the
+// first ones, which are then spread over the whole groom (Indiana Jones and the Great Circle's hair LOD, after
+// Taillandier 2020).
+static void _shuffle_strands(AlembicGroomData &r_data) {
+	const int count = r_data.strand_offsets.size() - 1;
+	LocalVector<int> order;
+	order.resize(count);
+	for (int i = 0; i < count; i++) {
+		order[i] = i;
+	}
+	RandomPCG rng(0x9e3779b9);
+	for (int i = count - 1; i > 0; i--) {
+		SWAP(order[i], order[rng.rand(i + 1)]);
+	}
+	PackedVector3Array points;
+	PackedFloat32Array widths;
+	PackedInt32Array offsets;
+	points.resize(r_data.points.size());
+	widths.resize(r_data.widths.size());
+	offsets.resize(count + 1);
+	int at = 0;
+	offsets.write[0] = 0;
+	for (int i = 0; i < count; i++) {
+		const int from = r_data.strand_offsets[order[i]];
+		const int to = r_data.strand_offsets[order[i] + 1];
+		for (int p = from; p < to; p++, at++) {
+			points.write[at] = r_data.points[p];
+			widths.write[at] = r_data.widths[p];
+		}
+		offsets.write[i + 1] = at;
+	}
+	r_data.points = points;
+	r_data.widths = widths;
+	r_data.strand_offsets = offsets;
+}
 
 void ResourceImporterAlembicGroom::get_import_options(const String &p_path, List<ImportOption> *r_options, int p_preset) const {
 	// Blender writes meters; a file in centimeters (Maya, Houdini set up for it) wants 0.01.
@@ -50,6 +87,7 @@ Error ResourceImporterAlembicGroom::import(ResourceUID::ID p_source_id, const St
 		WARN_PRINT(vformat("%s: %s", p_source_file, warning));
 	}
 	ERR_FAIL_COND_V_MSG(!data.error.is_empty(), ERR_FILE_CORRUPT, vformat("Can't import '%s' as a groom: %s", p_source_file, data.error));
+	_shuffle_strands(data);
 
 	Ref<PhysXGroom> groom;
 	groom.instantiate();

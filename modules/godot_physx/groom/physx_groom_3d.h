@@ -44,6 +44,8 @@ class PhysXGroom3D : public GeometryInstance3D {
 	Color root_color = Color(0.09, 0.055, 0.035);
 	Color tip_color = Color(0.32, 0.2, 0.11);
 	float width_scale = 1.0f;
+	int max_strands = 0;
+	float strand_fraction = 1.0f;
 
 	RID mesh;
 	RID material;
@@ -53,9 +55,11 @@ class PhysXGroom3D : public GeometryInstance3D {
 	static RID _shader();
 	void _rebuild();
 	void _update_material();
+	void _update_lod();
 
 protected:
 	static void _bind_methods();
+	void _notification(int p_what);
 
 public:
 	void set_groom(const Ref<PhysXGroom> &p_groom);
@@ -66,6 +70,11 @@ public:
 	Color get_tip_color() const { return tip_color; }
 	void set_width_scale(float p_scale);
 	float get_width_scale() const { return width_scale; }
+
+	void set_max_strands(int p_count);
+	int get_max_strands() const { return max_strands; }
+	// How many strands are drawn now, of get_groom()'s, after the distance and max_strands.
+	int get_drawn_strand_count() const;
 
 	virtual AABB get_aabb() const override { return aabb; }
 

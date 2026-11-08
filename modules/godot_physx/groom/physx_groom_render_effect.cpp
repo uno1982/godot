@@ -380,8 +380,9 @@ void PhysXGroomRenderEffect::attach_world(World3D *p_world) {
 	rs->instance_set_custom_aabb(instance, AABB(Vector3(-1e6, -1e6, -1e6), Vector3(2e6, 2e6, 2e6)));
 	rs->instance_geometry_set_cast_shadows_setting(instance, RSE::SHADOW_CASTING_SETTING_OFF);
 	rs->instance_set_ignore_culling(instance, true);
-	// Hidden until its textures are hooked up (see _update_proxy).
-	rs->instance_set_visible(instance, false);
+	// Hidden until its textures are hooked up (see _update_proxy). A world joining after that (the hair hidden and shown
+	// again) shows it as the others are: _update_proxy only shows or hides them when that changes.
+	rs->instance_set_visible(instance, proxies_shown);
 	proxies[p_world->get_instance_id()] = instance;
 }
 

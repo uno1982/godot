@@ -40,6 +40,8 @@
 #include "blast/physx_destructible_3d.h"
 #endif
 #include "cloth/physx_skinned_cloth_3d.h"
+#include "groom/physx_groom.h"
+#include "groom/physx_groom_3d.h"
 #ifdef GODOT_PHYSX_FLOW
 #include "flow/physx_flow_3d.h"
 #include "flow/physx_flow_emitter_3d.h"
@@ -84,6 +86,9 @@
 #include "editor/physx_cloth_paint_plugin.h"
 #include "editor/physx_editor_plugin.h"
 #include "editor/physx_export_plugin.h"
+#ifdef GODOT_PHYSX_ALEMBIC
+#include "groom/alembic/resource_importer_alembic_groom.h"
+#endif
 #include "editor/plugins/editor_plugin.h"
 #endif
 
@@ -104,6 +109,11 @@ static void _physx_editor_init() {
 	Ref<PhysXExportPlugin> export_plugin;
 	export_plugin.instantiate();
 	EditorExport::get_singleton()->add_export_plugin(export_plugin);
+#ifdef GODOT_PHYSX_ALEMBIC
+	Ref<ResourceImporterAlembicGroom> groom_importer;
+	groom_importer.instantiate();
+	ResourceFormatImporter::get_singleton()->add_importer(groom_importer);
+#endif
 }
 #endif
 
@@ -121,6 +131,8 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(PhysXCloth3D);
 		GDREGISTER_CLASS(PhysXSkinnedCloth3D);
 		GDREGISTER_CLASS(PhysXChunkEmitter3D);
+		GDREGISTER_CLASS(PhysXGroom);
+		GDREGISTER_CLASS(PhysXGroom3D);
 		GDREGISTER_CLASS(PhysXLightShafts3D);
 		GDREGISTER_INTERNAL_CLASS(PhysXLightShaftsEffect);
 		GDREGISTER_CLASS(PXTGI3D);
@@ -179,6 +191,7 @@ void uninitialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		PhysXLensFlareEffect::free_shared();
 		PhysXGIEffect::free_shared();
 		PXTGI3D::free_shared();
+		PhysXGroom3D::free_shared();
 	}
 #ifdef GODOT_PHYSX_FLOW
 	if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE) {

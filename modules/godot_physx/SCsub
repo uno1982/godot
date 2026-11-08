@@ -166,6 +166,39 @@ if blast_sdk:
             _blast_so = "lib" + _blast_lib_name + ".so"
             _godot_physx_copy_runtime_dll(os.path.join(blast_lib_dir, _blast_so), _blast_so)
 
+# --- Alembic location (optional, editor only) --------------------------------------
+# Hair grooms (PhysXGroom) are imported from Alembic (.abc) files, as Unreal does. Point the
+# build at a static Alembic + Imath install (include/ and lib/, the static MSVC runtime on
+# Windows, as Godot links it) with `alembic_sdk=<path>` or the ALEMBIC_SDK environment variable.
+# Only the editor's importer uses it: exported games load the imported resource, and a build
+# without it simply has no .abc importer.
+alembic_sdk = ARGUMENTS.get("alembic_sdk", os.environ.get("ALEMBIC_SDK", "")) if env.editor_build else ""
+env_alembic = None
+if alembic_sdk:
+    alembic_inc = os.path.join(alembic_sdk, "include")
+    if not os.path.isdir(os.path.join(alembic_inc, "Alembic")):
+        raise SystemExit(
+            "godot_physx: no Alembic include/Alembic directory at '%s'. Check alembic_sdk= / ALEMBIC_SDK "
+            "points at an Alembic install with Imath." % alembic_inc
+        )
+    env_physx.Append(CPPDEFINES=["GODOT_PHYSX_ALEMBIC"])
+    # The Alembic library throws: the one file that calls it is built with exceptions on, and keeps them inside.
+    env_alembic = env_physx.Clone()
+    env_alembic["CPPDEFINES"] = [
+        d for d in env_alembic["CPPDEFINES"] if not (isinstance(d, (tuple, list)) and len(d) > 0 and d[0] == "_HAS_EXCEPTIONS")
+    ]
+    if env.msvc:
+        env_alembic.Append(CXXFLAGS=["/EHsc"])
+    else:
+        env_alembic.Append(CXXFLAGS=["-fexceptions"])
+    env_alembic.Append(CPPPATH=[alembic_inc, os.path.join(alembic_inc, "Imath")])
+    alembic_libs = ["Alembic", "Imath-3_2"]
+    env.Append(LIBPATH=[os.path.join(alembic_sdk, "lib")])
+    if env["platform"] == "windows":
+        env.Append(LINKFLAGS=[x + ".lib" for x in alembic_libs])
+    else:
+        env.Append(LIBS=alembic_libs)
+
 # --- NVIDIA Flow location (optional) ----------------------------------------------
 # Flow (sparse-grid smoke / fire / dust) lives in the same NVIDIA-Omniverse/PhysX
 # checkout as PhysX and Blast (its `flow/` subdirectory). Point the build at
@@ -292,6 +325,9 @@ if flow_sdk:
 # Character cloth compute pass (any GPU) -- self-contained, no shared include.
 env_physx.GLSL_HEADER(os.path.join("cloth", "skinned_cloth.glsl"))
 env_physx.add_source_files(module_obj, "cloth/*.cpp")
+env_physx.add_source_files(module_obj, "groom/*.cpp")
+if env_alembic is not None:
+    env_alembic.add_source_files(module_obj, "groom/alembic/*.cpp")
 env_physx.add_source_files(module_obj, "joints/*.cpp")
 env_physx.add_source_files(module_obj, "nodes/*.cpp")
 env_physx.add_source_files(module_obj, "objects/*.cpp")

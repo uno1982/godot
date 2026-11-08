@@ -42,6 +42,8 @@ def get_doc_classes():
         "PhysXCloth3D",
         "PhysXSkinnedCloth3D",
         "PhysXChunkEmitter3D",
+        "PhysXGroom",
+        "PhysXGroom3D",
         "PhysXDestructible3D",
         "PhysXBlastAsset",
         "PhysXBlastAuthoring",

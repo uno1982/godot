@@ -51,12 +51,12 @@
 Mutex PhysXGroomRenderEffect::mutex;
 HashMap<ObjectID, PhysXGroomRenderEffect::Groom> PhysXGroomRenderEffect::grooms;
 HashMap<ObjectID, int> PhysXGroomRenderEffect::worlds;
-HashMap<ObjectID, RID> PhysXGroomRenderEffect::proxies;
-Ref<QuadMesh> PhysXGroomRenderEffect::proxy_mesh;
-Ref<ShaderMaterial> PhysXGroomRenderEffect::proxy_material;
+HashMap<ObjectID, RID> PhysXGroomRenderEffect::proxies[LAYERS];
+Ref<QuadMesh> PhysXGroomRenderEffect::proxy_meshes[LAYERS];
+Ref<ShaderMaterial> PhysXGroomRenderEffect::proxy_materials[LAYERS];
 Ref<Shader> PhysXGroomRenderEffect::proxy_shader;
-Ref<Texture2DRD> PhysXGroomRenderEffect::hair_textures[3];
-RID PhysXGroomRenderEffect::published[3];
+Ref<Texture2DRD> PhysXGroomRenderEffect::hair_textures[TEXTURES];
+RID PhysXGroomRenderEffect::published[TEXTURES];
 bool PhysXGroomRenderEffect::textures_hooked = false;
 bool PhysXGroomRenderEffect::proxies_shown = false;
 uint64_t PhysXGroomRenderEffect::ready_since = UINT64_MAX;
@@ -87,6 +87,7 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 @PARAMS@
 layout(set = 0, binding = 1, r32ui) uniform restrict writeonly uimage2D coverage_img;
 layout(set = 0, binding = 2, r32ui) uniform restrict writeonly uimage2D depth_img;
+layout(set = 0, binding = 3, r32ui) uniform restrict writeonly uimage2D depth2_img;
 
 void main() {
 	ivec2 px = ivec2(gl_GlobalInvocationID.xy);
@@ -95,12 +96,13 @@ void main() {
 	}
 	imageStore(coverage_img, px, uvec4(0));
 	imageStore(depth_img, px, uvec4(floatBitsToUint(1e30)));
+	imageStore(depth2_img, px, uvec4(floatBitsToUint(1e30)));
 }
 )",
-	// PASS_RASTER (coverage in 1/256ths of a pixel): one strand segment per thread, as a band of its own width (at least a pixel's), each pixel taking
-	// the share of it the strand covers. Run twice per groom: first adding up the coverage and keeping the nearest
-	// depth (atomic min of the float's bits: positive floats order like their bits), then the strand that's nearest
-	// at a pixel writing what the proxy shades it with.
+	// PASS_RASTER: one strand segment per thread, as a band of its own width (at least a pixel's), each pixel taking the
+	// share of it the strand covers. Run three times per groom: adding up the coverage (in 1/256ths of a pixel) and
+	// keeping the nearest depth (atomic min of the float's bits: positive floats order like their bits); keeping the
+	// second nearest; then the two nearest strands writing what the proxies shade them with.
 	R"(
 #[compute]
 #version 450
@@ -114,11 +116,15 @@ layout(set = 0, binding = 3, std430) restrict readonly buffer Points {
 layout(set = 0, binding = 4) uniform sampler2D scene_depth;
 layout(set = 0, binding = 5, rgba16f) uniform restrict writeonly image2D hair_a;
 layout(set = 0, binding = 6, rgba16f) uniform restrict writeonly image2D hair_c;
+layout(set = 0, binding = 7, r32ui) uniform restrict uimage2D depth2_img;
+layout(set = 0, binding = 8, rgba16f) uniform restrict writeonly image2D hair_a2;
+layout(set = 0, binding = 9, rgba16f) uniform restrict writeonly image2D hair_c2;
+layout(set = 0, binding = 10, r32f) uniform restrict writeonly image2D front_cover_img;
 
 layout(push_constant, std430) uniform Groom {
 	mat4 model;
 	vec4 lod; // x: strands drawn (0-1), y: width scale (the LOD's widening in), z: the model's scale
-	ivec4 info; // x: points, y: 0 coverage and depth, 1 the nearest strand's attributes
+	ivec4 info; // x: points, y: 0 coverage and the nearest depth, 1 the second nearest, 2 the two strands' attributes
 } g;
 
 float scene_eye_depth(ivec2 px) {
@@ -172,7 +178,17 @@ void shade_pixel(ivec2 px) {
 		imageAtomicMin(depth_img, px, floatBitsToUint(eye));
 		return;
 	}
-	if (imageLoad(depth_img, px).r != floatBitsToUint(eye)) {
+	uint nearest = imageLoad(depth_img, px).r;
+	if (g.info.y == 1) {
+		// Behind the nearest strand by more than float error: the next strand back.
+		float front = uintBitsToFloat(nearest);
+		if (eye > front + max(front * 1e-4, 1e-5)) {
+			imageAtomicMin(depth2_img, px, floatBitsToUint(eye));
+		}
+		return;
+	}
+	bool first = nearest == floatBitsToUint(eye);
+	if (!first && imageLoad(depth2_img, px).r != floatBitsToUint(eye)) {
 		return;
 	}
 	float so = mix(s0, s1, s);
@@ -180,9 +196,16 @@ void shade_pixel(ivec2 px) {
 	vec4 b1 = data[segment * 3u + 4u];
 	mat3 turn = mat3(p.view * g.model);
 	turn = mat3(normalize(turn[0]), normalize(turn[1]), normalize(turn[2]));
-	vec4 sh = mix(data[segment * 3u + 2u], data[segment * 3u + 5u], so);
-	imageStore(hair_a, px, vec4(normalize(vb - va), mix(a1.x, b1.x, so)));
-	imageStore(hair_c, px, turn_strands(sh, turn));
+	vec4 sh = turn_strands(mix(data[segment * 3u + 2u], data[segment * 3u + 5u], so), turn);
+	vec4 a = vec4(normalize(vb - va), mix(a1.x, b1.x, so));
+	if (first) {
+		imageStore(hair_a, px, a);
+		imageStore(hair_c, px, sh);
+		imageStore(front_cover_img, px, vec4(cover));
+	} else {
+		imageStore(hair_a2, px, a);
+		imageStore(hair_c2, px, sh);
+	}
 }
 
 void main() {
@@ -264,6 +287,8 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 layout(set = 0, binding = 1, r32ui) uniform restrict readonly uimage2D coverage_img;
 layout(set = 0, binding = 2, r32ui) uniform restrict readonly uimage2D depth_img;
 layout(set = 0, binding = 3, rgba16f) uniform restrict writeonly image2D hair_b;
+layout(set = 0, binding = 4, r32ui) uniform restrict readonly uimage2D depth2_img;
+layout(set = 0, binding = 5, r32f) uniform restrict readonly image2D front_cover_img;
 
 void main() {
 	ivec2 px = ivec2(gl_GlobalInvocationID.xy);
@@ -273,13 +298,18 @@ void main() {
 	float x = float(imageLoad(coverage_img, px).r) / 256.0;
 	float cover = clamp(x - 0.5 * x * clamp(0.5 * x, 0.0, 1.0), 0.0, 1.0);
 	float eye = uintBitsToFloat(imageLoad(depth_img, px).r);
-	imageStore(hair_b, px, vec4(eye, cover, 0.0, 0.0));
+	// The front strand's own share of the pixel, no more than the hair's: the rest is the strands behind it.
+	float front = cover > 0.0 ? min(imageLoad(front_cover_img, px).r, cover) : 0.0;
+	float eye2 = uintBitsToFloat(imageLoad(depth2_img, px).r);
+	imageStore(hair_b, px, vec4(eye, cover, front, eye2));
 }
 )",
 };
 
-// The hair the compute passes left, shaded in Godot's transparent pass (first there) on a quad over the screen: lit by
-// the scene's lights and shadows with the hair lighting, blended over the scene by its coverage.
+// The hair the compute passes left, shaded in Godot's transparent pass (first there) on two quads over the screen, lit by
+// the scene's lights and shadows with the hair lighting: layer 1, the strand behind, over what the hair covers beyond the
+// front strand (the front strand again where there's none behind it); then layer 0, the front strand, over its own
+// share of the pixel. Together they cover what the hair does.
 const char *PROXY_SHADER_HEAD = R"(
 shader_type spatial;
 render_mode blend_mix, depth_draw_never, depth_test_disabled, cull_disabled, skip_vertex_transform;
@@ -288,6 +318,9 @@ const char *PROXY_SHADER_BODY = R"(
 uniform sampler2D hair_a : filter_nearest, repeat_disable;
 uniform sampler2D hair_b : filter_nearest, repeat_disable;
 uniform sampler2D hair_c : filter_nearest, repeat_disable;
+uniform sampler2D hair_a2 : filter_nearest, repeat_disable;
+uniform sampler2D hair_c2 : filter_nearest, repeat_disable;
+uniform int layer = 0;
 
 void vertex() {
 	// The quad's corners on the camera's frustum: each pixel's VERTEX (and so VIEW) lies on its own ray.
@@ -298,13 +331,31 @@ void vertex() {
 
 void fragment() {
 	vec4 b = texture(hair_b, SCREEN_UV);
-	if (b.y <= 0.002) {
+	float cover = b.y;
+	float front = b.z;
+	float alpha;
+	float eye;
+	vec4 a;
+	vec4 sh;
+	if (layer == 0) {
+		alpha = front;
+		eye = b.x;
+		a = texture(hair_a, SCREEN_UV);
+		sh = texture(hair_c, SCREEN_UV);
+	} else {
+		// Under the front strand's share, blended over: what covers the rest of the hair's.
+		alpha = front < 0.999 ? max(cover - front, 0.0) / (1.0 - front) : 0.0;
+		bool behind = b.w < 1e29;
+		eye = behind ? b.w : b.x;
+		a = behind ? texture(hair_a2, SCREEN_UV) : texture(hair_a, SCREEN_UV);
+		sh = behind ? texture(hair_c2, SCREEN_UV) : texture(hair_c, SCREEN_UV);
+	}
+	if (alpha <= 0.002) {
 		discard;
 	}
-	vec4 a = texture(hair_a, SCREEN_UV);
 	vec4 ray = INV_PROJECTION_MATRIX * vec4(SCREEN_UV * 2.0 - 1.0, 0.5, 1.0);
 	vec3 dir = ray.xyz / ray.w;
-	vec3 at = dir * (b.x / -dir.z);
+	vec3 at = dir * (eye / -dir.z);
 	LIGHT_VERTEX = at;
 	vec3 t = normalize(a.xyz);
 	vec3 v = normalize(-at);
@@ -318,9 +369,9 @@ void fragment() {
 		ROUGHNESS = 0.6;
 	}
 	light_tangent = t;
-	light_shadow = texture(hair_c, SCREEN_UV);
+	light_shadow = sh;
 	AO = exp(-self_shadow * max(0.0, light_shadow.x * 0.282095));
-	ALPHA = b.y;
+	ALPHA = alpha;
 }
 )";
 
@@ -360,30 +411,38 @@ void PhysXGroomRenderEffect::attach_world(World3D *p_world) {
 	if (worlds[p_world->get_instance_id()]++ > 0) {
 		return;
 	}
-	if (proxy_material.is_null()) {
+	if (proxy_shader.is_null()) {
 		proxy_shader.instantiate();
 		proxy_shader->set_code(String(PROXY_SHADER_HEAD) + GROOM_SHADING_COMMON + PROXY_SHADER_BODY + GROOM_SHADING_LIGHT);
-		proxy_material.instantiate();
-		proxy_material->set_shader(proxy_shader);
-		const char *names[3] = { "hair_a", "hair_b", "hair_c" };
-		for (int i = 0; i < 3; i++) {
+		const char *names[TEXTURES] = { "hair_a", "hair_b", "hair_c", "hair_a2", "hair_c2" };
+		for (int i = 0; i < TEXTURES; i++) {
 			hair_textures[i].instantiate();
-			proxy_material->set_shader_parameter(names[i], hair_textures[i]);
 		}
-		proxy_material->set_render_priority(Material::RENDER_PRIORITY_MIN); // first among transparent geometry
-		proxy_mesh.instantiate();
-		proxy_mesh->set_size(Size2(2, 2));
-		proxy_mesh->set_material(proxy_material);
+		for (int l = 0; l < LAYERS; l++) {
+			proxy_materials[l].instantiate();
+			proxy_materials[l]->set_shader(proxy_shader);
+			for (int i = 0; i < TEXTURES; i++) {
+				proxy_materials[l]->set_shader_parameter(names[i], hair_textures[i]);
+			}
+			proxy_materials[l]->set_shader_parameter("layer", l);
+			// First among transparent geometry, the strand behind before the one in front.
+			proxy_materials[l]->set_render_priority(l == 1 ? Material::RENDER_PRIORITY_MIN : Material::RENDER_PRIORITY_MIN + 1);
+			proxy_meshes[l].instantiate();
+			proxy_meshes[l]->set_size(Size2(2, 2));
+			proxy_meshes[l]->set_material(proxy_materials[l]);
+		}
 	}
 	RenderingServer *rs = RenderingServer::get_singleton();
-	const RID instance = rs->instance_create2(proxy_mesh->get_rid(), p_world->get_scenario());
-	rs->instance_set_custom_aabb(instance, AABB(Vector3(-1e6, -1e6, -1e6), Vector3(2e6, 2e6, 2e6)));
-	rs->instance_geometry_set_cast_shadows_setting(instance, RSE::SHADOW_CASTING_SETTING_OFF);
-	rs->instance_set_ignore_culling(instance, true);
-	// Hidden until its textures are hooked up (see _update_proxy). A world joining after that (the hair hidden and shown
-	// again) shows it as the others are: _update_proxy only shows or hides them when that changes.
-	rs->instance_set_visible(instance, proxies_shown);
-	proxies[p_world->get_instance_id()] = instance;
+	for (int l = 0; l < LAYERS; l++) {
+		const RID instance = rs->instance_create2(proxy_meshes[l]->get_rid(), p_world->get_scenario());
+		rs->instance_set_custom_aabb(instance, AABB(Vector3(-1e6, -1e6, -1e6), Vector3(2e6, 2e6, 2e6)));
+		rs->instance_geometry_set_cast_shadows_setting(instance, RSE::SHADOW_CASTING_SETTING_OFF);
+		rs->instance_set_ignore_culling(instance, true);
+		// Hidden until its textures are hooked up (see _update_proxy). A world joining after that (the hair hidden and
+		// shown again) shows it as the others are: _update_proxy only shows or hides them when that changes.
+		rs->instance_set_visible(instance, proxies_shown);
+		proxies[l][p_world->get_instance_id()] = instance;
+	}
 }
 
 void PhysXGroomRenderEffect::detach_world(const ObjectID &p_world) {
@@ -393,9 +452,11 @@ void PhysXGroomRenderEffect::detach_world(const ObjectID &p_world) {
 	}
 	worlds.erase(p_world);
 	PhysXCompositorEffects::uninstall(p_world, get_shared());
-	if (proxies.has(p_world)) {
-		RenderingServer::get_singleton()->free_rid(proxies[p_world]);
-		proxies.erase(p_world);
+	for (int l = 0; l < LAYERS; l++) {
+		if (proxies[l].has(p_world)) {
+			RenderingServer::get_singleton()->free_rid(proxies[l][p_world]);
+			proxies[l].erase(p_world);
+		}
 	}
 }
 
@@ -407,15 +468,15 @@ void PhysXGroomRenderEffect::install(World3D *p_world, Camera3D *p_camera) {
 }
 
 void PhysXGroomRenderEffect::_update_proxy(Camera3D *p_camera) {
-	if (proxy_material.is_null()) {
+	if (proxy_shader.is_null()) {
 		return;
 	}
-	RID textures[3];
+	RID textures[TEXTURES];
 	Look look;
 	bool found = false;
 	{
 		MutexLock lock(mutex);
-		for (int i = 0; i < 3; i++) {
+		for (int i = 0; i < TEXTURES; i++) {
 			textures[i] = published[i];
 		}
 		// The look of the groom nearest the camera.
@@ -431,7 +492,7 @@ void PhysXGroomRenderEffect::_update_proxy(Camera3D *p_camera) {
 		}
 	}
 	bool hooked = true;
-	for (int i = 0; i < 3; i++) {
+	for (int i = 0; i < TEXTURES; i++) {
 		if (textures[i].is_valid() && hair_textures[i]->get_texture_rd_rid() != textures[i]) {
 			hair_textures[i]->set_texture_rd_rid(textures[i]);
 		}
@@ -448,18 +509,22 @@ void PhysXGroomRenderEffect::_update_proxy(Camera3D *p_camera) {
 	const bool show = ready_since != UINT64_MAX && now >= ready_since + 2;
 	if (show != proxies_shown) {
 		proxies_shown = show;
-		for (const KeyValue<ObjectID, RID> &kv : proxies) {
-			RenderingServer::get_singleton()->instance_set_visible(kv.value, show);
+		for (int l = 0; l < LAYERS; l++) {
+			for (const KeyValue<ObjectID, RID> &kv : proxies[l]) {
+				RenderingServer::get_singleton()->instance_set_visible(kv.value, show);
+			}
 		}
 	}
 	if (!found) {
 		return;
 	}
-	proxy_material->set_shader_parameter("root_color", look.root_color);
-	proxy_material->set_shader_parameter("tip_color", look.tip_color);
-	proxy_material->set_shader_parameter("self_shadow", look.self_shadow);
-	proxy_material->set_shader_parameter("hair_roughness", look.roughness);
-	proxy_material->set_shader_parameter("shading_model", look.shading_model);
+	for (int l = 0; l < LAYERS; l++) {
+		proxy_materials[l]->set_shader_parameter("root_color", look.root_color);
+		proxy_materials[l]->set_shader_parameter("tip_color", look.tip_color);
+		proxy_materials[l]->set_shader_parameter("self_shadow", look.self_shadow);
+		proxy_materials[l]->set_shader_parameter("hair_roughness", look.roughness);
+		proxy_materials[l]->set_shader_parameter("shading_model", look.shading_model);
+	}
 }
 
 Ref<PhysXGroomRenderEffect> PhysXGroomRenderEffect::get_shared() {
@@ -470,14 +535,16 @@ Ref<PhysXGroomRenderEffect> PhysXGroomRenderEffect::get_shared() {
 }
 
 void PhysXGroomRenderEffect::free_shared() {
-	for (const KeyValue<ObjectID, RID> &kv : proxies) {
-		RenderingServer::get_singleton()->free_rid(kv.value);
+	for (int l = 0; l < LAYERS; l++) {
+		for (const KeyValue<ObjectID, RID> &kv : proxies[l]) {
+			RenderingServer::get_singleton()->free_rid(kv.value);
+		}
+		proxies[l].clear();
+		proxy_meshes[l].unref();
+		proxy_materials[l].unref();
 	}
-	proxies.clear();
-	proxy_mesh.unref();
-	proxy_material.unref();
 	proxy_shader.unref();
-	for (int i = 0; i < 3; i++) {
+	for (int i = 0; i < TEXTURES; i++) {
 		hair_textures[i].unref();
 	}
 	textures_hooked = false;
@@ -552,7 +619,7 @@ bool PhysXGroomRenderEffect::_ensure(RenderingDevice *p_rd) {
 }
 
 void PhysXGroomRenderEffect::_free_targets(RenderingDevice *p_rd, bool p_now) {
-	for (RID *r : { &coverage_u, &depth_u, &hair[0], &hair[1], &hair[2] }) {
+	for (RID *r : { &coverage_u, &depth_u, &depth2_u, &front_cover, &hair[0], &hair[1], &hair[2], &hair[3], &hair[4] }) {
 		if (r->is_valid()) {
 			if (p_now) {
 				p_rd->free_rid(*r);
@@ -579,15 +646,19 @@ void PhysXGroomRenderEffect::_ensure_targets(RenderingDevice *p_rd, const Size2i
 	tf.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_ATOMIC_BIT;
 	coverage_u = p_rd->texture_create(tf, RD::TextureView());
 	depth_u = p_rd->texture_create(tf, RD::TextureView());
+	depth2_u = p_rd->texture_create(tf, RD::TextureView());
+	tf.format = RD::DATA_FORMAT_R32_SFLOAT;
+	tf.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT;
+	front_cover = p_rd->texture_create(tf, RD::TextureView());
 	tf.format = RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
 	tf.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT;
-	for (int i = 0; i < 3; i++) {
+	for (int i = 0; i < TEXTURES; i++) {
 		hair[i] = p_rd->texture_create(tf, RD::TextureView());
 		// No hair anywhere until the passes have run.
 		p_rd->texture_clear(hair[i], Color(0, 0, 0, 0), 0, 1, 0, 1);
 	}
 	MutexLock lock(mutex);
-	for (int i = 0; i < 3; i++) {
+	for (int i = 0; i < TEXTURES; i++) {
 		published[i] = hair[i];
 	}
 }
@@ -696,8 +767,8 @@ void PhysXGroomRenderEffect::_render(int p_callback_type, const RenderData *p_re
 	const uint32_t fx = (frame.x + 7) / 8;
 	const uint32_t fy = (frame.y + 7) / 8;
 	const RD::Uniform params(RD::UNIFORM_TYPE_UNIFORM_BUFFER, 0, params_buffer);
-	_dispatch(rd, PASS_CLEAR, { params, RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 1, coverage_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 2, depth_u) }, fx, fy, nullptr, 0);
-	for (int mode = 0; mode < 2; mode++) {
+	_dispatch(rd, PASS_CLEAR, { params, RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 1, coverage_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 2, depth_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 3, depth2_u) }, fx, fy, nullptr, 0);
+	for (int mode = 0; mode < 3; mode++) {
 		for (const Draw &draw : draws) {
 			const GpuGroom *gpu = gpu_grooms.getptr(draw.id);
 			if (gpu == nullptr || gpu->point_count < 2) {
@@ -718,10 +789,10 @@ void PhysXGroomRenderEffect::_render(int p_callback_type, const RenderData *p_re
 			push.info[1] = mode;
 			push.info[2] = 0;
 			push.info[3] = 0;
-			_dispatch(rd, PASS_RASTER, { params, RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 1, coverage_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 2, depth_u), RD::Uniform(RD::UNIFORM_TYPE_STORAGE_BUFFER, 3, gpu->buffer), RD::Uniform(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 4, Vector<RID>({ point_sampler, depth })), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 5, hair[0]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 6, hair[2]) }, (gpu->point_count + 63) / 64, 1, &push, sizeof(push));
+			_dispatch(rd, PASS_RASTER, { params, RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 1, coverage_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 2, depth_u), RD::Uniform(RD::UNIFORM_TYPE_STORAGE_BUFFER, 3, gpu->buffer), RD::Uniform(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 4, Vector<RID>({ point_sampler, depth })), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 5, hair[0]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 6, hair[2]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 7, depth2_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 8, hair[3]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 9, hair[4]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 10, front_cover) }, (gpu->point_count + 63) / 64, 1, &push, sizeof(push));
 		}
 	}
-	_dispatch(rd, PASS_COMPOSITE, { params, RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 1, coverage_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 2, depth_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 3, hair[1]) }, fx, fy, nullptr, 0);
+	_dispatch(rd, PASS_COMPOSITE, { params, RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 1, coverage_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 2, depth_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 3, hair[1]), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 4, depth2_u), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 5, front_cover) }, fx, fy, nullptr, 0);
 
 	// Retired targets the proxy can no longer be reading.
 	for (uint32_t i = 0; i < retired.size();) {

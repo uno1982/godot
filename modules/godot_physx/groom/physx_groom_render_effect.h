@@ -47,10 +47,12 @@ class World3D;
 
 // PhysXGroom3D's screen-space render mode. Compute passes before the transparent pass draw every groom's strands, each
 // segment a band of its own width with its exact share of each pixel, and add up how much of each pixel the hair covers
-// (Indiana Jones and the Great Circle's coverage, SIGGRAPH 2025); the nearest strand at each pixel leaves its direction,
-// place along the strand and self-shadowing. A quad over the screen in Godot's transparent pass (the screen-space
-// fluid's proxy, PhysXFluidRenderEffect) shades that with the hair lighting (groom_shading.h), lit by the scene's lights
-// and shadows, and blends it over the scene by the coverage: smooth, thin hair with or without MSAA, not dithered.
+// (Indiana Jones and the Great Circle's coverage, SIGGRAPH 2025); the two nearest strands at each pixel leave their
+// direction, place along the strand and self-shadowing. Two quads over the screen in Godot's transparent pass (the
+// screen-space fluid's proxy, PhysXFluidRenderEffect) shade those with the hair lighting (groom_shading.h), lit by the
+// scene's lights and shadows: the second strand over what the hair covers beyond the first, then the first over its own
+// share of the pixel, so a strand's highlight covers what the strand does. Smooth, thin hair with or without MSAA, not
+// dithered.
 class PhysXGroomRenderEffect : public CompositorEffect {
 	GDCLASS(PhysXGroomRenderEffect, CompositorEffect);
 
@@ -93,12 +95,15 @@ private:
 	static HashMap<ObjectID, Groom> grooms;
 
 	static HashMap<ObjectID, int> worlds; // screen-space grooms, per world
-	static HashMap<ObjectID, RID> proxies;
-	static Ref<QuadMesh> proxy_mesh;
-	static Ref<ShaderMaterial> proxy_material;
+	// The two proxy quads of each world: the strand behind, then the strand in front.
+	static constexpr int LAYERS = 2;
+	static constexpr int TEXTURES = 5;
+	static HashMap<ObjectID, RID> proxies[LAYERS];
+	static Ref<QuadMesh> proxy_meshes[LAYERS];
+	static Ref<ShaderMaterial> proxy_materials[LAYERS];
 	static Ref<Shader> proxy_shader;
-	static Ref<Texture2DRD> hair_textures[3];
-	static RID published[3];
+	static Ref<Texture2DRD> hair_textures[TEXTURES];
+	static RID published[TEXTURES];
 	static bool textures_hooked, proxies_shown;
 	static uint64_t ready_since;
 	static void _update_proxy(Camera3D *p_camera);
@@ -122,8 +127,10 @@ private:
 	RID params_buffer;
 	HashMap<ObjectID, GpuGroom> gpu_grooms;
 	Size2i frame_size;
-	RID coverage_u, depth_u;
-	RID hair[3]; // a: view-space strand direction, place along it; b: eye depth, coverage; c: self-shadowing, view space
+	RID coverage_u, depth_u, depth2_u, front_cover;
+	// a: view-space strand direction, place along it; b: eye depth, coverage, the front strand's share, the second
+	// strand's eye depth; c: self-shadowing, view space; a2, c2: a and c of the second strand.
+	RID hair[TEXTURES];
 	struct Retired {
 		RID rid;
 		uint64_t frame = 0;

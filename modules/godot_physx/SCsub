@@ -198,6 +198,8 @@ if alembic_sdk:
         env.Append(LINKFLAGS=[x + ".lib" for x in alembic_libs])
     else:
         env.Append(LIBS=alembic_libs)
+    # Their BSD-3-Clause notice goes with the editor binary they're linked into.
+    env.Command(env.File("#bin/ALEMBIC-LICENSE.md"), env_physx.File("ALEMBIC-LICENSE.md").srcnode(), Copy("$TARGET", "$SOURCE"))
 
 # --- NVIDIA Flow location (optional) ----------------------------------------------
 # Flow (sparse-grid smoke / fire / dust) lives in the same NVIDIA-Omniverse/PhysX

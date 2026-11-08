@@ -1295,3 +1295,12 @@ With `flow_sdk=` set, the build loads **NVIDIA Flow**
 (<https://github.com/NVIDIA-Omniverse/PhysX/tree/main/flow>) at run time —
 again the same repository and BSD-3-Clause license. `nvflow.dll` and
 `nvflowext.dll` (`.so` on Linux) must ship next to the Godot binary.
+
+With `alembic_sdk=` set, an **editor** build links **Alembic**
+(<https://github.com/alembic/alembic>) and **Imath**
+(<https://github.com/AcademySoftwareFoundation/Imath>) statically, for
+`PhysXGroom`'s `.abc` importer. Both are BSD-3-Clause; their notices are in
+[`ALEMBIC-LICENSE.md`](ALEMBIC-LICENSE.md), which the build copies to `bin/`
+next to the editor. Ship that file with any editor binary you distribute that
+was built this way. Export templates never link them (a game loads the
+imported groom resource, not the `.abc`), so exported games need nothing extra.

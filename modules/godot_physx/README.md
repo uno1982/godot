@@ -186,6 +186,26 @@ Nothing is linked: Flow's loader opens `nvflow.dll` and `nvflowext.dll`
 copies both next to the built binary. Without them the Flow
 nodes show a configuration warning and stay inert.
 
+### Optional — Alembic (`PhysXGroom` importer)
+
+Hair grooms are imported from Alembic (`.abc`) files, which takes the Alembic
+and Imath libraries. Only the **editor** needs them: an imported groom is an
+ordinary resource, so export templates and exported games build and run
+without them. Without `alembic_sdk=` the editor just has no `.abc` importer;
+`PhysXGroom3D` and already-imported grooms still work.
+
+```
+python modules/godot_physx/misc/build_physx.py --gpu --blast --flow --alembic
+```
+
+`--alembic` clones Alembic 1.8.12 and Imath 3.2.3 into an `alembic-sdk`
+directory beside the PhysX checkout, builds both as static libraries (Ogawa
+only, the static CRT on Windows as Godot links it) and adds
+`alembic_sdk=<that directory>/install` to the printed `scons` command. To
+build them by hand, use the same CMake options: see `build_alembic()` in
+`misc/build_physx.py`. Both are BSD-3-Clause, and `SCsub` copies their notice,
+`ALEMBIC-LICENSE.md`, next to the editor (see License below).
+
 ## Exporting a game
 
 Godot's downloadable export templates don't contain this module, so a game
@@ -739,6 +759,62 @@ A script that draws the garment itself finds the render copy with
 `get_render_instance()`, and the particle each of its vertices is drawn from
 with `get_vertex_particles()`.
 
+## Hair — `PhysXGroom3D`
+
+Hair and fur as real strands, from the grooms Blender, Houdini, Maya and
+Unreal Engine export. Drop an Alembic (`.abc`) groom into the project (it
+imports as a `PhysXGroom`, see the Alembic build option above), add a
+`PhysXGroom3D` and set its `groom`. Every open curve in the file becomes a
+strand, with its widths; `scale` and `default_width` in the Import dock cover
+files in other units or without widths.
+
+The importer also bakes the groom's **self-shadowing**: from each point, how
+many of the groom's other strands lie toward every direction (Indiana Jones
+and the Great Circle's approach, SIGGRAPH 2025). Lights and ambient light are
+dimmed by the strands in their way, so the hair is dark inside and near the
+roots and bright on the surface, at no cost per frame. It takes 13-20 seconds
+on import for a full head of hair; `self_shadow/rays` = 0 skips it, and
+`self_shadow` on the node sets how strongly it darkens.
+
+Two ways to draw it (`render_mode`):
+
+- **Mesh** (default): a ribbon per strand, turned toward the camera, at least a
+  pixel wide; an ordinary mesh that works in every renderer and with every
+  effect. Strands thinner than a pixel are dithered, so it wants MSAA (SMAA
+  and FXAA do little for hair). The cheaper mode: 0.7-1.4 ms of GPU time for
+  a head filling a 1280×720 view (11-29 thousand strands, RTX 5070).
+- **Screen Space**: the module's own compute passes draw each strand with its
+  exact share of every pixel it crosses, and Godot lights the two nearest
+  strands in each pixel with the scene's lights and shadows. Smooth, thin
+  hair with no anti-aliasing at all, and hair that stays whole when
+  `width_scale` makes it very fine. 1.8-3.0 ms in the same view close up,
+  about the same as Mesh at a distance. The mesh still casts the hair's
+  shadows.
+
+Two shading models (`shading_model`), a choice of look more than of cost:
+**Kajiya-Kay** (default), stylized, bright and saturated with a crisp
+highlight; **Marschner** (Karis's real-time approximation, as Unreal Engine
+uses), realistic, a softer and more neutral sheen, and the glow of light
+through backlit hair. `roughness` widens the highlights in both,
+`root_color` / `tip_color` color the strands along their length. In Screen
+Space each groom keeps its own look, and the two models cost the same; in
+Mesh, Marschner costs about 0.1 ms more per frame with four lights on a
+close-up head.
+
+Lights only stop at the head if their **shadows are on**: a light without
+shadows reaches every strand, so hair on the far side of the head still
+lights up (with Marschner, it glows).
+
+At a distance the node draws **fewer, wider strands** (about half a segment per
+pixel of the groom on screen), so a far-off head costs a fraction of a close
+one: the importer shuffles the strands so any count drawn is an even sample.
+`GeometryInstance3D.lod_bias` keeps more of them, `max_strands` caps them (a
+quality setting), and `get_drawn_strand_count()` reports the current count.
+
+The editor demo `demo/editor/hair/hair_styles.tscn` in the example project
+shows two of Blender's demo hairstyles; Tab switches between the two render
+modes.
+
 ## Soft bodies — stock `SoftBody3D`
 
 The stock `SoftBody3D` node works on this backend (the `soft_body_*`
@@ -1175,6 +1251,11 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   canceling the other side's bounce. Friction matches Godot's rule (`rough`
   wins), except that a `rough` material against a higher-friction one gets the
   higher friction.
+- **Hair (`PhysXGroom3D`)** doesn't move yet: a groom is drawn as imported,
+  in its node's space (no simulation, wind or skinning to a skeleton). Screen
+  Space hair writes no depth, so effects that read the depth buffer (depth of
+  field, fog volumes, SSAO, SSR) don't see it. Unreal's groom attributes
+  (per-strand colour, root UVs, guide strands) aren't read.
 - **`SeparationRayShape3D`** has no PhysX geometry: it's cast as a ray. In
   `move_and_slide` it lifts a character until its tip sits on what it hits
   (stairs), as on Godot Physics and Jolt. On a rigid body it's applied before

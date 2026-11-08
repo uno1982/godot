@@ -6,8 +6,8 @@ This script clones NVIDIA's PhysX repository at a pinned revision, drops in a
 build preset tuned to match Godot, runs PhysX's own project generation and
 CMake build, and prints the path to pass to scons as physx_sdk=.
 
-    python modules/godot_physx/misc/build_physx.py [--gpu] [--blast] [--flow]
-    scons platform=windows target=editor physx_sdk=<printed path> [physx_gpu=yes] [blast_sdk=<printed path>] [flow_sdk=<printed path>]
+    python modules/godot_physx/misc/build_physx.py [--gpu] [--blast] [--flow] [--alembic]
+    scons platform=windows target=editor physx_sdk=<printed path> [physx_gpu=yes] [blast_sdk=<printed path>] [flow_sdk=<printed path>] [alembic_sdk=<printed path>]
 
 The GPU build also needs the CUDA Toolkit (CUDA_PATH set or nvcc on PATH).
 SCsub copies the GPU library next to the Godot binary for you.
@@ -24,6 +24,11 @@ backing PhysXFlow3D) from the same checkout's flow/ subdirectory, with its own
 build.bat / build.sh. flow_sdk= is that flow/ directory itself. Nothing is
 linked -- nvflow / nvflowext are loaded at run time, and SCsub copies both
 next to the Godot binary.
+
+--alembic additionally builds Alembic and Imath (static, Ogawa only, the
+static CRT on Windows as Godot links it), cloned at pinned tags into an
+'alembic-sdk' directory beside the PhysX checkout. Only the editor links them,
+for PhysXGroom's .abc importer; alembic_sdk= is their install directory.
 
 The last thing printed is the scons command for everything built.
 
@@ -42,6 +47,12 @@ import sys
 PHYSX_REPO = "https://github.com/NVIDIA-Omniverse/PhysX.git"
 PHYSX_REF = "ovphysx-0.5.11"  # PhysX SDK 5.10.0
 
+# Alembic and Imath for the editor's groom importer (--alembic), pinned the same way.
+ALEMBIC_REPO = "https://github.com/alembic/alembic.git"
+ALEMBIC_REF = "1.8.12"
+IMATH_REPO = "https://github.com/AcademySoftwareFoundation/Imath.git"
+IMATH_REF = "v3.2.3"
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 PRESET_DIR = os.path.join(HERE, "physx_presets")
 PATCH_DIR = os.path.join(HERE, "physx_patches")
@@ -50,6 +61,50 @@ PATCH_DIR = os.path.join(HERE, "physx_patches")
 def run(cmd, cwd):
     print("+ " + " ".join(cmd) + "  (in %s)" % cwd)
     subprocess.check_call(cmd, cwd=cwd)
+
+
+def build_alembic(base, jobs):
+    """Clones and builds static Imath + Alembic under base, installed to base/install. Returns the install path."""
+    install = os.path.join(base, "install")
+    os.makedirs(base, exist_ok=True)
+    for name, repo, ref in (("imath", IMATH_REPO, IMATH_REF), ("alembic", ALEMBIC_REPO, ALEMBIC_REF)):
+        if not os.path.isdir(os.path.join(base, name, ".git")):
+            run(["git", "clone", "--depth", "1", "--branch", ref, repo, name], cwd=base)
+        else:
+            print("using existing %s checkout: %s" % (name, os.path.join(base, name)))
+    common = [
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_INSTALL_PREFIX=" + install,
+        "-DCMAKE_PREFIX_PATH=" + install,
+        # Godot links the static CRT on Windows, and builds position-independent code on Linux.
+        "-DCMAKE_POLICY_DEFAULT_CMP0091=NEW",
+        "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
+        "-DCMAKE_POSITION_INDEPENDENT_CODE=ON",
+    ]
+    projects = (
+        ("imath", ["-DBUILD_SHARED_LIBS=OFF", "-DBUILD_TESTING=OFF", "-DPYTHON=OFF"]),
+        (
+            "alembic",
+            [
+                "-DALEMBIC_SHARED_LIBS=OFF",
+                "-DUSE_HDF5=OFF",
+                "-DUSE_TESTS=OFF",
+                "-DUSE_BINARIES=OFF",
+                "-DUSE_ARNOLD=OFF",
+                "-DUSE_MAYA=OFF",
+                "-DUSE_PRMAN=OFF",
+                "-DUSE_PYALEMBIC=OFF",
+                "-DImath_DIR=" + os.path.join(install, "lib", "cmake", "Imath"),
+            ],
+        ),
+    )
+    for name, options in projects:
+        build = os.path.join(base, "build", name)
+        run(["cmake", "-S", os.path.join(base, name), "-B", build] + common + options, cwd=base)
+        run(["cmake", "--build", build, "--config", "Release", "--target", "install", "--parallel", str(jobs)], cwd=base)
+    if not os.path.isdir(os.path.join(install, "include", "Alembic")):
+        sys.exit("Alembic build finished but no SDK at " + install)
+    return install
 
 
 def main():
@@ -64,6 +119,11 @@ def main():
         "--flow",
         action="store_true",
         help="also build NVIDIA Flow (nvflow + nvflowext) from this same checkout's flow/ subdirectory",
+    )
+    ap.add_argument(
+        "--alembic",
+        action="store_true",
+        help="also build Alembic + Imath (static) for the editor's .abc groom importer",
     )
     ap.add_argument(
         "--platform",
@@ -230,6 +290,16 @@ def main():
         print("Flow ready:")
         print("    " + flow_dir)
         print("SCsub copies %s and %s next to the Godot binary automatically." % flow_libs)
+
+    if args.alembic:
+        # Beside the PhysX checkout: its own small tree, independent of PhysX's build.
+        alembic_sdk = build_alembic(os.path.join(os.path.dirname(src), "alembic-sdk"), args.jobs)
+        scons_args.append("alembic_sdk=" + alembic_sdk.replace("\\", "/"))
+
+        print()
+        print("Alembic + Imath ready (linked by editor builds only):")
+        print("    " + alembic_sdk)
+        print("SCsub copies their license notice, ALEMBIC-LICENSE.md, next to the editor.")
 
     print()
     print("Build the module with:")

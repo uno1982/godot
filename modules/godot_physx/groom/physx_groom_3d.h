@@ -109,7 +109,8 @@ private:
 		Vector3 b;
 	};
 	LocalVector<ColliderEnds> collider_ends;
-	void _gather_colliders(const Transform3D &p_xform, LocalVector<GroomSim::Collider> &r_colliders);
+	// r_ends: where each is now, to keep in collider_ends once the step runs.
+	void _gather_colliders(const Transform3D &p_xform, LocalVector<GroomSim::Collider> &r_colliders, LocalVector<ColliderEnds> &r_ends);
 	bool _wants_simulation() const;
 	void _start_simulation();
 	void _stop_simulation();

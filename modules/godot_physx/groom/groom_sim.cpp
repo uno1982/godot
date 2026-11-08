@@ -60,7 +60,7 @@ layout(set = 0, binding = 0, std430) restrict readonly buffer Params {
 	vec4 colliders[]; // four a capsule: a.xyz, radius; b.xyz; last frame's a and b
 } p;
 layout(set = 0, binding = 1, std430) restrict readonly buffer Rest {
-	vec4 rest[]; // the groom's space; w: the length of the segment from the point before
+	vec4 rest[]; // the groom's space
 };
 layout(set = 0, binding = 2, std430) restrict readonly buffer Offsets {
 	uint offsets[]; // each strand's first point, then the point count
@@ -72,17 +72,6 @@ layout(set = 0, binding = 4, std430) restrict buffer Prev {
 	vec4 prev[];
 };
 layout(set = 0, binding = 5, rgba32f) uniform restrict writeonly image2D points_out;
-
-// The smallest rotation taking unit vector a onto unit vector b.
-mat3 turn_onto(vec3 a, vec3 b) {
-	vec3 v = cross(a, b);
-	float c = dot(a, b);
-	if (c < -0.9999) {
-		return mat3(1.0);
-	}
-	mat3 vx = mat3(0.0, v.z, -v.y, -v.z, 0.0, v.x, v.y, -v.x, 0.0);
-	return mat3(1.0) + vx + vx * vx / (1.0 + c);
-}
 
 // Out of the colliders, each where it is f of the way through the frame.
 vec3 collide(vec3 x, float f) {
@@ -121,16 +110,15 @@ void main() {
 		}
 	} else {
 		int substeps = int(p.step.z);
-		// TressFX's scheme (AMD, MIT): the root and the point after it follow the groom; the rest fall and fly, are pulled
-		// back toward the groomed shape, keep each segment's bend from the one before it, and keep their lengths. The
-		// bend and length corrections move both ends of a segment, so they push back on what pulls them: one-sided
-		// corrections (follow the leader) add energy, and a strand nudged near the root grows into frizz.
+		// Similar to AMD's TressFX: the root and the point after it follow the groom; the rest fall and fly, are pulled
+		// back toward the groomed shape, keep their bend and curl, and keep their lengths. The bend and length corrections
+		// move both ends, so they push back on what pulls them: one-sided corrections (follow the leader) add energy, and a
+		// strand nudged near the root grows into frizz.
 		uint pinned = min(from + 2u, to);
 		for (int k = 0; k < substeps; k++) {
 			// The groom's transform through the frame.
 			float f = float(k + 1) / float(substeps);
 			mat4 m = p.model_prev * (1.0 - f) + p.model * f;
-			mat3 turn = mat3(normalize(m[0].xyz), normalize(m[1].xyz), normalize(m[2].xyz));
 
 			for (uint i = from; i < pinned; i++) {
 				vec3 placed = (m * vec4(rest[i].xyz, 1.0)).xyz;
@@ -138,16 +126,15 @@ void main() {
 				prev[i] = vec4(placed, 0.0);
 			}
 
-			// Gravity, wind (across the strand: hair catches air side-on) and what it was doing, damped.
+			// Gravity, wind (drag toward the air's velocity) and what it was doing, damped. (Pushed only across the
+			// strand, as a hair catches air side-on, a tip turns into the wind and out again: it flutters in a steady
+			// wind.)
 			for (uint i = pinned; i < to; i++) {
 				vec3 x = pos[i].xyz;
 				vec3 v = (x - prev[i].xyz) * p.step.y;
 				vec3 a = p.gravity.xyz;
 				if (p.wind.w > 0.0) {
-					vec3 t = x - pos[i - 1u].xyz;
-					t = dot(t, t) > 1e-20 ? normalize(t) : vec3(0.0, -1.0, 0.0);
-					vec3 air = p.wind.xyz - v / dt;
-					a += (air - t * dot(air, t)) * p.wind.w;
+					a += (p.wind.xyz - v / dt) * p.wind.w;
 				}
 				prev[i] = vec4(x, 0.0);
 				pos[i] = vec4(x + v + a * dt * dt, 0.0);
@@ -160,20 +147,27 @@ void main() {
 				pos[i].xyz = mix(pos[i].xyz, (m * vec4(rest[i].xyz, 1.0)).xyz, hold);
 			}
 
-			// Each segment's bend from the one before: the groomed next segment, turned as the segment before it has.
+			// The bend and the curl: each point kept as far from the points two and three before it as groomed (four points
+			// with all six distances kept hold their shape), three before at half the strength. A target turned with the
+			// segment before it (TressFX's local shape) buzzes on curls, every correction turning the next target; and
+			// the distances, strong, catch a few curls in a twist that never settles (a curl turning about a straight
+			// start keeps every distance): past half for two before and a quarter for three, the shape hardly holds
+			// better.
 			for (int iteration = 0; iteration < 2; iteration++) {
-				for (uint i = from + 1u; i + 1u < to; i++) {
-					vec3 last = pos[i].xyz - pos[i - 1u].xyz;
-					vec3 groomed_last = turn * (rest[i].xyz - rest[i - 1u].xyz);
-					if (dot(last, last) < 1e-20 || dot(groomed_last, groomed_last) < 1e-20) {
-						continue;
+				for (uint span = 2u; span <= 3u; span++) {
+					for (uint i = from + span; i < to; i++) {
+						uint j = i - span;
+						vec3 d = pos[i].xyz - pos[j].xyz;
+						float len = max(sqrt(dot(d, d)), 1e-7);
+						float groomed = length(mat3(m) * (rest[i].xyz - rest[j].xyz));
+						vec3 c = d * ((1.0 - groomed / len) * p.shape.x * (span == 2u ? 1.0 : 0.5));
+						if (j >= pinned) {
+							pos[j].xyz += 0.5 * c;
+							pos[i].xyz -= 0.5 * c;
+						} else {
+							pos[i].xyz -= c;
+						}
 					}
-					vec3 next = turn_onto(normalize(groomed_last), normalize(last)) * (turn * (rest[i + 1u].xyz - rest[i].xyz));
-					vec3 d = (pos[i].xyz + next - pos[i + 1u].xyz) * p.shape.x;
-					if (i >= pinned) {
-						pos[i].xyz -= d;
-					}
-					pos[i + 1u].xyz += d;
 				}
 			}
 
@@ -182,7 +176,7 @@ void main() {
 				for (uint i = from + 1u; i < to; i++) {
 					vec3 d = pos[i].xyz - pos[i - 1u].xyz;
 					float len = max(sqrt(dot(d, d)), 1e-7);
-					vec3 c = d * (1.0 - rest[i].w / len);
+					vec3 c = d * (1.0 - length(mat3(m) * (rest[i].xyz - rest[i - 1u].xyz)) / len);
 					if (i - 1u >= pinned) {
 						pos[i - 1u].xyz += 0.5 * c;
 						pos[i].xyz -= 0.5 * c;
@@ -289,7 +283,7 @@ void GroomSim::build(const Ref<PhysXGroom> &p_groom) {
 			r[i * 4 + 0] = points[i].x;
 			r[i * 4 + 1] = points[i].y;
 			r[i * 4 + 2] = points[i].z;
-			r[i * 4 + 3] = i > strand_offsets[s] ? points[i].distance_to(points[i - 1]) : 0.0f;
+			r[i * 4 + 3] = 0.0f;
 		}
 	}
 	PackedByteArray offsets;
@@ -348,14 +342,29 @@ void GroomSim::build(const Ref<PhysXGroom> &p_groom) {
 	}
 }
 
-void GroomSim::step(const Transform3D &p_from, const Transform3D &p_to, double p_delta, const Settings &p_settings, const LocalVector<Collider> &p_colliders) {
+bool GroomSim::step(const Transform3D &p_from, const Transform3D &p_to, double p_delta, const Settings &p_settings, const LocalVector<Collider> &p_colliders) {
 	if (gpu.is_null()) {
-		return;
+		return false;
 	}
-	// About 240 substeps a second, at most 8 a frame; a long frame (a hitch) counts as 1/20 s.
-	const double delta = CLAMP(p_delta, 1.0 / 1000.0, 1.0 / 20.0);
-	const int substeps = CLAMP((int)Math::ceil(delta * 240.0), 1, 8);
-	const float dt = (float)(delta / substeps);
+	// Substeps of 1/240 s, the rest of the frame carried to the next. Hanging hair sags further with longer substeps
+	// (the corrections run as many times a substep), so substeps as long as the frame over its count make the hair
+	// breathe with the frame time, still. Below 30 fps (more than 8 substeps) they get longer instead; a long frame (a
+	// hitch) counts as 1/20 s.
+	constexpr double SUBSTEP = 1.0 / 240.0;
+	constexpr int MAX_SUBSTEPS = 8;
+	carried += CLAMP(p_delta, 0.0, 1.0 / 20.0);
+	int substeps = (int)Math::floor(carried / SUBSTEP + 1e-6);
+	if (substeps < 1) {
+		return false;
+	}
+	float dt = (float)SUBSTEP;
+	if (substeps > MAX_SUBSTEPS) {
+		substeps = MAX_SUBSTEPS;
+		dt = (float)(carried / MAX_SUBSTEPS);
+		carried = 0.0;
+	} else {
+		carried = MAX(carried - substeps * SUBSTEP, 0.0);
+	}
 	const auto per_substep = [dt](float p_per_60th) {
 		return 1.0f - Math::pow(1.0f - CLAMP(p_per_60th, 0.0f, 0.999f), dt * 60.0f);
 	};
@@ -368,7 +377,7 @@ void GroomSim::step(const Transform3D &p_from, const Transform3D &p_to, double p
 	put_mat4(w + 16, p_from);
 	const int collider_count = MIN((int)p_colliders.size(), MAX_COLLIDERS);
 	w[32] = dt;
-	// Velocity kept per substep: TressFX's damping, per 1/60 s.
+	// Velocity kept per substep: damping per 1/60 s, as TressFX's.
 	w[33] = Math::exp(-MAX(p_settings.damping, 0.0f) * dt * 60.0f);
 	w[34] = (float)substeps;
 	w[35] = (float)collider_count;
@@ -380,8 +389,8 @@ void GroomSim::step(const Transform3D &p_from, const Transform3D &p_to, double p
 	w[41] = p_settings.wind.y;
 	w[42] = p_settings.wind.z;
 	w[43] = p_settings.wind.is_zero_approx() ? 0.0f : MAX(p_settings.drag, 0.0f);
-	// Per pass, two passes a substep; as TressFX, at most half (the full step overshoots).
-	w[44] = 0.5f * MIN(CLAMP(p_settings.bend_stiffness, 0.0f, 1.0f), 0.95f);
+	// Of the bend corrected per pass, two passes a substep: at most half (see the shader).
+	w[44] = 0.5f * CLAMP(p_settings.bend_stiffness, 0.0f, 1.0f);
 	w[45] = 0.0f; // start over: set on the render thread
 	w[46] = MAX(p_settings.margin, 0.0f);
 	w[48] = (float)gpu->strand_count;
@@ -420,9 +429,11 @@ void GroomSim::step(const Transform3D &p_from, const Transform3D &p_to, double p
 	} else {
 		rs->call_on_render_thread(Callable(memnew(GodotPhysXQueuedCall<decltype(run)>(run))));
 	}
+	return true;
 }
 
 void GroomSim::reset() {
+	carried = 0.0;
 	if (gpu.is_null()) {
 		return;
 	}

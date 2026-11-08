@@ -472,9 +472,12 @@ void PhysXGroom3D::_update_simulation(double p_delta) {
 	const Area3D *area = Object::cast_to<Area3D>(get_node_or_null(wind_area));
 	settings.wind = physx_cloth_sample_wind(wind, area, 0.0f, 0.0, xform.origin);
 	LocalVector<GroomSim::Collider> shapes;
-	_gather_colliders(xform, shapes);
-	sim->step(sim_last, xform, p_delta, settings, shapes);
-	sim_last = xform;
+	LocalVector<ColliderEnds> ends;
+	_gather_colliders(xform, shapes, ends);
+	if (sim->step(sim_last, xform, p_delta, settings, shapes)) {
+		sim_last = xform;
+		collider_ends = ends;
+	}
 }
 
 // A capsule or sphere CollisionShape3D's ends and radius where it is now. One on a physical bone is placed where its
@@ -522,7 +525,7 @@ static void add_shapes_under(Node *p_node, LocalVector<CollisionShape3D *> &r_sh
 
 // The head's sphere, then the colliders' shapes within the hair's reach, nearest first (at most GroomSim::MAX_COLLIDERS),
 // each with where it was last frame.
-void PhysXGroom3D::_gather_colliders(const Transform3D &p_xform, LocalVector<GroomSim::Collider> &r_colliders) {
+void PhysXGroom3D::_gather_colliders(const Transform3D &p_xform, LocalVector<GroomSim::Collider> &r_colliders, LocalVector<ColliderEnds> &r_ends) {
 	struct Found {
 		ObjectID id;
 		Vector3 a;
@@ -591,7 +594,6 @@ void PhysXGroom3D::_gather_colliders(const Transform3D &p_xform, LocalVector<Gro
 		}
 		found.push_back(n.found);
 	}
-	LocalVector<ColliderEnds> ends;
 	for (const Found &f : found) {
 		GroomSim::Collider c;
 		c.a = f.a;
@@ -608,9 +610,8 @@ void PhysXGroom3D::_gather_colliders(const Transform3D &p_xform, LocalVector<Gro
 			}
 		}
 		r_colliders.push_back(c);
-		ends.push_back({ f.id, f.a, f.b });
+		r_ends.push_back({ f.id, f.a, f.b });
 	}
-	collider_ends = ends;
 }
 
 int PhysXGroom3D::get_drawn_strand_count() const {

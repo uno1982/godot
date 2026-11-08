@@ -38,11 +38,11 @@
 
 class PhysXGroom;
 
-// Hair that moves, on the RenderingDevice (compute, any GPU the renderer supports): one thread per strand, the way
-// TressFX simulates hair (AMD, MIT). Each substep the root and the point after it follow the groom's transform, the
-// rest of the strand falls and flies (gravity, wind, inertia, damped), is pulled back toward the groomed shape (most at
-// the root), keeps each segment's bend from the one before it (curls stay curls) and its segment lengths, both with
-// corrections that move both ends of a segment, and is pushed out of the colliders. The points land in world space in an RGBA32F texture, one
+// Hair that moves, on the RenderingDevice (compute, any GPU the renderer supports): one thread per strand, similar to
+// AMD's TressFX. Each substep the root and the point after it follow the groom's transform, the rest of the strand
+// falls and flies (gravity, wind, inertia, damped), is pulled back toward the groomed shape (most at the root), keeps
+// its bends (each point its distance to the points two and three before it: curls stay curls) and its segment
+// lengths, with corrections that move both ends, and is pushed out of the colliders. The points land in world space in an RGBA32F texture, one
 // texel a point, that the strand mesh's vertex shader and the screen-space passes read.
 class GroomSim {
 public:
@@ -63,20 +63,22 @@ public:
 		// how far each segment goes back to its bend from the one before it.
 		float stiffness = 0.3f;
 		float bend_stiffness = 0.5f;
-		// Velocity lost per 1/60 s (TressFX's damping).
+		// Velocity lost per 1/60 s (as TressFX's damping).
 		float damping = 0.05f;
 		Vector3 gravity;
-		// Air velocity (m/s) and how strongly the strands are pushed across by it.
+		// Air velocity (m/s) and how strongly the strands are dragged along with it.
 		Vector3 wind;
-		float drag = 3.0f;
+		float drag = 1.5f;
 		// How far the strands stay off the colliders.
 		float margin = 0.002f;
 	};
 
 	// Uploads the groom's strands (in its own space) and makes the texture: on the render thread, waited for.
 	void build(const Ref<PhysXGroom> &p_groom);
-	// One frame: the groom's transform this frame and last, substeps between them. Queued on the render thread.
-	void step(const Transform3D &p_from, const Transform3D &p_to, double p_delta, const Settings &p_settings, const LocalVector<Collider> &p_colliders);
+	// One frame: the groom's transform this frame and the one it last stepped to, substeps between them. Queued on the
+	// render thread. False when the frame was shorter than a substep (its time carries over): nothing ran, so the next
+	// step starts from p_from again.
+	bool step(const Transform3D &p_from, const Transform3D &p_to, double p_delta, const Settings &p_settings, const LocalVector<Collider> &p_colliders);
 	// The next step starts from the groomed shape, at rest.
 	void reset();
 	void clear();
@@ -94,4 +96,6 @@ public:
 private:
 	class GPU;
 	Ref<GPU> gpu;
+	// Time not stepped yet, less than a substep.
+	double carried = 0.0;
 };

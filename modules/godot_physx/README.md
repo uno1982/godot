@@ -759,12 +759,15 @@ A script that draws the garment itself finds the render copy with
 `get_render_instance()`, and the particle each of its vertices is drawn from
 with `get_vertex_particles()`.
 
-## Hair — `PhysXGroom3D`
+## Hair — `PhysXGroom3D` (experimental)
 
-Hair and fur as real strands, from the grooms Blender, Houdini, Maya and
-Unreal Engine export. Drop an Alembic (`.abc`) groom into the project (it
-imports as a `PhysXGroom`, see the Alembic build option above), add a
-`PhysXGroom3D` and set its `groom`. Every open curve in the file becomes a
+Hair and fur as real strands, from the Alembic grooms Blender, Houdini and
+Maya export (the kind Unreal Engine imports). Experimental: its look,
+settings, simulation and cost may still change.
+
+Drop an Alembic (`.abc`) groom into the project (it imports as a
+`PhysXGroom`, see the Alembic build option above), add a `PhysXGroom3D` and
+set its `groom`. Every open curve in the file becomes a
 strand, with its widths; `scale` and `default_width` in the Import dock cover
 files in other units or without widths.
 
@@ -812,7 +815,7 @@ one: the importer shuffles the strands so any count drawn is an even sample.
 quality setting), and `get_drawn_strand_count()` reports the current count.
 
 In a running game the hair **moves** (`simulate`, on by default): every
-strand is simulated on the GPU (AMD's TressFX method), in both render modes.
+strand is simulated on the GPU (similar to AMD's TressFX), in both render modes.
 The roots follow the node, so on a character put the groom under a
 `BoneAttachment3D` on the head bone. The rest of each strand swings with the
 head, falls under gravity (`gravity_scale` times the project's gravity) and
@@ -828,6 +831,20 @@ does `reset_simulation()`. It costs about 0.16 ms of GPU time a frame for
 11 thousand strands and 0.28 ms for 22 thousand (RTX 5070). The grooms must
 be in meters, life size, for gravity and wind to look right (`scale` in the
 Import dock). Hidden grooms and grooms in the editor aren't simulated.
+
+**Hair shadows on skin.** The hair casts shadows like any mesh, but under
+Godot's default light settings (a sun's shadow reaching 100 m, its bias and
+normal bias) a shadow-map texel is about a centimeter, and the shadow test is
+pushed out by about as much. Hair lying 0-2 cm off the scalp and face falls
+inside that, so its shadow on the skin doesn't show; on the shoulders, the
+body or the floor it does.
+
+- **Gameplay** (the default settings): hair shadows the body and the world,
+  not the skin under it.
+- **Close-ups and cinematics:** fit the light's shadow to the shot. The demo's
+  sun uses `directional_shadow_max_distance` 3 m, `shadow_bias` 0.02 and
+  `shadow_normal_bias` 0.5 (the omni backlight the same biases), and the hair
+  shadows the face and neck.
 
 The editor demo `demo/editor/hair/hair_styles.tscn` in the example project
 shows two of Blender's demo hairstyles on heads that turn, nod, tilt and sway

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<class name="PhysXGroom3D" inherits="GeometryInstance3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+<class name="PhysXGroom3D" inherits="GeometryInstance3D" api_type="core" experimental="Its look, settings, simulation and cost may still change." xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
 	<brief_description>
 		Draws hair strands: a [PhysXGroom].
 	</brief_description>
@@ -27,7 +27,7 @@
 	</methods>
 	<members>
 		<member name="bend_stiffness" type="float" setter="set_bend_stiffness" getter="get_bend_stiffness" default="0.5">
-			How much each segment keeps its groomed bend from the one before it: curls stay curls, waves stay waves. 0 lets the strands hang straight under gravity; 1 keeps their shape stiffly.
+			How much each strand keeps its groomed bends: curls stay curls, waves stay waves (each point keeps its groomed distance to the points two and three before it). 0 lets the strands hang straight under gravity; 1 keeps their shape stiffly.
 		</member>
 		<member name="collide_with_head" type="bool" setter="set_collide_with_head" getter="is_colliding_with_head" default="true">
 			Keeps the strands off a sphere fitted to their roots, the head they grow from (in the groom's space, following the node).

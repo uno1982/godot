@@ -57,7 +57,7 @@ RID PhysXGroom3D::shared_shader;
 // Each point is two vertices at the same place: UV.x says which side of the strand (-1, 1), UV.y how far along it
 // (0 root, 1 tip), UV2.x the radius there, UV2.y the strand's place in the groom's (random) order, from 0 to 1,
 // NORMAL the strand's direction. The vertex shader spreads them apart across the strand, facing the camera, at least a
-// pixel apart; a strand thinner than that draws less of its pixel (alpha hash). Strands past strand_fraction aren't
+// pixel apart; a strand thinner than that draws less of its pixel (a dither). Strands past strand_fraction aren't
 // drawn (collapsed to a point), and the rest widen to cover for them.
 // Simulated (GroomSim), the points come from its texture instead, in world space: a point is two vertices, so the
 // vertex's point is VERTEX_ID / 2, and its direction runs from the point before to the one after.
@@ -73,9 +73,18 @@ vec3 sim_point(int i) {
 	return texelFetch(sim_points, ivec2(i % sim_width, i / sim_width), 0).xyz;
 }
 
+// Interleaved gradient noise (as PXTGI's): neighbouring pixels get evenly spread values, so a strand drawing a share of
+// its pixels draws an even, fine pattern rather than the grit of white noise (Godot's alpha hash). Each strand shifts
+// the pattern by its own amount: on one pattern, strands crossing a pixel would all draw it or all skip it, and
+// overlapping hair would cover no more than one strand.
+float ign(vec2 p) {
+	return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
+}
+
 varying vec3 v_tangent;
 varying float v_along;
 varying float v_coverage;
+varying flat float v_dither;
 varying vec4 v_shadow;
 
 void vertex() {
@@ -103,6 +112,7 @@ void vertex() {
 	float pixel = (orthographic ? 2.0 : -pos.z * 2.0) / (abs(PROJECTION_MATRIX[1][1]) * VIEWPORT_SIZE.y);
 	float half_width = max(radius, pixel * 0.5);
 	v_coverage = clamp(radius / half_width, 0.0, 1.0);
+	v_dither = fract(UV2.y * 1031.0 * 0.6180339887);
 	VERTEX = pos + across * UV.x * half_width;
 	vec3 facing = normalize(cross(across, tangent));
 	NORMAL = dot(facing, -pos) < 0.0 ? -facing : facing;
@@ -128,8 +138,9 @@ void fragment() {
 	} else {
 		ROUGHNESS = 0.6;
 	}
-	ALPHA = v_coverage;
-	ALPHA_HASH_SCALE = 1.0;
+	if (v_coverage < 1.0 && v_coverage <= fract(ign(FRAGCOORD.xy) + v_dither)) {
+		discard;
+	}
 	light_tangent = normalize(v_tangent);
 	light_shadow = v_shadow;
 	light_roughness = hair_roughness;

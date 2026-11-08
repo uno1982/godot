@@ -83,7 +83,7 @@
 	</members>
 	<constants>
 		<constant name="RENDER_MODE_MESH" value="0" enum="RenderMode">
-			A ribbon per strand, turned to face the camera: an ordinary mesh, in every renderer, with every effect that applies to one. Strands thinner than a pixel are dithered, so they need antialiasing (MSAA or TAA) to look smooth. The cheaper mode: on a head filling a 1280×720 view (an RTX 5070), 0.7-1.4 ms of GPU time per frame for 11-29 thousand strands.
+			A ribbon per strand, turned to face the camera: an ordinary mesh, in every renderer, with every effect that applies to one. Strands thinner than a pixel are dithered in a fine, even pattern (shifted per strand), which antialiasing (TAA, SMAA, FXAA, or MSAA with SMAA) smooths. The cheaper mode: on a head filling a 1280×720 view (an RTX 5070), 0.7-1.4 ms of GPU time per frame for 11-29 thousand strands.
 		</constant>
 		<constant name="RENDER_MODE_SCREEN_SPACE" value="1" enum="RenderMode">
 			The module's own compute passes draw the strands, each with its exact share of every pixel it crosses (as Indiana Jones and the Great Circle does, SIGGRAPH 2025), and the scene's lights and shadows light the two nearest strands in each pixel. Smooth, thin hair with no antialiasing at all, and hair that stays whole when [member width_scale] makes it very thin. Forward+ and Mobile. Costs more close up (1.8-3.0 ms in the view above) and about the same as [constant RENDER_MODE_MESH] at a distance. The mesh still casts the hair's shadows. The hair doesn't write depth, so effects that read the depth buffer don't see it.

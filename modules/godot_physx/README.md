@@ -786,8 +786,9 @@ Two ways to draw it (`render_mode`):
 
 - **Mesh** (default): a ribbon per strand, turned toward the camera, at least a
   pixel wide; an ordinary mesh that works in every renderer and with every
-  effect. Strands thinner than a pixel are dithered, so it wants MSAA (SMAA
-  and FXAA do little for hair). The cheaper mode: 0.7-1.4 ms of GPU time for
+  effect. Strands thinner than a pixel are dithered in a fine, even pattern
+  (shifted per strand); any antialiasing smooths it (TAA, SMAA, FXAA, or
+  MSAA 2x with SMAA). The cheaper mode: 0.7-1.4 ms of GPU time for
   a head filling a 1280×720 view (11-29 thousand strands, RTX 5070).
 - **Screen Space**: the module's own compute passes draw each strand with its
   exact share of every pixel it crosses, and Godot lights the two nearest

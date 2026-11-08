@@ -798,6 +798,17 @@ Two ways to draw it (`render_mode`):
   about the same as Mesh at a distance. The mesh still casts the hair's
   shadows.
 
+Which to use:
+
+- **Mobile renderer** (phones, standalone VR): **Mesh**, with MSAA, SMAA or
+  FXAA (the Mobile renderer has no TAA). Screen Space's compute passes are
+  heavy for mobile GPUs, and with MSAA on the Mobile renderer it gets no
+  depth to test against, so it draws over what's in front of it.
+- **Forward+**: either. **Screen Space** for the smoothest hair without TAA,
+  when the extra GPU time is there (about 1.2-1.5 ms more than Mesh for two
+  heads close up at 1280×720); **Mesh** with TAA, SMAA or FXAA when it has to
+  be cheap.
+
 Two shading models (`shading_model`), a choice of look more than of cost:
 **Kajiya-Kay** (default), stylized, bright and saturated with a crisp
 highlight; **Marschner** (Karis's real-time approximation, as Unreal Engine

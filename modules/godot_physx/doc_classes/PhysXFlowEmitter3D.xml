@@ -24,6 +24,9 @@
 		</method>
 	</methods>
 	<members>
+		<member name="allocate" type="bool" setter="set_allocate" getter="is_allocating" default="true">
+			Whether the emitter grows the gas grid to cover itself. Off, it acts only where there's gas already: a wind or drag zone over a large area (its [member velocity] pushes the smoke and fire that reach it, its [member temperature] cools them at [member couple_rate]) without simulating the empty air inside it.
+		</member>
 		<member name="burn" type="float" setter="set_burn" getter="get_burn" default="0.0">
 			Burn amount put in (combustion that is already under way).
 		</member>

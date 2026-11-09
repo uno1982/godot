@@ -378,6 +378,7 @@ void PhysXFlow3D::_gather_emitters(LocalVector<FlowBackend::Emitter> &r_emitters
 		fe.divergence = e->get_divergence();
 		fe.couple_rate = e->get_couple_rate();
 		fe.collision = e->is_collision();
+		fe.allocate = e->is_allocating();
 		r_emitters.push_back(fe);
 		if (first) {
 			r_emitter_bounds = AABB(xf.origin, Vector3());

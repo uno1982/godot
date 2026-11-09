@@ -75,6 +75,8 @@ struct Emitter {
 	// body_velocity there. Allocates no grid of its own.
 	bool collision = false;
 	float body_velocity[3] = { 0, 0, 0 }; // world m/s
+	// False: acts only where there's gas already, growing no grid (a wind zone).
+	bool allocate = true;
 };
 
 struct Settings {

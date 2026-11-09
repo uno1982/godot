@@ -115,7 +115,7 @@ void PhysXFlowEmitter3D::_validate_property(PropertyInfo &p_property) const {
 		p_property.usage = PROPERTY_USAGE_NO_EDITOR;
 	} else if (p_property.name == "size" && shape != SHAPE_BOX) {
 		p_property.usage = PROPERTY_USAGE_NO_EDITOR;
-	} else if (collision && (p_property.name == "velocity" || p_property.name == "temperature" || p_property.name == "fuel" || p_property.name == "burn" || p_property.name == "smoke" || p_property.name == "divergence" || p_property.name == "couple_rate")) {
+	} else if (collision && (p_property.name == "velocity" || p_property.name == "temperature" || p_property.name == "fuel" || p_property.name == "burn" || p_property.name == "smoke" || p_property.name == "divergence" || p_property.name == "couple_rate" || p_property.name == "allocate")) {
 		p_property.usage = PROPERTY_USAGE_NO_EDITOR;
 	}
 }
@@ -145,6 +145,8 @@ void PhysXFlowEmitter3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_couple_rate"), &PhysXFlowEmitter3D::get_couple_rate);
 	ClassDB::bind_method(D_METHOD("set_collision", "collision"), &PhysXFlowEmitter3D::set_collision);
 	ClassDB::bind_method(D_METHOD("is_collision"), &PhysXFlowEmitter3D::is_collision);
+	ClassDB::bind_method(D_METHOD("set_allocate", "allocate"), &PhysXFlowEmitter3D::set_allocate);
+	ClassDB::bind_method(D_METHOD("is_allocating"), &PhysXFlowEmitter3D::is_allocating);
 	ClassDB::bind_method(D_METHOD("get_motion_velocity"), &PhysXFlowEmitter3D::get_motion_velocity);
 	ClassDB::bind_method(D_METHOD("set_flow_path", "path"), &PhysXFlowEmitter3D::set_flow_path);
 	ClassDB::bind_method(D_METHOD("get_flow_path"), &PhysXFlowEmitter3D::get_flow_path);
@@ -164,6 +166,7 @@ void PhysXFlowEmitter3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "smoke", PROPERTY_HINT_RANGE, "0,10,0.01,or_greater"), "set_smoke", "get_smoke");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "divergence", PROPERTY_HINT_RANGE, "-10,10,0.01"), "set_divergence", "get_divergence");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "couple_rate", PROPERTY_HINT_RANGE, "0,20,0.01,or_greater"), "set_couple_rate", "get_couple_rate");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "allocate"), "set_allocate", "is_allocating");
 
 	BIND_ENUM_CONSTANT(SHAPE_SPHERE);
 	BIND_ENUM_CONSTANT(SHAPE_BOX);

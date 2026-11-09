@@ -633,6 +633,11 @@ Things worth knowing:
   fog is cheap, a sphere wide enough to cover the same floor is just as tall
   and keeps about three times the blocks. A low `couple_rate` (~0.1-0.3) on a
   wide emitter lets the gas drift and streak instead of being held in place.
+- With `allocate` off, an emitter keeps no blocks of its own: it acts only
+  where there's gas already. A wide box with only a `velocity` (and
+  `temperature` 0, cooling what it carries at `couple_rate`) is a wind over
+  the whole scene at no cost where the air is empty; `force_field.tscn` in the
+  demo uses one to carry a flamethrower's fire around a shield.
 - Heightmap and trimesh terrain isn't a solid for the gas: `floor_enabled`
   keeps it above `floor_height`. Cold gas (`temperature` below 0, with
   `buoyancy`) slumps and spreads along a floor like dry-ice fog.

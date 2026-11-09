@@ -63,6 +63,8 @@ private:
 	float divergence = 0.0f;
 	float couple_rate = 2.0f;
 	bool collision = false;
+	// Off: acts only where there's gas already (a wind or drag zone), without growing the grid.
+	bool allocate = true;
 	NodePath flow_path;
 
 	// For collision: the body's velocity, from this node's own motion.
@@ -100,6 +102,8 @@ public:
 	float get_couple_rate() const { return couple_rate; }
 	void set_collision(bool p_collision);
 	bool is_collision() const { return collision; }
+	void set_allocate(bool p_allocate) { allocate = p_allocate; }
+	bool is_allocating() const { return allocate; }
 
 	// World-space velocity of this node over the last physics step.
 	Vector3 get_motion_velocity() const { return motion_velocity; }

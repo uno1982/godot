@@ -120,6 +120,9 @@ void set_channels(T &r_params, const Emitter &p_emitter) {
 	r_params.coupleRateSmoke = p_emitter.smoke > 0.0f ? c : 0.0f;
 	r_params.coupleRateBurn = p_emitter.burn > 0.0f ? c : 0.0f;
 	r_params.coupleRateDivergence = p_emitter.divergence != 0.0f ? c : 0.0f;
+	if (!p_emitter.allocate) {
+		r_params.allocationScale = 0.0f;
+	}
 }
 
 } // namespace

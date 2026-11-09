@@ -41,9 +41,11 @@
 
 class RenderingDevice;
 
-// PhysXFlow3D's light scattering: point and spot lights glowing in the gas.
-// Flow's own renderer lights the gas with one directional light (its
-// self-shadow volume), so this is a second pass of our own, run right after
+// PhysXFlow3D's light scattering: point, spot and directional lights glowing
+// in the gas. Flow's own renderer lights the gas with one directional light
+// (its self-shadow volume) the same from every side, so this is a second pass
+// of our own (a directional light here adds the glow toward it: dust lit from
+// behind), run right after
 // Flow composites the gas into the frame: it marches each pixel's view ray
 // through Flow's sparse density (the same volume and table Flow's ray marcher
 // read, see FlowBackend::ScatterSource), and at each step with smoke adds
@@ -59,7 +61,7 @@ public:
 	struct Light {
 		float position_range[4] = {}; // meters; w: range
 		float color_decay[4] = {}; // linear rgb * energy; w: attenuation exponent
-		float direction_cutoff[4] = {}; // spot: direction it points, w: cos(spot angle); omni: w = -2
+		float direction_cutoff[4] = {}; // spot: direction it points, w: cos(spot angle); omni: w = -2; directional: direction toward it, w = -3
 		float spot[4] = {}; // x: spot attenuation exponent
 		// Its shadow in Godot's shadow atlas, as Godot's own volumetric fog reads
 		// it (see LightStorage::update_light_buffers), but from world space:

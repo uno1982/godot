@@ -276,19 +276,29 @@ vec3 march(ivec2 px, ivec2 frame_px, float depth) {
 			vec3 pos_m = pos / upm;
 			for (int l = 0; l < light_count; l++) {
 				Light L = lights[l];
-				vec3 to_light = L.position_range.xyz - pos_m;
-				float d = length(to_light);
-				float range = L.position_range.w;
-				if (d >= range || d <= 0.0) {
-					continue;
+				vec3 ldir;
+				float d;
+				float atten;
+				if (L.direction_cutoff.w < -2.5) {
+					// Directional (the sun): the same light everywhere, from one direction.
+					ldir = L.direction_cutoff.xyz;
+					d = 1e20;
+					atten = 1.0;
+				} else {
+					vec3 to_light = L.position_range.xyz - pos_m;
+					d = length(to_light);
+					float range = L.position_range.w;
+					if (d >= range || d <= 0.0) {
+						continue;
+					}
+					ldir = to_light / d;
+					// Godot's own omni falloff (light_functions / scene_forward).
+					float nd = d / range;
+					nd *= nd;
+					nd *= nd;
+					nd = max(1.0 - nd, 0.0);
+					atten = nd * nd * pow(max(d, 0.0001), -L.color_decay.w);
 				}
-				vec3 ldir = to_light / d;
-				// Godot's own omni falloff (light_functions / scene_forward).
-				float nd = d / range;
-				nd *= nd;
-				nd *= nd;
-				nd = max(1.0 - nd, 0.0);
-				float atten = nd * nd * pow(max(d, 0.0001), -L.color_decay.w);
 				if (L.direction_cutoff.w > -1.5) {
 					float cutoff = L.direction_cutoff.w;
 					float scos = max(dot(-ldir, L.direction_cutoff.xyz), cutoff);

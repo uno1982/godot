@@ -81,7 +81,7 @@
 			The temperature above which fuel burns (see [member combustion]).
 		</member>
 		<member name="light_scattering" type="bool" setter="set_light_scattering" getter="is_light_scattering" default="false">
-			When enabled, nearby [OmniLight3D] and [SpotLight3D] nodes light the gas: each glows in the smoke in its own color, fading with distance the way it fades on surfaces (its [member OmniLight3D.omni_range] / [member SpotLight3D.spot_range], [member OmniLight3D.omni_attenuation] / [member SpotLight3D.spot_attenuation], spot cone), dimmed by the gas between it and each point and by the gas in front of the camera. Flow's own renderer only lights the gas with the scene's first [DirectionalLight3D]; this is an extra pass over the pixels the gas covers, so it's off by default.
+			When enabled, nearby [OmniLight3D] and [SpotLight3D] nodes light the gas: each glows in the smoke in its own color, fading with distance the way it fades on surfaces (its [member OmniLight3D.omni_range] / [member SpotLight3D.spot_range], [member OmniLight3D.omni_attenuation] / [member SpotLight3D.spot_attenuation], spot cone), dimmed by the gas between it and each point and by the gas in front of the camera. Flow's own renderer lights the gas with the scene's first [DirectionalLight3D] the same from every side; with [member scattering_directional], directional lights scatter here too. This is an extra pass over the pixels the gas covers, so it's off by default.
 			Up to [member scattering_max_lights] lights are used, the strongest at the gas first. Each light's [member Light3D.light_volumetric_fog_energy] scales its glow, as it does for Godot's volumetric fog: set it to [code]0[/code] to keep a light out of the gas.
 		</member>
 		<member name="max_blocks" type="int" setter="set_max_blocks" getter="get_max_blocks" default="1024">
@@ -89,6 +89,9 @@
 		</member>
 		<member name="scattering_anisotropy" type="float" setter="set_scattering_anisotropy" getter="get_scattering_anisotropy" default="0.4">
 			With [member light_scattering], how much the gas scatters light forward (toward a camera looking at the light) rather than evenly in every direction: [code]0[/code] glows the same from every side, higher values make a bright halo when looking toward a light, negative values light the gas most when the light is behind the camera.
+		</member>
+		<member name="scattering_directional" type="bool" setter="set_scattering_directional" getter="is_scattering_directional" default="false">
+			With [member light_scattering], the scene's [DirectionalLight3D] nodes scatter in the gas too, on top of Flow's own sun lighting (which is the same from every side): with [member scattering_anisotropy] above [code]0[/code], gas between the camera and the sun glows, brightest where it's thin -- dust or smoke lit from behind. Each one's [member Light3D.light_volumetric_fog_energy] scales its glow. The gas shades it (up to [member scattering_shadow_reach] toward the light); scene objects don't yet. Off by default: a scene's sun would otherwise add a glow to all its gas.
 		</member>
 		<member name="scattering_max_lights" type="int" setter="set_scattering_max_lights" getter="get_scattering_max_lights" default="4">
 			With [member light_scattering], the most lights that glow in the gas at once (the strongest at it). Each one costs a short march toward it for every step of every pixel the gas covers.

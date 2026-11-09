@@ -246,6 +246,9 @@ void PhysXFlow3D::_fill_scatter_shadows(LocalVector<FlowScatterRD::Light> &r_lig
 		return;
 	}
 	for (FlowScatterRD::Light &l : r_lights) {
+		if (l.direction_cutoff[3] < -2.5f) {
+			continue; // directional: no scene shadows in the gas (yet)
+		}
 		// Light3D keeps its RenderingServer light to itself: find the frame's
 		// instance of it by where it is and what it is.
 		const bool spot = l.direction_cutoff[3] > -1.5f;
@@ -589,7 +592,10 @@ void PhysXFlow3D::_gather_scatter_lights() {
 				root = get_tree()->get_root(); // a scene built from a script has no current scene
 			}
 			if (root != nullptr) {
-				for (const char *type : { "OmniLight3D", "SpotLight3D" }) {
+				for (const char *type : { "OmniLight3D", "SpotLight3D", "DirectionalLight3D" }) {
+					if (!scattering_directional && String(type) == "DirectionalLight3D") {
+						continue;
+					}
 					LocalVector<Node *> found;
 					_flow_lights_under(root, type, found);
 					for (Node *l : found) {
@@ -614,14 +620,32 @@ void PhysXFlow3D::_gather_scatter_lights() {
 			// Light3D.light_volumetric_fog_energy: the same per-light knob Godot's
 			// volumetric fog uses (0 leaves the gas dark).
 			const float energy = l->get_param(Light3D::PARAM_ENERGY) * l->get_param(Light3D::PARAM_VOLUMETRIC_FOG_ENERGY);
-			const float range = l->get_param(Light3D::PARAM_RANGE);
 			const Transform3D xf = l->get_global_transform();
+			Candidate c;
+			const Color col = l->get_color().srgb_to_linear() * energy;
+			if (Object::cast_to<DirectionalLight3D>(l) != nullptr) {
+				// The sun reaches all the gas: first, whatever else is near.
+				if (energy <= 0.0f) {
+					continue;
+				}
+				// It shines along its -Z: toward it is +Z.
+				const Vector3 toward = xf.basis.get_column(2).normalized();
+				c.light.color_decay[0] = col.r;
+				c.light.color_decay[1] = col.g;
+				c.light.color_decay[2] = col.b;
+				c.light.direction_cutoff[0] = toward.x;
+				c.light.direction_cutoff[1] = toward.y;
+				c.light.direction_cutoff[2] = toward.z;
+				c.light.direction_cutoff[3] = -3.0f; // directional
+				c.score = 1e20f;
+				candidates.push_back(c);
+				continue;
+			}
+			const float range = l->get_param(Light3D::PARAM_RANGE);
 			const float d = xf.origin.distance_to(draw_center);
 			if (energy <= 0.0f || range <= 0.0f || d > range + GAS_REACH) {
 				continue;
 			}
-			Candidate c;
-			const Color col = l->get_color().srgb_to_linear() * energy;
 			c.light.position_range[0] = xf.origin.x;
 			c.light.position_range[1] = xf.origin.y;
 			c.light.position_range[2] = xf.origin.z;
@@ -982,6 +1006,8 @@ void PhysXFlow3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_scattering_strength"), &PhysXFlow3D::get_scattering_strength);
 	ClassDB::bind_method(D_METHOD("set_scattering_anisotropy", "anisotropy"), &PhysXFlow3D::set_scattering_anisotropy);
 	ClassDB::bind_method(D_METHOD("get_scattering_anisotropy"), &PhysXFlow3D::get_scattering_anisotropy);
+	ClassDB::bind_method(D_METHOD("set_scattering_directional", "enabled"), &PhysXFlow3D::set_scattering_directional);
+	ClassDB::bind_method(D_METHOD("is_scattering_directional"), &PhysXFlow3D::is_scattering_directional);
 	ClassDB::bind_method(D_METHOD("set_scattering_shadow_steps", "steps"), &PhysXFlow3D::set_scattering_shadow_steps);
 	ClassDB::bind_method(D_METHOD("get_scattering_shadow_steps"), &PhysXFlow3D::get_scattering_shadow_steps);
 	ClassDB::bind_method(D_METHOD("set_scattering_resolution", "resolution"), &PhysXFlow3D::set_scattering_resolution);
@@ -1027,6 +1053,7 @@ void PhysXFlow3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "scattering_max_lights", PROPERTY_HINT_RANGE, vformat("1,%d,1", FlowScatterRD::MAX_LIGHTS)), "set_scattering_max_lights", "get_scattering_max_lights");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "scattering_strength", PROPERTY_HINT_RANGE, "0,8,0.01,or_greater"), "set_scattering_strength", "get_scattering_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "scattering_anisotropy", PROPERTY_HINT_RANGE, "-0.95,0.95,0.01"), "set_scattering_anisotropy", "get_scattering_anisotropy");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "scattering_directional"), "set_scattering_directional", "is_scattering_directional");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "scattering_shadow_steps", PROPERTY_HINT_RANGE, "0,64,1"), "set_scattering_shadow_steps", "get_scattering_shadow_steps");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "scattering_receive_shadows", PROPERTY_HINT_FLAGS, "Omni:1,Spot:2"), "set_scattering_receive_shadows", "get_scattering_receive_shadows");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "scattering_resolution", PROPERTY_HINT_ENUM, "Full,Half,Quarter"), "set_scattering_resolution", "get_scattering_resolution");

@@ -150,13 +150,15 @@ private:
 	ObjectID light_id;
 	int light_search_countdown = 0;
 
-	// Light scattering: point / spot lights glowing in the gas (a pass of its
+	// Light scattering: point / spot (and directional) lights glowing in the gas (a pass of its
 	// own after Flow's, see FlowScatterRD). Off by default: it marches every
 	// pixel the gas covers once more, with a short march toward each light.
 	bool light_scattering = false;
 	int scattering_max_lights = 4;
 	float scattering_strength = 1.0f;
 	float scattering_anisotropy = 0.4f;
+	// The scene's directional lights scatter too (off: only omni and spot lights; Flow's own sun lighting either way).
+	bool scattering_directional = false;
 	int scattering_shadow_steps = 4;
 	float scattering_shadow_reach = 4.0f;
 public:
@@ -256,6 +258,11 @@ public:
 	float get_scattering_strength() const { return scattering_strength; }
 	void set_scattering_anisotropy(float p_v) { scattering_anisotropy = CLAMP(p_v, -0.95f, 0.95f); }
 	float get_scattering_anisotropy() const { return scattering_anisotropy; }
+	void set_scattering_directional(bool p_v) {
+		scattering_directional = p_v;
+		scatter_search_countdown = 0; // find the lights again now
+	}
+	bool is_scattering_directional() const { return scattering_directional; }
 	void set_scattering_shadow_steps(int p_v) { scattering_shadow_steps = CLAMP(p_v, 0, 64); }
 	int get_scattering_shadow_steps() const { return scattering_shadow_steps; }
 	void set_scattering_shadow_reach(float p_v) { scattering_shadow_reach = MAX(p_v, 0.05f); }

@@ -617,9 +617,16 @@ pixels the gas covers, worked out at `scattering_resolution` (Quarter by
 default: the glow is soft, and that reads the same as full) and scaled up
 depth-aware — about 0.7 ms at 1080p with one shadowed light over a screen of
 ground fog in the demo (`demo/editor/flow/light_scattering.tscn`, which also
-shows the frame and Flow timings). The directional light still shades the gas
-only through the gas itself; its scene shadows, GI and area lights don't reach
-the gas yet.
+shows the frame and Flow timings).
+
+With `scattering_directional`, a `DirectionalLight3D` scatters too, on top of
+Flow's own sun lighting, which is the same from every side: with
+`scattering_anisotropy` above 0, dust and smoke between the camera and the sun
+glow, brightest at their thin edges (`demo/editor/flow/tornado.tscn`; about
+0.9 ms over a big dust column at quarter resolution). Its `light_volumetric_fog_energy` scales
+that glow (0 leaves it out). Its scene shadows don't reach the gas yet (only
+the gas shades it, `scattering_shadow_reach` toward the sun), nor do GI or
+area lights.
 
 Things worth knowing:
 - `max_blocks` is a GPU memory budget: Flow reserves textures for all of it

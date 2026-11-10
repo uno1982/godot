@@ -307,16 +307,32 @@ void PhysXDestructible3D::set_interior_material(const Ref<Material> &p_material)
 	}
 }
 
+Ref<Material> PhysXDestructible3D::_slot_material(int p_slot) const {
+	if (blast_asset.is_null()) {
+		return Ref<Material>();
+	}
+	const TypedArray<Material> materials = blast_asset->get_surface_materials();
+	const int surface = p_slot == interior_slot ? 0 : p_slot;
+	return surface < materials.size() ? Ref<Material>(materials[surface]) : Ref<Material>();
+}
+
 // An instance-wide override would cover the cut faces too, so a piece with its own material for those goes by surface.
+// Without an override, each surface keeps the material the asset gave its mesh surface.
 void PhysXDestructible3D::_apply_piece_materials(RenderingServer *p_rs, const ChunkVisual &p_piece) const {
-	const bool by_surface = interior_material_res.is_valid() && p_piece.interior_surface >= 0;
+	const int interior_surface = (uint32_t)interior_slot < p_piece.surface_of_slot.size() ? p_piece.surface_of_slot[interior_slot] : -1;
+	const bool by_surface = interior_material_res.is_valid() && interior_surface >= 0;
 	const RID override_rid = material_override_res.is_valid() ? material_override_res->get_rid() : RID();
 	p_rs->instance_geometry_set_material_override(p_piece.instance, by_surface ? RID() : override_rid);
-	if (p_piece.outer_surface >= 0) {
-		p_rs->instance_set_surface_override_material(p_piece.instance, p_piece.outer_surface, by_surface ? override_rid : RID());
-	}
-	if (p_piece.interior_surface >= 0) {
-		p_rs->instance_set_surface_override_material(p_piece.instance, p_piece.interior_surface, by_surface ? interior_material_res->get_rid() : RID());
+	for (uint32_t slot = 0; slot < p_piece.surface_of_slot.size(); slot++) {
+		const int surface = p_piece.surface_of_slot[slot];
+		if (surface < 0) {
+			continue;
+		}
+		RID material;
+		if (by_surface) {
+			material = (int)slot == interior_slot ? interior_material_res->get_rid() : override_rid;
+		}
+		p_rs->instance_set_surface_override_material(p_piece.instance, surface, material);
 	}
 }
 
@@ -764,6 +780,8 @@ void PhysXDestructible3D::_compute_chunk_surfaces() {
 	const Array asset_uvs = blast_asset.is_valid() ? blast_asset->get_chunk_uvs() : Array();
 	const PackedInt32Array interior_starts = blast_asset.is_valid() ? blast_asset->get_chunk_interior_starts() : PackedInt32Array();
 	const bool has_surface_data = asset_normals.size() == (int)chunk_points.size() && asset_uvs.size() == (int)chunk_points.size() && interior_starts.size() == (int)chunk_points.size();
+	const Array surface_starts = blast_asset.is_valid() ? blast_asset->get_chunk_surface_starts() : Array();
+	interior_slot = blast_asset.is_valid() ? blast_asset->get_surface_count() : 1;
 
 	// Without them, flat per-triangle normals with the winding (c-a)x(b-a), not
 	// the intuitive (b-a)x(c-a): Blast's AuthoringResult::geometry triangles are
@@ -778,11 +796,28 @@ void PhysXDestructible3D::_compute_chunk_surfaces() {
 			const PackedVector3Array normals = asset_normals[c];
 			const PackedVector2Array uvs = asset_uvs[c];
 			const int interior_start = interior_starts[c];
-			if (normals.size() == points.size() && uvs.size() == points.size() && interior_start >= 0 && interior_start <= points.size()) {
-				for (int slot = SLOT_OUTER; slot <= SLOT_INTERIOR; slot++) {
-					const int from = slot == SLOT_OUTER ? 0 : interior_start;
-					const int to = slot == SLOT_OUTER ? interior_start : points.size();
-					if (from == to) {
+			// Where each slot's faces start, then the end of the last. An asset from before surfaces were kept has one
+			// source surface, starting at 0.
+			LocalVector<int> bounds;
+			if (surface_starts.size() == (int)chunk_points.size()) {
+				const PackedInt32Array chunk_starts = surface_starts[c];
+				for (int s = 0; s < chunk_starts.size(); s++) {
+					bounds.push_back(chunk_starts[s]);
+				}
+			} else {
+				bounds.push_back(0);
+			}
+			bounds.push_back(interior_start);
+			bounds.push_back(points.size());
+			bool valid = normals.size() == points.size() && uvs.size() == points.size() && (int)bounds.size() == interior_slot + 2 && bounds[0] == 0;
+			for (uint32_t i = 1; valid && i < bounds.size(); i++) {
+				valid = bounds[i] >= bounds[i - 1];
+			}
+			if (valid) {
+				for (int slot = 0; slot <= interior_slot; slot++) {
+					const int from = bounds[slot];
+					const int to = bounds[slot + 1];
+					if (from >= to) {
 						continue;
 					}
 					ChunkSurface surface;
@@ -1044,7 +1079,11 @@ int PhysXDestructible3D::_spawn_piece(const LocalVector<uint32_t> &p_chunk_indic
 	// single body transform positions all of them.
 	RenderingServer *rs = RenderingServer::get_singleton();
 	RID mesh = rs->mesh_create();
-	int surface_of_slot[SLOT_INTERIOR + 1] = { -1, -1 };
+	LocalVector<int> surface_of_slot;
+	surface_of_slot.resize(interior_slot + 1);
+	for (int &surface : surface_of_slot) {
+		surface = -1;
+	}
 	int surface_count = 0;
 	int max_slot = -1;
 	for (uint32_t ci : p_chunk_indices) {
@@ -1110,6 +1149,11 @@ int PhysXDestructible3D::_spawn_piece(const LocalVector<uint32_t> &p_chunk_indic
 			arrays[RSE::ARRAY_TANGENT] = tangents;
 		}
 		rs->mesh_add_surface_from_arrays(mesh, RSE::PRIMITIVE_TRIANGLES, arrays);
+		// The source surface's material; the cut faces take the first one's, as the whole mesh's did before.
+		const Ref<Material> material = _slot_material(slot);
+		if (material.is_valid()) {
+			rs->mesh_surface_set_material(mesh, surface_count, material->get_rid());
+		}
 		surface_of_slot[slot] = surface_count++;
 	}
 
@@ -1148,8 +1192,7 @@ int PhysXDestructible3D::_spawn_piece(const LocalVector<uint32_t> &p_chunk_indic
 	piece.body = body;
 	piece.mesh = mesh;
 	piece.instance = instance;
-	piece.outer_surface = surface_of_slot[SLOT_OUTER];
-	piece.interior_surface = surface_of_slot[SLOT_INTERIOR];
+	piece.surface_of_slot = surface_of_slot;
 	_apply_piece_materials(rs, piece);
 	piece.chunk_indices = chunk_indices_storage;
 	piece.actor = p_actor;

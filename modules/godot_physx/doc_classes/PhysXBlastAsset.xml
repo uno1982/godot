@@ -23,6 +23,9 @@
 		<member name="chunk_interior_starts" type="PackedInt32Array" setter="set_chunk_interior_starts" getter="get_chunk_interior_starts" default="PackedInt32Array()">
 			For each chunk, the index in its [member chunk_points] where its interior (cut) faces start. The faces of the source mesh come first. Not meaningful to edit by hand.
 		</member>
+		<member name="chunk_surface_starts" type="Array" setter="set_chunk_surface_starts" getter="get_chunk_surface_starts" default="[]">
+			For each chunk, a [PackedInt32Array] with one entry per source surface: the index in its [member chunk_points] where that surface's faces start, in surface order, before the interior faces (see [member chunk_interior_starts]). Empty in an asset fractured before every surface was kept, where all the source faces are the first surface's. Not meaningful to edit by hand.
+		</member>
 		<member name="chunk_normals" type="Array" setter="set_chunk_normals" getter="get_chunk_normals" default="[]">
 			Per-chunk vertex normals, one [PackedVector3Array] per chunk, aligned with [member chunk_points]. Empty in an asset fractured before these were kept: fracture the mesh again to get them. Not meaningful to edit by hand.
 		</member>
@@ -31,6 +34,9 @@
 		</member>
 		<member name="chunk_uvs" type="Array" setter="set_chunk_uvs" getter="get_chunk_uvs" default="[]">
 			Per-chunk vertex UVs, one [PackedVector2Array] per chunk, aligned with [member chunk_points]. Empty in an asset fractured before these were kept: fracture the mesh again to get them. Not meaningful to edit by hand.
+		</member>
+		<member name="surface_materials" type="Material[]" setter="set_surface_materials" getter="get_surface_materials" default="[]">
+			The source mesh's material for each of its surfaces, [code]null[/code] where a surface had none. A [PhysXDestructible3D] draws each surface's faces with its material, and the cut faces with the first one unless [member PhysXDestructible3D.interior_material] is set. [member PhysXDestructible3D.material_override] replaces them all. The [b]Fracture with Blast[/b] dialog stores the [MeshInstance3D]'s surface override materials here where it has them. Empty in an asset fractured before these were kept.
 		</member>
 	</members>
 </class>

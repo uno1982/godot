@@ -166,6 +166,20 @@ void PhysXBlastFractureDialog::_on_confirmed() {
 		return;
 	}
 
+	// The node's own per-surface materials replace the mesh's in the asset; its material_override moves to the
+	// destructible below, as an override still.
+	if (mode == MODE_SCENE_NODE && target_node) {
+		if (MeshInstance3D *mi = Object::cast_to<MeshInstance3D>(target_node)) {
+			TypedArray<Material> materials = authored_asset->get_surface_materials();
+			for (int s = 0; s < materials.size() && s < mi->get_surface_override_material_count(); s++) {
+				if (mi->get_surface_override_material(s).is_valid()) {
+					materials[s] = mi->get_surface_override_material(s);
+				}
+			}
+			authored_asset->set_surface_materials(materials);
+		}
+	}
+
 	const String asset_path = save_dir.path_join(base_name + "_blast.tres");
 	const Error err = ResourceSaver::save(authored_asset, asset_path);
 	if (err != OK) {
@@ -186,7 +200,7 @@ void PhysXBlastFractureDialog::_on_confirmed() {
 		destructible->set_transform(old_node->get_transform());
 		destructible->set_blast_asset(authored_asset);
 		if (MeshInstance3D *mi = Object::cast_to<MeshInstance3D>(old_node)) {
-			destructible->set_material_override(mi->get_active_material(0));
+			destructible->set_material_override(mi->get_material_override());
 		}
 
 		EditorUndoRedoManager *ur = EditorUndoRedoManager::get_singleton();

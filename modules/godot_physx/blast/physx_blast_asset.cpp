@@ -44,10 +44,16 @@ void PhysXBlastAsset::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_chunk_uvs"), &PhysXBlastAsset::get_chunk_uvs);
 	ClassDB::bind_method(D_METHOD("set_chunk_interior_starts", "starts"), &PhysXBlastAsset::set_chunk_interior_starts);
 	ClassDB::bind_method(D_METHOD("get_chunk_interior_starts"), &PhysXBlastAsset::get_chunk_interior_starts);
+	ClassDB::bind_method(D_METHOD("set_chunk_surface_starts", "starts"), &PhysXBlastAsset::set_chunk_surface_starts);
+	ClassDB::bind_method(D_METHOD("get_chunk_surface_starts"), &PhysXBlastAsset::get_chunk_surface_starts);
+	ClassDB::bind_method(D_METHOD("set_surface_materials", "materials"), &PhysXBlastAsset::set_surface_materials);
+	ClassDB::bind_method(D_METHOD("get_surface_materials"), &PhysXBlastAsset::get_surface_materials);
 
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_BYTE_ARRAY, "asset_bytes"), "set_asset_bytes", "get_asset_bytes");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "chunk_points"), "set_chunk_points", "get_chunk_points");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "chunk_normals"), "set_chunk_normals", "get_chunk_normals");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "chunk_uvs"), "set_chunk_uvs", "get_chunk_uvs");
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_INT32_ARRAY, "chunk_interior_starts"), "set_chunk_interior_starts", "get_chunk_interior_starts");
+	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "chunk_surface_starts"), "set_chunk_surface_starts", "get_chunk_surface_starts");
+	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "surface_materials", PROPERTY_HINT_ARRAY_TYPE, MAKE_RESOURCE_TYPE_HINT("Material")), "set_surface_materials", "get_surface_materials");
 }

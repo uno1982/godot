@@ -35,6 +35,8 @@
 #include "core/io/image.h"
 #include "core/object/class_db.h"
 #include "core/templates/hash_map.h"
+#include "core/variant/typed_array.h"
+#include "scene/resources/material.h"
 #include "scene/resources/mesh.h"
 #include "scene/resources/texture.h"
 
@@ -357,17 +359,67 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 		return _fail("PhysXBlastAuthoring: PhysX not initialized.");
 	}
 
-	if (p_mesh->surface_get_primitive_type(0) != Mesh::PRIMITIVE_TRIANGLES) {
-		return _fail("PhysXBlastAuthoring: the mesh's first surface isn't a triangle list.");
+	// Every triangle surface goes into one mesh, each triangle tagged with its surface (Blast's material id, carried
+	// through the cuts), so the pieces keep each surface's faces apart and the asset keeps each surface's material.
+	PackedVector3Array verts;
+	PackedVector3Array src_normals;
+	PackedVector2Array src_uvs;
+	LocalVector<uint32_t> indices;
+	LocalVector<int32_t> triangle_surfaces;
+	TypedArray<Material> surface_materials;
+	const int surface_count = MIN(p_mesh->get_surface_count(), (int)Nv::Blast::kMaterialInteriorId);
+	bool any_normals = false;
+	for (int s = 0; s < surface_count; s++) {
+		if (p_mesh->surface_get_primitive_type(s) != Mesh::PRIMITIVE_TRIANGLES) {
+			_warn(vformat("PhysXBlastAuthoring: surface %d isn't a triangle list; left out.", s));
+			surface_materials.push_back(Ref<Material>());
+			continue;
+		}
+		const Array arrays = p_mesh->surface_get_arrays(s);
+		const PackedVector3Array surface_verts = arrays[Mesh::ARRAY_VERTEX];
+		const PackedVector3Array surface_normals = arrays[Mesh::ARRAY_NORMAL];
+		const PackedVector2Array surface_uvs = arrays[Mesh::ARRAY_TEX_UV];
+		const PackedInt32Array surface_indices = arrays[Mesh::ARRAY_INDEX];
+		surface_materials.push_back(p_mesh->surface_get_material(s));
+		const uint32_t base = (uint32_t)verts.size();
+		for (int i = 0; i < surface_verts.size(); i++) {
+			verts.push_back(surface_verts[i]);
+			// A placeholder if the surface has none: Blast's cuts don't need correct normals, and the pieces get flat
+			// ones then.
+			src_normals.push_back(i < surface_normals.size() ? surface_normals[i] : Vector3(0, 1, 0));
+			src_uvs.push_back(i < surface_uvs.size() ? surface_uvs[i] : Vector2());
+		}
+		any_normals = any_normals || !surface_normals.is_empty();
+		const uint32_t first_index = indices.size();
+		if (surface_indices.size() >= 3) {
+			for (int i = 0; i < surface_indices.size(); i++) {
+				if (surface_indices[i] < 0 || surface_indices[i] >= surface_verts.size()) {
+					return _fail(vformat("PhysXBlastAuthoring: surface %d's index %d points past its %d vertices.", s, surface_indices[i], surface_verts.size()));
+				}
+				indices.push_back(base + (uint32_t)surface_indices[i]);
+			}
+		} else {
+			// Non-indexed -- vertices are already one triangle list.
+			for (uint32_t i = 0; i < (uint32_t)surface_verts.size(); i++) {
+				indices.push_back(base + i);
+			}
+		}
+		if ((indices.size() - first_index) % 3 != 0) {
+			return _fail(vformat("PhysXBlastAuthoring: surface %d's %d indices aren't a whole number of triangles.", s, (int)(indices.size() - first_index)));
+		}
+		for (uint32_t t = first_index; t < indices.size(); t += 3) {
+			triangle_surfaces.push_back(s);
+		}
 	}
-	const Array arrays = p_mesh->surface_get_arrays(0);
-	const PackedVector3Array verts = arrays[Mesh::ARRAY_VERTEX];
+	if (p_mesh->get_surface_count() > surface_count) {
+		_warn(vformat("PhysXBlastAuthoring: only the first %d surfaces are fractured.", surface_count));
+	}
 	if (verts.size() < 4) {
 		return _fail("PhysXBlastAuthoring: mesh has too few vertices.");
 	}
-	PackedVector3Array src_normals = arrays[Mesh::ARRAY_NORMAL];
-	const PackedVector2Array src_uvs = arrays[Mesh::ARRAY_TEX_UV];
-	PackedInt32Array src_indices = arrays[Mesh::ARRAY_INDEX];
+	if (!any_normals) {
+		src_normals.clear();
+	}
 
 	LocalVector<NvcVec3> positions;
 	LocalVector<NvcVec3> normals;
@@ -377,25 +429,9 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 	uvs.resize(verts.size());
 	for (int i = 0; i < verts.size(); i++) {
 		positions[i] = { verts[i].x, verts[i].y, verts[i].z };
-		// A placeholder if the mesh has none: Blast's cuts don't need correct normals, and the pieces get flat ones then.
-		const Vector3 n = (i < src_normals.size()) ? src_normals[i] : Vector3(0, 1, 0);
+		const Vector3 n = i < src_normals.size() ? src_normals[i] : Vector3(0, 1, 0);
 		normals[i] = { n.x, n.y, n.z };
-		const Vector2 uv = (i < src_uvs.size()) ? src_uvs[i] : Vector2();
-		uvs[i] = { uv.x, uv.y };
-	}
-
-	LocalVector<uint32_t> indices;
-	if (src_indices.size() >= 3) {
-		indices.resize(src_indices.size());
-		for (int i = 0; i < src_indices.size(); i++) {
-			indices[i] = (uint32_t)src_indices[i];
-		}
-	} else {
-		// Non-indexed mesh -- vertices are already one triangle list.
-		indices.resize(verts.size());
-		for (uint32_t i = 0; i < (uint32_t)verts.size(); i++) {
-			indices[i] = i;
-		}
+		uvs[i] = { src_uvs[i].x, src_uvs[i].y };
 	}
 
 	// Blast trusts its input: an index past the vertices was read out of bounds, a partial triangle crashed, and a
@@ -442,6 +478,8 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 	if (!raw_mesh) {
 		return _fail("PhysXBlastAuthoring: NvBlastExtAuthoringCreateMesh failed.");
 	}
+	// One facet per triangle, in order.
+	raw_mesh->setMaterialId(triangle_surfaces.ptr());
 
 	// FractureTool requires a closed (watertight), self-intersection-free,
 	// open-edge-free mesh (NvBlastExtAuthoringMeshCleaner.h) -- a Godot
@@ -625,26 +663,34 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 			Array chunk_points;
 			Array chunk_normals;
 			Array chunk_uvs;
+			Array chunk_surface_starts;
 			PackedInt32Array chunk_interior_starts;
 			chunk_points.resize(ares->chunkCount);
 			chunk_normals.resize(ares->chunkCount);
 			chunk_uvs.resize(ares->chunkCount);
+			chunk_surface_starts.resize(ares->chunkCount);
 			chunk_interior_starts.resize(ares->chunkCount);
 			CutFaceUVs cut_face_uvs;
 			for (uint32_t c = 0; c < ares->chunkCount; c++) {
 				PackedVector3Array points;
 				PackedVector3Array vertex_normals;
 				PackedVector2Array vertex_uvs;
+				PackedInt32Array surface_starts;
+				surface_starts.resize(surface_count);
 				const uint32_t begin = ares->geometryOffset[c];
 				const uint32_t end = ares->geometryOffset[c + 1];
-				// The source mesh's faces, then the cut ones.
-				for (int interior = 0; interior < 2; interior++) {
-					if (interior == 1) {
+				// Each source surface's faces in turn, then the cut ones (slot surface_count).
+				for (int slot = 0; slot <= surface_count; slot++) {
+					const bool interior = slot == surface_count;
+					if (interior) {
 						chunk_interior_starts.write[c] = points.size();
+					} else {
+						surface_starts.write[slot] = points.size();
 					}
 					for (uint32_t t = begin; t < end; t++) {
 						const Nv::Blast::Triangle &tri = ares->geometry[t];
-						if ((tri.materialId == (int32_t)Nv::Blast::kMaterialInteriorId) != (interior == 1)) {
+						const int tri_slot = tri.materialId == (int32_t)Nv::Blast::kMaterialInteriorId ? surface_count : (tri.materialId >= 0 && tri.materialId < surface_count ? tri.materialId : 0);
+						if (tri_slot != slot) {
 							continue;
 						}
 						const Nv::Blast::Vertex *corners[3] = { &tri.a, &tri.b, &tri.c };
@@ -657,7 +703,7 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 						face_normal = face_normal.is_zero_approx() ? Vector3(0, 1, 0) : face_normal.normalized();
 						for (int v = 0; v < 3; v++) {
 							points.push_back(p[v]);
-							if (interior == 1) {
+							if (interior) {
 								vertex_normals.push_back(face_normal);
 								vertex_uvs.push_back(cut_face_uvs.uv(p[v], face_normal));
 							} else {
@@ -672,6 +718,7 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 				chunk_points[c] = points;
 				chunk_normals[c] = vertex_normals;
 				chunk_uvs[c] = vertex_uvs;
+				chunk_surface_starts[c] = surface_starts;
 			}
 
 			result.instantiate();
@@ -680,6 +727,8 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 			result->set_chunk_normals(chunk_normals);
 			result->set_chunk_uvs(chunk_uvs);
 			result->set_chunk_interior_starts(chunk_interior_starts);
+			result->set_chunk_surface_starts(chunk_surface_starts);
+			result->set_surface_materials(surface_materials);
 
 			NvBlastExtAuthoringReleaseAuthoringResult(collision_builder, ares);
 		}

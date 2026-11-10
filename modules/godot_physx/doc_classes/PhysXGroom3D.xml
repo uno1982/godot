@@ -6,8 +6,9 @@
 	<description>
 		Draws the strands of a [PhysXGroom], one of two ways (see [member render_mode]): as thin ribbons turned toward the camera, an ordinary mesh, or by the module's own compute passes with each strand's exact share of every pixel. Either way the hair casts and receives shadows and takes the scene's lights, and it shades itself with a hair model (see [member shading_model]) and the groom's baked self-shadowing (see [member self_shadow]). A light only stops at the head when its shadows are on.
 		At a distance it draws fewer strands, wider, so the hair keeps its look while it costs less: as many as keep it under about half a strand segment per pixel of its size on screen. [member GeometryInstance3D.lod_bias] keeps more of them (2.0: twice as many), and [member max_strands] caps them. Drawing every strand of a distant groom costs more, not less, than drawing it close up: all of them, a pixel wide each, pile onto the same few pixels.
-		[b]Anti-aliasing:[/b] with [constant RENDER_MODE_MESH], hair is made of edges thinner than a pixel: MSAA smooths it well, SMAA and FXAA do little for it. [constant RENDER_MODE_SCREEN_SPACE] needs none.
-		[b]Note:[/b] Strands don't move yet: the groom is drawn as imported, in this node's space.
+		[b]Anti-aliasing:[/b] with [constant RENDER_MODE_MESH], strands thinner than a pixel are dithered in a fine, even pattern, which any anti-aliasing smooths (TAA, SMAA, FXAA, or MSAA with SMAA). [constant RENDER_MODE_SCREEN_SPACE] needs none.
+		In a running game the strands move (see [member simulate]).
+		[b]Note:[/b] [member GeometryInstance3D.material_override], [member GeometryInstance3D.material_overlay] and [member GeometryInstance3D.transparency] aren't used (they're hidden): the hair's own shader is what draws each strand, and its look is this node's ([member root_color], [member tip_color], [member roughness], [member shading_model]). Set from a script, an override hides the hair, and transparency fades only Mesh hair, drawing it without depth (it sorts wrongly against other transparent things).
 	</description>
 	<tutorials>
 	</tutorials>

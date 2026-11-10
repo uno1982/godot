@@ -167,6 +167,17 @@ void PhysXGroom3D::free_shared() {
 	}
 }
 
+// GeometryInstance3D's material_override and material_overlay would replace or add to the hair's own shader, which
+// is what turns each strand into a ribbon: overridden, the hair isn't drawn at all, and an overlay draws nothing. Its
+// transparency fades Mesh hair only by moving it to the transparent pass (no depth: it sorts wrongly against other
+// transparent things and itself) and doesn't reach Screen Space hair at all. The hair's look is this node's own
+// (colors, roughness, shading model), so all three are left out of the inspector and scenes.
+void PhysXGroom3D::_validate_property(PropertyInfo &p_property) const {
+	if (p_property.name == "material_override" || p_property.name == "material_overlay" || p_property.name == "transparency") {
+		p_property.usage = PROPERTY_USAGE_NONE;
+	}
+}
+
 void PhysXGroom3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_groom", "groom"), &PhysXGroom3D::set_groom);
 	ClassDB::bind_method(D_METHOD("get_groom"), &PhysXGroom3D::get_groom);

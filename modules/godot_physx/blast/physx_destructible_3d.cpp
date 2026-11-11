@@ -595,7 +595,7 @@ void PhysXDestructible3D::_notification(int p_what) {
 						// t.basis is a pure rotation here (see spawn_scale's own
 						// note) -- re-apply the real scale in the object's own
 						// local axes before this goes anywhere, or it's lost.
-						t.basis = t.basis.scaled_local(spawn_scale);
+						t.basis = t.basis.orthonormalized().scaled_local(spawn_scale);
 						set_global_transform(t);
 						RenderingServer::get_singleton()->instance_set_transform(pieces[0].instance, t);
 						_check_impact_fracture();
@@ -1397,10 +1397,12 @@ void PhysXDestructible3D::_sync_transforms() {
 				shrink = (real_t)(left / piece_shrink_time);
 			}
 		}
-		// t.basis is a pure rotation (see spawn_scale's own note) -- every
-		// piece was authored from the same intact mesh at the same original
-		// scale, so the same spawn_scale applies to all of them here too.
-		t.basis = t.basis.scaled_local(spawn_scale);
+		// Every piece was authored from the same intact mesh at the same
+		// original scale, so the same spawn_scale applies to all of them. A
+		// moving body's transform comes from PhysX without scale, but a static
+		// one (a chipped remainder) keeps the scaled transform it was spawned
+		// with: drop that first, or the scale is applied twice.
+		t.basis = t.basis.orthonormalized().scaled_local(spawn_scale);
 		if (shrink < 1.0) {
 			if (!piece.shrinking) {
 				// On its way out: stop it simulating and colliding (it would

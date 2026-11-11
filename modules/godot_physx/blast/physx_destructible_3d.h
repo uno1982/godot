@@ -430,6 +430,8 @@ private:
 	// split cost ~5 ms per chip on a ~190-chunk wall. Freed with the asset.
 	LocalVector<RID> chunk_shapes;
 	RID _chunk_shape(uint32_t p_chunk);
+	// The asset's pre-cooked hulls, aligned with chunk_points, when this build can load them; else empty.
+	LocalVector<PackedByteArray> chunk_hulls;
 	// Per-chunk render data, by material slot, computed once per load. A
 	// piece's mesh gets ONE surface per slot (not per chunk: an island of
 	// ~190 chunks was ~190 draw calls). Slot s < interior_slot holds source

@@ -33,6 +33,7 @@
 #include "core/config/engine.h"
 #include "core/io/file_access.h"
 #include "core/math/triangle_mesh.h"
+#include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
 #include "core/templates/hash_set.h"
 #include "scene/resources/3d/world_3d.h"
@@ -266,7 +267,15 @@ void PhysXDestructible3D::set_chunks_path(const String &p_path) {
 }
 
 void PhysXDestructible3D::set_blast_asset(const Ref<PhysXBlastAsset> &p_asset) {
+	// The hull warning follows the asset (Cook Hulls changes it).
+	const Callable warnings = callable_mp((Node *)this, &Node::update_configuration_warnings);
+	if (blast_asset.is_valid() && blast_asset->is_connected(CoreStringName(changed), warnings)) {
+		blast_asset->disconnect(CoreStringName(changed), warnings);
+	}
 	blast_asset = p_asset;
+	if (blast_asset.is_valid()) {
+		blast_asset->connect(CoreStringName(changed), warnings);
+	}
 	update_configuration_warnings();
 	_reload();
 }
@@ -464,6 +473,18 @@ PackedStringArray PhysXDestructible3D::get_configuration_warnings() const {
 	if (blast_asset.is_null() && (asset_path.is_empty() || chunks_path.is_empty())) {
 		warnings.push_back("PhysXDestructible3D needs either blast_asset, or both asset_path and chunks_path, to render or collide.");
 	}
+	if (blast_asset.is_valid()) {
+		switch (blast_asset->get_hull_status()) {
+			case PhysXBlastAsset::HULLS_NONE:
+				warnings.push_back("The blast_asset has no pre-cooked collision hulls, so each piece's first break cooks its hull on the main thread. Select the asset and press Cook Hulls in the Inspector to store them.");
+				break;
+			case PhysXBlastAsset::HULLS_OUT_OF_DATE:
+				warnings.push_back(vformat("The blast_asset's collision hulls were cooked by %s, which this build can't load, so they're cooked at runtime instead. Select the asset and press Cook Hulls in the Inspector to cook them again.", blast_asset->get_hull_format().is_empty() ? String("another build") : blast_asset->get_hull_format()));
+				break;
+			case PhysXBlastAsset::HULLS_COOKED:
+				break;
+		}
+	}
 	return warnings;
 }
 
@@ -596,7 +617,6 @@ bool PhysXDestructible3D::_load_asset_bytes(const PackedByteArray &p_bytes) {
 	asset_chunk_count = NvBlastAssetGetChunkCount(asset, blast_log);
 	asset_bond_count = NvBlastAssetGetBondCount(asset, blast_log);
 
-
 	const size_t family_size = NvBlastAssetGetFamilyMemorySize(asset, blast_log);
 	family_mem = aligned_alloc_16(family_size);
 	ERR_FAIL_NULL_V(family_mem, false);
@@ -619,6 +639,7 @@ bool PhysXDestructible3D::_load_asset_bytes(const PackedByteArray &p_bytes) {
 }
 
 bool PhysXDestructible3D::_load() {
+	chunk_hulls.clear();
 	if (blast_asset.is_valid()) {
 		if (!_load_asset_bytes(blast_asset->get_asset_bytes())) {
 			return false;
@@ -627,6 +648,14 @@ bool PhysXDestructible3D::_load() {
 		chunk_points.resize(points.size());
 		for (int i = 0; i < points.size(); i++) {
 			chunk_points[i] = points[i];
+		}
+		// Hulls this build can load, or none: each is then cooked on its chunk's first break.
+		if (blast_asset->get_hull_status() == PhysXBlastAsset::HULLS_COOKED) {
+			const Array hulls = blast_asset->get_chunk_hulls();
+			chunk_hulls.resize(hulls.size());
+			for (int i = 0; i < hulls.size(); i++) {
+				chunk_hulls[i] = hulls[i];
+			}
 		}
 		_compute_chunk_volumes();
 		_compute_chunk_faces();
@@ -860,7 +889,15 @@ RID PhysXDestructible3D::_chunk_shape(uint32_t p_chunk) {
 	if (!chunk_shapes[p_chunk].is_valid()) {
 		PhysicsServer3D *ps = PhysicsServer3D::get_singleton();
 		chunk_shapes[p_chunk] = ps->convex_polygon_shape_create();
-		ps->shape_set_data(chunk_shapes[p_chunk], chunk_points[p_chunk]);
+		if (p_chunk < chunk_hulls.size() && !chunk_hulls[p_chunk].is_empty()) {
+			// Cooked with the asset: only loaded here.
+			Dictionary hull;
+			hull["points"] = chunk_points[p_chunk];
+			hull["cooked"] = chunk_hulls[p_chunk];
+			ps->shape_set_data(chunk_shapes[p_chunk], hull);
+		} else {
+			ps->shape_set_data(chunk_shapes[p_chunk], chunk_points[p_chunk]);
+		}
 	}
 	return chunk_shapes[p_chunk];
 }

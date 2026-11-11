@@ -84,6 +84,22 @@ public:
 	TypedArray<Material> get_surface_materials() const { return surface_materials; }
 	int get_surface_count() const { return MAX(1, (int)surface_materials.size()); }
 
+	// chunk_hulls[i] is a PackedByteArray: chunk i's collision hull, cooked from its points ahead of time, so a break
+	// doesn't cook it (empty where a chunk has too few points). hull_format says which PhysX build cooked them: a
+	// destructible cooks its hulls at runtime instead when this build can't load them, or when there are none.
+	enum HullStatus {
+		HULLS_NONE,
+		HULLS_COOKED,
+		HULLS_OUT_OF_DATE,
+	};
+	void set_chunk_hulls(const Array &p_hulls) { chunk_hulls = p_hulls; }
+	Array get_chunk_hulls() const { return chunk_hulls; }
+	void set_hull_format(const String &p_format) { hull_format = p_format; }
+	String get_hull_format() const { return hull_format; }
+	// Cooks every chunk's hull with this build and stores it (the pieces and how they break stay the same).
+	Error cook_hulls();
+	HullStatus get_hull_status() const;
+
 private:
 	PackedByteArray asset_bytes;
 	Array chunk_points;
@@ -92,4 +108,8 @@ private:
 	PackedInt32Array chunk_interior_starts;
 	Array chunk_surface_starts;
 	TypedArray<Material> surface_materials;
+	Array chunk_hulls;
+	String hull_format;
 };
+
+VARIANT_ENUM_CAST(PhysXBlastAsset::HullStatus);

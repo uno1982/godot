@@ -110,6 +110,15 @@ public:
 	bool set_data(const Variant &p_data);
 	Variant get_data() const { return data; }
 
+	// A convex hull cooked ahead of time, with the flags set_data() cooks points with. set_data() takes it back as
+	// {"points": the points, "cooked": the bytes} and loads it instead of cooking (the shape's data stays the points).
+	// Empty if cooking fails.
+	static PackedByteArray cook_convex(const Vector<Vector3> &p_points);
+	// What cook_convex() writes: the PhysX version, plus " gpu" when the hulls carry GPU data.
+	static String cooked_convex_format();
+	// Whether this build loads hulls in that format: the same PhysX version, and GPU data when GPU dynamics needs it.
+	static bool can_load_cooked_convex(const String &p_format);
+
 	void set_margin(real_t p_margin) { margin = p_margin; }
 	real_t get_margin() const { return margin; }
 

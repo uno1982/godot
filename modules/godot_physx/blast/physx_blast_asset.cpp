@@ -30,6 +30,8 @@
 
 #include "physx_blast_asset.h"
 
+#include "../shapes/godot_physx_shape_3d.h"
+
 #include "core/object/class_db.h"
 
 void PhysXBlastAsset::_bind_methods() {
@@ -56,4 +58,44 @@ void PhysXBlastAsset::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::PACKED_INT32_ARRAY, "chunk_interior_starts"), "set_chunk_interior_starts", "get_chunk_interior_starts");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "chunk_surface_starts"), "set_chunk_surface_starts", "get_chunk_surface_starts");
 	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "surface_materials", PROPERTY_HINT_ARRAY_TYPE, MAKE_RESOURCE_TYPE_HINT("Material")), "set_surface_materials", "get_surface_materials");
+
+	ClassDB::bind_method(D_METHOD("set_chunk_hulls", "hulls"), &PhysXBlastAsset::set_chunk_hulls);
+	ClassDB::bind_method(D_METHOD("get_chunk_hulls"), &PhysXBlastAsset::get_chunk_hulls);
+	ClassDB::bind_method(D_METHOD("set_hull_format", "format"), &PhysXBlastAsset::set_hull_format);
+	ClassDB::bind_method(D_METHOD("get_hull_format"), &PhysXBlastAsset::get_hull_format);
+	ClassDB::bind_method(D_METHOD("cook_hulls"), &PhysXBlastAsset::cook_hulls);
+	ClassDB::bind_method(D_METHOD("get_hull_status"), &PhysXBlastAsset::get_hull_status);
+	ADD_PROPERTY(PropertyInfo(Variant::ARRAY, "chunk_hulls", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR), "set_chunk_hulls", "get_chunk_hulls");
+	ADD_PROPERTY(PropertyInfo(Variant::STRING, "hull_format", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_READ_ONLY), "set_hull_format", "get_hull_format");
+
+	BIND_ENUM_CONSTANT(HULLS_NONE);
+	BIND_ENUM_CONSTANT(HULLS_COOKED);
+	BIND_ENUM_CONSTANT(HULLS_OUT_OF_DATE);
+}
+
+Error PhysXBlastAsset::cook_hulls() {
+	Array hulls;
+	hulls.resize(chunk_points.size());
+	int cooked = 0;
+	for (int c = 0; c < chunk_points.size(); c++) {
+		const PackedVector3Array points = chunk_points[c];
+		const PackedByteArray hull = GodotPhysXShape3D::cook_convex(points);
+		cooked += hull.is_empty() ? 0 : 1;
+		hulls[c] = hull;
+	}
+	ERR_FAIL_COND_V_MSG(!chunk_points.is_empty() && cooked == 0, FAILED, "PhysXBlastAsset: no chunk's hull could be cooked.");
+	chunk_hulls = hulls;
+	hull_format = GodotPhysXShape3D::cooked_convex_format();
+	emit_changed();
+	return OK;
+}
+
+PhysXBlastAsset::HullStatus PhysXBlastAsset::get_hull_status() const {
+	if (chunk_hulls.is_empty()) {
+		return HULLS_NONE;
+	}
+	if (chunk_hulls.size() != chunk_points.size() || !GodotPhysXShape3D::can_load_cooked_convex(hull_format)) {
+		return HULLS_OUT_OF_DATE;
+	}
+	return HULLS_COOKED;
 }

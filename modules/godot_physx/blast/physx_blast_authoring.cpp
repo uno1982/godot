@@ -746,5 +746,9 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 	if (mesh_cleaner) {
 		mesh_cleaner->release();
 	}
+	// Each chunk's hull, so breaking doesn't cook it. A hull that fails here is cooked at runtime instead, as before.
+	if (result.is_valid() && result->cook_hulls() != OK) {
+		last_warnings.push_back("The pieces' collision hulls couldn't be cooked ahead of time; they're cooked when the pieces first break off.");
+	}
 	return result;
 }

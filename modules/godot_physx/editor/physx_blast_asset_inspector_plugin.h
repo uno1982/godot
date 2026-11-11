@@ -32,7 +32,33 @@
 
 #ifdef GODOT_PHYSX_BLAST
 
+#include "../blast/physx_blast_asset.h"
+
 #include "editor/inspector/editor_inspector.h"
+#include "scene/gui/box_container.h"
+
+class Button;
+class Label;
+
+// The asset's collision hulls: whether they're cooked for this build, and a Cook Hulls button (undoable) that stores
+// them without fracturing again.
+class PhysXBlastHullControl : public VBoxContainer {
+	GDCLASS(PhysXBlastHullControl, VBoxContainer);
+
+	Ref<PhysXBlastAsset> asset;
+	Label *status = nullptr;
+	Button *cook = nullptr;
+
+	void _update();
+	void _cook();
+
+protected:
+	void _notification(int p_what);
+
+public:
+	void edit(const Ref<PhysXBlastAsset> &p_asset);
+	PhysXBlastHullControl();
+};
 
 // Gives a PhysXBlastAsset the same live-rotate mesh preview a plain Mesh
 // resource gets (EditorInspectorPluginMesh/MeshEditor) -- otherwise its

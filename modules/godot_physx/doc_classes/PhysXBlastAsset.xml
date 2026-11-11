@@ -9,10 +9,22 @@
 	<tutorials>
 	</tutorials>
 	<methods>
+		<method name="cook_hulls">
+			<return type="int" enum="Error" />
+			<description>
+				Cooks every chunk's collision hull with this build and stores it in [member chunk_hulls], with [member hull_format]. The pieces and how they break stay the same. Fracturing already does this; use it for an asset fractured before hulls were stored, or whose hulls are out of date (see [method get_hull_status]). The asset's Inspector has a [b]Cook Hulls[/b] button that does the same. Returns [constant FAILED] if no hull could be cooked.
+			</description>
+		</method>
 		<method name="get_chunk_count" qualifiers="const">
 			<return type="int" />
 			<description>
 				Returns how many chunks this asset has, including chunk [code]0[/code] (the whole unfractured mesh) -- so this is always one more than the number of pieces a full fracture actually produces.
+			</description>
+		</method>
+		<method name="get_hull_status" qualifiers="const">
+			<return type="int" enum="PhysXBlastAsset.HullStatus" />
+			<description>
+				Whether this build can use the stored hulls: [constant HULLS_COOKED] if so, [constant HULLS_NONE] if there are none, [constant HULLS_OUT_OF_DATE] if they were cooked by another PhysX version (or without the GPU data a GPU build needs), or don't match the chunks. Without usable hulls, a [PhysXDestructible3D] cooks each chunk's hull when it first breaks off, as before; it shows a warning in the editor until they're cooked.
 			</description>
 		</method>
 	</methods>
@@ -20,11 +32,11 @@
 		<member name="asset_bytes" type="PackedByteArray" setter="set_asset_bytes" getter="get_asset_bytes" default="PackedByteArray()">
 			The raw NvBlast asset data (bond/chunk support-graph structure) -- a single relocatable memory block per NvBlast's own design, stored here as-is. Not meaningful to edit by hand.
 		</member>
+		<member name="chunk_hulls" type="Array" setter="set_chunk_hulls" getter="get_chunk_hulls" default="[]">
+			Each chunk's collision hull, cooked ahead of time from its [member chunk_points]: one [PackedByteArray] per chunk, empty where a chunk had too few points to cook. A break only loads these, where it would otherwise cook each hull on the main thread (for example 41 ms down to 12 ms for eight 13-chunk spheres broken at once). They add roughly 6-35% to a text asset's size. Empty in an asset fractured before these were kept; see [method cook_hulls]. Not meaningful to edit by hand.
+		</member>
 		<member name="chunk_interior_starts" type="PackedInt32Array" setter="set_chunk_interior_starts" getter="get_chunk_interior_starts" default="PackedInt32Array()">
 			For each chunk, the index in its [member chunk_points] where its interior (cut) faces start. The faces of the source mesh come first. Not meaningful to edit by hand.
-		</member>
-		<member name="chunk_surface_starts" type="Array" setter="set_chunk_surface_starts" getter="get_chunk_surface_starts" default="[]">
-			For each chunk, a [PackedInt32Array] with one entry per source surface: the index in its [member chunk_points] where that surface's faces start, in surface order, before the interior faces (see [member chunk_interior_starts]). Empty in an asset fractured before every surface was kept, where all the source faces are the first surface's. Not meaningful to edit by hand.
 		</member>
 		<member name="chunk_normals" type="Array" setter="set_chunk_normals" getter="get_chunk_normals" default="[]">
 			Per-chunk vertex normals, one [PackedVector3Array] per chunk, aligned with [member chunk_points]. Empty in an asset fractured before these were kept: fracture the mesh again to get them. Not meaningful to edit by hand.
@@ -32,11 +44,28 @@
 		<member name="chunk_points" type="Array" setter="set_chunk_points" getter="get_chunk_points" default="[]">
 			Per-chunk render-mesh triangle-soup positions, in the source mesh's local space -- one [PackedVector3Array] per chunk, index-matched to [member asset_bytes]' own chunk indices. Not meaningful to edit by hand.
 		</member>
+		<member name="chunk_surface_starts" type="Array" setter="set_chunk_surface_starts" getter="get_chunk_surface_starts" default="[]">
+			For each chunk, a [PackedInt32Array] with one entry per source surface: the index in its [member chunk_points] where that surface's faces start, in surface order, before the interior faces (see [member chunk_interior_starts]). Empty in an asset fractured before every surface was kept, where all the source faces are the first surface's. Not meaningful to edit by hand.
+		</member>
 		<member name="chunk_uvs" type="Array" setter="set_chunk_uvs" getter="get_chunk_uvs" default="[]">
 			Per-chunk vertex UVs, one [PackedVector2Array] per chunk, aligned with [member chunk_points]. Empty in an asset fractured before these were kept: fracture the mesh again to get them. Not meaningful to edit by hand.
+		</member>
+		<member name="hull_format" type="String" setter="set_hull_format" getter="get_hull_format" default="&quot;&quot;">
+			Which build cooked [member chunk_hulls]: the PhysX version, followed by [code]gpu[/code] when the hulls carry the data GPU dynamics needs (for example [code]PhysX 5.10.0 gpu[/code]). A GPU build uses only hulls with that data; a CPU build uses either.
 		</member>
 		<member name="surface_materials" type="Material[]" setter="set_surface_materials" getter="get_surface_materials" default="[]">
 			The source mesh's material for each of its surfaces, [code]null[/code] where a surface had none. A [PhysXDestructible3D] draws each surface's faces with its material, and the cut faces with the first one unless [member PhysXDestructible3D.interior_material] is set. [member PhysXDestructible3D.material_override] replaces them all. The [b]Fracture with Blast[/b] dialog stores the [MeshInstance3D]'s surface override materials here where it has them. Empty in an asset fractured before these were kept.
 		</member>
 	</members>
+	<constants>
+		<constant name="HULLS_NONE" value="0" enum="HullStatus">
+			The asset has no stored hulls.
+		</constant>
+		<constant name="HULLS_COOKED" value="1" enum="HullStatus">
+			The stored hulls are usable by this build.
+		</constant>
+		<constant name="HULLS_OUT_OF_DATE" value="2" enum="HullStatus">
+			The stored hulls can't be used by this build (another PhysX version, missing GPU data, or not one per chunk); they're cooked at runtime instead.
+		</constant>
+	</constants>
 </class>

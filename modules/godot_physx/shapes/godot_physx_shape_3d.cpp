@@ -39,7 +39,9 @@
 
 #include <PxPhysicsAPI.h>
 #include <cooking/PxCooking.h>
+#include <extensions/PxDefaultStreams.h>
 #include <float.h>
+#include <foundation/PxPhysicsVersion.h>
 #include <geometry/PxHeightField.h>
 #include <geometry/PxHeightFieldDesc.h>
 #include <geometry/PxHeightFieldSample.h>
@@ -98,6 +100,60 @@ void GodotPhysXShape3D::_release_meshes() {
 		height_field->release();
 		height_field = nullptr;
 	}
+}
+
+// The cooking input for a convex hull from points, the same whether it's cooked now or ahead of time.
+static void _convex_cooking_input(const Vector<Vector3> &p_points, LocalVector<PxVec3> &r_px_points, PxConvexMeshDesc &r_desc, PxCookingParams &r_params) {
+	r_px_points.resize(p_points.size());
+	for (int i = 0; i < p_points.size(); i++) {
+		r_px_points[i] = to_px(p_points[i]);
+	}
+	r_desc.points.count = r_px_points.size();
+	r_desc.points.stride = sizeof(PxVec3);
+	r_desc.points.data = r_px_points.ptr();
+	r_desc.flags = PxConvexFlag::eCOMPUTE_CONVEX | PxConvexFlag::eDISABLE_MESH_VALIDATION | PxConvexFlag::eFAST_INERTIA_COMPUTATION;
+#ifdef GODOT_PHYSX_GPU
+	r_params.buildGPUData = true; // required for GPU dynamics to collide against the mesh
+#endif
+}
+
+PackedByteArray GodotPhysXShape3D::cook_convex(const Vector<Vector3> &p_points) {
+	PxPhysics *physics = GodotPhysXServer3D::get_singleton() ? GodotPhysXServer3D::get_singleton()->get_px_physics() : nullptr;
+	ERR_FAIL_NULL_V(physics, PackedByteArray());
+	if (p_points.size() < 4) {
+		return PackedByteArray();
+	}
+	LocalVector<PxVec3> px_points;
+	PxConvexMeshDesc desc;
+	PxCookingParams params(physics->getTolerancesScale());
+	_convex_cooking_input(p_points, px_points, desc, params);
+	PxDefaultMemoryOutputStream output;
+	if (!PxCookConvexMesh(params, desc, output)) {
+		return PackedByteArray();
+	}
+	PackedByteArray bytes;
+	bytes.resize(output.getSize());
+	memcpy(bytes.ptrw(), output.getData(), output.getSize());
+	return bytes;
+}
+
+String GodotPhysXShape3D::cooked_convex_format() {
+#ifdef GODOT_PHYSX_GPU
+	const char *gpu = " gpu";
+#else
+	const char *gpu = "";
+#endif
+	return vformat("PhysX %d.%d.%d%s", PX_PHYSICS_VERSION_MAJOR, PX_PHYSICS_VERSION_MINOR, PX_PHYSICS_VERSION_BUGFIX, gpu);
+}
+
+bool GodotPhysXShape3D::can_load_cooked_convex(const String &p_format) {
+	const String version = vformat("PhysX %d.%d.%d", PX_PHYSICS_VERSION_MAJOR, PX_PHYSICS_VERSION_MINOR, PX_PHYSICS_VERSION_BUGFIX);
+#ifdef GODOT_PHYSX_GPU
+	return p_format == version + " gpu";
+#else
+	// Hulls with GPU data work without it too.
+	return p_format == version || p_format == version + " gpu";
+#endif
 }
 
 int GodotPhysXShape3D::source_face_index(uint32_t p_cooked_index, bool &r_back) const {
@@ -172,31 +228,36 @@ bool GodotPhysXShape3D::set_data(const Variant &p_data) {
 		} break;
 
 		case PhysicsServer3D::SHAPE_CONVEX_POLYGON: {
-			const Vector<Vector3> points = p_data;
+			// Points, or {"points", "cooked"} from cook_convex().
+			Vector<Vector3> points;
+			PackedByteArray cooked;
+			if (p_data.get_type() == Variant::DICTIONARY) {
+				const Dictionary d = p_data;
+				points = d.get("points", Vector<Vector3>());
+				cooked = d.get("cooked", PackedByteArray());
+				data = points;
+			} else {
+				points = p_data;
+			}
 			ERR_FAIL_COND_V(points.size() < 4, true);
 			PxPhysics *physics = GodotPhysXServer3D::get_singleton() ? GodotPhysXServer3D::get_singleton()->get_px_physics() : nullptr;
 			ERR_FAIL_NULL_V(physics, true);
 
-			LocalVector<PxVec3> px_points;
-			px_points.resize(points.size());
-			for (int i = 0; i < points.size(); i++) {
-				px_points[i] = to_px(points[i]);
-			}
-
-			PxConvexMeshDesc desc;
-			desc.points.count = px_points.size();
-			desc.points.stride = sizeof(PxVec3);
-			desc.points.data = px_points.ptr();
-			desc.flags = PxConvexFlag::eCOMPUTE_CONVEX | PxConvexFlag::eDISABLE_MESH_VALIDATION | PxConvexFlag::eFAST_INERTIA_COMPUTATION;
-
-			PxCookingParams params(physics->getTolerancesScale());
-#ifdef GODOT_PHYSX_GPU
-			params.buildGPUData = true; // required for GPU dynamics to collide against the mesh
-#endif
 			_release_meshes();
-			PxConvexMeshCookingResult::Enum cvx_result = PxConvexMeshCookingResult::eSUCCESS;
-			convex_mesh = PxCreateConvexMesh(params, desc, *PxGetStandaloneInsertionCallback(), &cvx_result);
-			ERR_FAIL_NULL_V_MSG(convex_mesh, true, vformat("PhysX: convex hull cooking failed (result %d).", (int)cvx_result));
+			if (!cooked.is_empty()) {
+				// PhysX checks the stream's own header and refuses one it can't read: then the points are cooked.
+				PxDefaultMemoryInputData input(const_cast<PxU8 *>(cooked.ptr()), cooked.size());
+				convex_mesh = physics->createConvexMesh(input);
+			}
+			if (!convex_mesh) {
+				LocalVector<PxVec3> px_points;
+				PxConvexMeshDesc desc;
+				PxCookingParams params(physics->getTolerancesScale());
+				_convex_cooking_input(points, px_points, desc, params);
+				PxConvexMeshCookingResult::Enum cvx_result = PxConvexMeshCookingResult::eSUCCESS;
+				convex_mesh = PxCreateConvexMesh(params, desc, *PxGetStandaloneInsertionCallback(), &cvx_result);
+				ERR_FAIL_NULL_V_MSG(convex_mesh, true, vformat("PhysX: convex hull cooking failed (result %d).", (int)cvx_result));
+			}
 			geom.type = PxGeometryType::eCONVEXMESH;
 			geom.convex = PxConvexMeshGeometry(convex_mesh);
 			geom_valid = true;

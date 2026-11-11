@@ -15,13 +15,14 @@
 			<param index="0" name="mesh" type="Mesh" />
 			<param index="1" name="site_count" type="int" />
 			<param index="2" name="seed" type="int" />
-			<param index="3" name="pattern" type="int" default="0" />
+			<param index="3" name="pattern" type="int" enum="PhysXBlastAuthoring.FracturePattern" default="0" />
 			<param index="4" name="cutout_pattern" type="Texture2D" default="null" />
 			<description>
 				Fractures [param mesh] and returns the finished [PhysXBlastAsset], or a null reference on failure: a null mesh; a surface whose indices aren't whole triangles or point past its vertices, or a NaN or infinite vertex; a mesh with no volume (flat, or collapsed to a point); a mesh whose triangles don't form a closed watertight surface after the automatic cleanup pass; or [constant PATTERN_CUTOUT] without a usable [param cutout_pattern]. [method get_last_error] says which. Every triangle surface of [param mesh] is fractured together, each piece keeping which surface its faces came from and the asset keeping each surface's material (a surface that isn't a triangle list is left out, with a warning).
 				A mesh that is already closed (every edge shared by two triangles) skips the cleanup pass. If the cleanup returns nothing or reshapes the mesh beyond its bounds, the mesh is fractured as it was; if it only drops loose parts that weren't a closed solid, the cleaned mesh is used. An inside-out mesh (its triangles facing inward) is fractured with its triangles flipped, so the pieces face outward. Each of these warns (see [method get_last_warnings]).
 				[param site_count] is the cell/slice count: for [constant PATTERN_VORONOI] it is the number of random cells the mesh is split into; for [constant PATTERN_SLICING] it is cut into roughly that many brick-like pieces on the longest axis; it is ignored for [constant PATTERN_CUTOUT] (the pattern texture alone defines the pieces). [param seed] makes [constant PATTERN_VORONOI] reproducible -- the same mesh, count and seed always produce the same asset.
 				Note the mesh is authored as-is: a source [MeshInstance3D]'s node transform (including scale) is not baked in.
+				Each piece's collision hull is cooked here and stored in the asset (see [member PhysXBlastAsset.chunk_hulls]), so breaking doesn't cook it.
 			</description>
 		</method>
 		<method name="get_last_error" qualifiers="const">

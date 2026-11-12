@@ -327,8 +327,10 @@
 	</members>
 	<constants>
 		<constant name="CENTER_OF_MASS_MODE_AUTO" value="0" enum="CenterOfMassMode">
+			The center of mass is the position of the chassis [CollisionShape3D] child.
 		</constant>
 		<constant name="CENTER_OF_MASS_MODE_CUSTOM" value="1" enum="CenterOfMassMode">
+			The center of mass is [member center_of_mass].
 		</constant>
 		<constant name="DIFFERENTIAL_OPEN" value="0" enum="Differential">
 			The engine's torque is split evenly between the traction wheels, whatever each one does: a wheel on ice spins and the others get no more.

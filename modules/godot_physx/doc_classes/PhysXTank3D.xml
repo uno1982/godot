@@ -207,8 +207,10 @@
 	</members>
 	<constants>
 		<constant name="CENTER_OF_MASS_MODE_AUTO" value="0" enum="CenterOfMassMode">
+			The center of mass is the position of the hull [CollisionShape3D] child.
 		</constant>
 		<constant name="CENTER_OF_MASS_MODE_CUSTOM" value="1" enum="CenterOfMassMode">
+			The center of mass is [member center_of_mass].
 		</constant>
 	</constants>
 </class>

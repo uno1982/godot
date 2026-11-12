@@ -24,10 +24,24 @@
 				Each newly detached piece gets a real outward velocity -- radial direction from [param world_position] to that piece's own centroid, scaled by [member shatter_speed] and the same distance falloff the damage itself used, plus a slight upward bias.
 			</description>
 		</method>
-		<method name="get_piece_count">
+		<method name="get_piece_chunk" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="index" type="int" />
+			<description>
+				Returns which chunk of [member blast_asset] the live piece at [param index] ([code]0[/code] to [method get_piece_count] minus one) is. A piece that is several chunks still held together gives its lowest chunk. Returns [code]4294967295[/code] for an index out of range.
+			</description>
+		</method>
+		<method name="get_piece_count" qualifiers="const">
 			<return type="int" />
 			<description>
 				Returns how many pieces are live right now: [code]1[/code] while intact (the chunk-0 placeholder), then one per still-simulating piece, dropping as debris passes [member kill_y] or reaches its [member piece_lifetime]. A chunk's piece is always freed before that chunk can be spawned again (e.g. when a still-bonded group's later split re-emits chunks that were already live), so this never exceeds the asset's visible chunk count no matter how many times it fractures.
+			</description>
+		</method>
+		<method name="get_piece_transform" qualifiers="const">
+			<return type="Transform3D" />
+			<param index="0" name="index" type="int" />
+			<description>
+				Returns where the live piece at [param index] ([code]0[/code] to [method get_piece_count] minus one) is in the world right now, as the physics simulates it, with the node's scale. Index [code]0[/code] is the intact object until it breaks. Returns [constant Transform3D.IDENTITY] for an index out of range or a piece that has already been removed.
 			</description>
 		</method>
 		<method name="is_fractured" qualifiers="const">

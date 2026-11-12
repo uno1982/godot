@@ -353,8 +353,10 @@
 	</members>
 	<constants>
 		<constant name="CENTER_OF_MASS_MODE_AUTO" value="0" enum="CenterOfMassMode">
+			The center of mass is the position of the chassis [CollisionShape3D] child.
 		</constant>
 		<constant name="CENTER_OF_MASS_MODE_CUSTOM" value="1" enum="CenterOfMassMode">
+			The center of mass is [member center_of_mass].
 		</constant>
 		<constant name="DRIVETRAIN_DIRECT" value="0" enum="Drivetrain">
 			Throttle is wheel torque, up to [member max_engine_torque], forward or in reverse.

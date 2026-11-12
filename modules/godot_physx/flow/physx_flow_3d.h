@@ -267,8 +267,8 @@ public:
 	int get_scattering_shadow_steps() const { return scattering_shadow_steps; }
 	void set_scattering_shadow_reach(float p_v) { scattering_shadow_reach = MAX(p_v, 0.05f); }
 	float get_scattering_shadow_reach() const { return scattering_shadow_reach; }
-	void set_scattering_receive_shadows(uint32_t p_flags) { scattering_receive_shadows = p_flags & (SCATTERING_SHADOW_OMNI | SCATTERING_SHADOW_SPOT); }
-	uint32_t get_scattering_receive_shadows() const { return scattering_receive_shadows; }
+	void set_scattering_receive_shadows(BitField<ScatteringShadowFlags> p_flags) { scattering_receive_shadows = uint32_t(p_flags) & (SCATTERING_SHADOW_OMNI | SCATTERING_SHADOW_SPOT); }
+	BitField<ScatteringShadowFlags> get_scattering_receive_shadows() const { return BitField<ScatteringShadowFlags>(scattering_receive_shadows); }
 	void set_scattering_resolution(ScatteringResolution p_v) { scattering_resolution = p_v; }
 	ScatteringResolution get_scattering_resolution() const { return scattering_resolution; }
 

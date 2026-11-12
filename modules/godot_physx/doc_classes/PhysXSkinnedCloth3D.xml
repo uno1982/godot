@@ -138,6 +138,7 @@
 		<member name="pin_height" type="float" setter="set_pin_height" getter="get_pin_height" default="1.3">
 			Automatic painting: vertices at or above this height in the mesh's bind pose (meters) follow the animation exactly.
 		</member>
+		<member name="process_priority" type="int" setter="set_process_priority" getter="get_process_priority" overrides="Node" default="100" />
 		<member name="render_material" type="ShaderMaterial" setter="set_render_material" getter="get_render_material">
 			Draws the cloth with your own [ShaderMaterial] instead of the built-in look. Its shader must place the vertices from the simulation itself, from these inputs, which the cloth sets on the material:
 			- [code]CUSTOM0.x[/code]: the particle the vertex is drawn from;

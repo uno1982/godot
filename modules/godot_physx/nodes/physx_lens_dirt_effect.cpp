@@ -85,7 +85,7 @@ void main() {
 	imageStore(dst, px, vec4(bright, 1.0));
 }
 )",
-	// PASS_DOWN: half the size, a blur on the way (dual filtering: the centre and four diagonal taps).
+	// PASS_DOWN: half the size, a blur on the way (dual filtering: the center and four diagonal taps).
 	R"(
 #[compute]
 #version 450

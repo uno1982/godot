@@ -55,6 +55,7 @@
 #include "scene/gui/option_button.h"
 #include "scene/gui/slider.h"
 #include "scene/gui/spin_box.h"
+#include "scene/gui/texture_rect.h"
 #include "scene/resources/mesh.h"
 #include "scene/resources/texture.h"
 #include "scene/scene_string_names.h"
@@ -89,14 +90,74 @@ void PhysXBlastFractureDialog::_regenerate() {
 		cutout_pattern = cutout_pattern_picker->get_edited_resource();
 	}
 
+	// In the background: a large mesh takes seconds, and the editor keeps running meanwhile. A fracture still running
+	// (a new pattern picked, Regenerate pressed) is dropped for this one.
+	_cancel_running();
+	authored_asset.unref();
 	Ref<PhysXBlastAuthoring> authoring;
 	authoring.instantiate();
-	authored_asset = authoring->fracture_mesh(source_mesh, site_count, seed, pattern, cutout_pattern);
+	running_task = authoring->fracture_mesh_async(source_mesh, site_count, seed, pattern, cutout_pattern);
+	running_task->connect(SNAME("stage_changed"), callable_mp(this, &PhysXBlastFractureDialog::_on_stage).bind(running_task));
+	running_task->connect(SNAME("finished"), callable_mp(this, &PhysXBlastFractureDialog::_on_finished).bind(running_task));
+	_show_status(String(), Color());
+	_set_running(true);
+	if (chunk_count_label) {
+		chunk_count_label->set_text(TTR("Starting..."));
+	}
+}
+
+void PhysXBlastFractureDialog::_set_running(bool p_running) {
+	spinner->set_visible(p_running);
+	stop_button->set_visible(p_running);
+	spinner_time = 0.0;
+	set_process_internal(p_running);
+	if (p_running) {
+		get_ok_button()->set_disabled(true);
+		if (preview) {
+			preview->set_visible(false);
+		}
+		explode_row->set_visible(false);
+	}
+}
+
+void PhysXBlastFractureDialog::_cancel_running() {
+	if (running_task.is_valid()) {
+		// Its finished signal still comes, once Blast is through the stage it's on: _on_finished() ignores it.
+		running_task->cancel();
+		running_task.unref();
+	}
+	_set_running(false);
+}
+
+void PhysXBlastFractureDialog::_on_stop() {
+	_cancel_running();
+	if (chunk_count_label) {
+		chunk_count_label->set_text(TTR("Stopped"));
+	}
+	_show_status(TTR("Press Regenerate to fracture again."), get_theme_color(SNAME("font_color"), EditorStringName(Editor)));
+}
+
+void PhysXBlastFractureDialog::_on_stage(int p_stage, int p_stage_count, const String &p_description, const Ref<PhysXBlastFractureTask> &p_task) {
+	if (p_task != running_task || !chunk_count_label) {
+		return;
+	}
+	chunk_count_label->set_text(vformat(TTR("Stage %d of %d: %s"), p_stage, p_stage_count, p_description));
+}
+
+void PhysXBlastFractureDialog::_on_finished(const Ref<PhysXBlastAsset> &p_asset, const Ref<PhysXBlastFractureTask> &p_task) {
+	if (p_task != running_task) {
+		return; // dropped for a newer one, or stopped
+	}
+	running_task.unref();
+	_set_running(false);
+	authored_asset = p_asset;
+	const int pattern_id = pattern_option ? pattern_option->get_selected_id() : 0;
+	const bool cutout = pattern_id == 2;
 
 	if (authored_asset.is_null()) {
 		// Why, in the dialog itself (it was only in the Output panel), and no preview of the last good result.
-		String reason = authoring->get_last_error();
-		if (pattern == PhysXBlastAuthoring::PATTERN_CUTOUT && cutout_pattern.is_null()) {
+		String reason = p_task->get_last_error();
+		if (cutout && (!cutout_pattern_picker || cutout_pattern_picker->get_edited_resource().is_null())) {
 			reason = TTR("Cutout needs a pattern texture -- pick one above.");
 		} else if (reason.is_empty()) {
 			reason = TTR("Check the mesh has real geometry.");
@@ -119,7 +180,7 @@ void PhysXBlastFractureDialog::_regenerate() {
 		chunk_count_label->set_text(vformat(TTR("%d pieces"), piece_count));
 	}
 	// Fractured, but with something worth knowing (the mesh cleaner dropped loose parts, ...).
-	const PackedStringArray warnings = authoring->get_last_warnings();
+	const PackedStringArray warnings = p_task->get_last_warnings();
 	_show_status(String("\n").join(warnings), get_theme_color(SNAME("warning_color"), EditorStringName(Editor)));
 
 	if (preview) {
@@ -271,6 +332,19 @@ PhysXBlastFractureDialog::PhysXBlastFractureDialog() {
 	regenerate_button->connect(SceneStringName(pressed), callable_mp(this, &PhysXBlastFractureDialog::_regenerate));
 	controls->add_child(regenerate_button);
 
+	stop_button = memnew(Button);
+	stop_button->set_text(TTR("Stop"));
+	stop_button->set_tooltip_text(TTR("Stops the fracture once the stage it's on ends (Blast can't stop partway through one)."));
+	stop_button->connect(SceneStringName(pressed), callable_mp(this, &PhysXBlastFractureDialog::_on_stop));
+	stop_button->set_visible(false);
+	controls->add_child(stop_button);
+
+	spinner = memnew(TextureRect);
+	spinner->set_stretch_mode(TextureRect::STRETCH_KEEP_CENTERED);
+	spinner->set_v_size_flags(Control::SIZE_SHRINK_CENTER);
+	spinner->set_visible(false);
+	controls->add_child(spinner);
+
 	chunk_count_label = memnew(Label);
 	chunk_count_label->set_h_size_flags(Control::SIZE_EXPAND_FILL);
 	chunk_count_label->set_horizontal_alignment(HORIZONTAL_ALIGNMENT_RIGHT);
@@ -326,6 +400,22 @@ void PhysXBlastFractureDialog::_notification(int p_what) {
 		} break;
 		case NOTIFICATION_EXIT_TREE: {
 			disconnect(SceneStringName(confirmed), callable_mp(this, &PhysXBlastFractureDialog::_on_confirmed));
+			_cancel_running();
+		} break;
+		case NOTIFICATION_VISIBILITY_CHANGED: {
+			// Closed (Cancel, Accept can't be pressed while it runs) with a fracture still running: it's not wanted.
+			if (!is_visible()) {
+				_cancel_running();
+			}
+		} break;
+		case NOTIFICATION_INTERNAL_PROCESS: {
+			// The editor's own spinner frames, eight to the turn.
+			spinner_time += get_process_delta_time();
+			if (spinner_time >= 0.1 || spinner->get_texture().is_null()) {
+				spinner_time = 0.0;
+				spinner_frame = (spinner_frame + 1) % 8;
+				spinner->set_texture(get_editor_theme_icon(StringName(vformat("Progress%d", spinner_frame + 1))));
+			}
 		} break;
 	}
 }

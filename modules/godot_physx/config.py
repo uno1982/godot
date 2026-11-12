@@ -47,6 +47,7 @@ def get_doc_classes():
         "PhysXDestructible3D",
         "PhysXBlastAsset",
         "PhysXBlastAuthoring",
+        "PhysXBlastFractureTask",
         "PhysXFlow3D",
         "PhysXFlowEmitter3D",
         "PhysXFlowRenderEffect",

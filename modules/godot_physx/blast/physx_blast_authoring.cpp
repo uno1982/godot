@@ -31,8 +31,10 @@
 #include "physx_blast_authoring.h"
 
 #include "../godot_physx_server_3d.h"
+#include "../shapes/godot_physx_shape_3d.h"
 
 #include "core/io/image.h"
+#include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
 #include "core/templates/hash_map.h"
 #include "core/variant/typed_array.h"
@@ -52,7 +54,6 @@
 #include <NvBlastTypes.h>
 #include <PxPhysicsAPI.h>
 
-#include <cstdlib>
 #include <vector>
 
 // Deliberately NOT `using namespace Nv::Blast;` -- Nv::Blast::Mesh collides
@@ -153,10 +154,18 @@ private:
 	PxPhysics *physics;
 };
 
+// Each fracture's own sequence, so fractures on other threads can't take numbers from it. The same sequence as MSVC's
+// srand()/rand(), which this used before: a Windows build fractures exactly as it did, and every platform now does too
+// (glibc's rand() is another sequence).
 class GodotRandomGenerator : public Nv::Blast::RandomGeneratorBase {
+	uint32_t state = 1;
+
 public:
-	void seed(int32_t p_seed) override { std::srand((unsigned)p_seed); }
-	float getRandomValue() override { return (float)std::rand() / (float)RAND_MAX; }
+	void seed(int32_t p_seed) override { state = (uint32_t)p_seed; }
+	float getRandomValue() override {
+		state = state * 214013u + 2531011u;
+		return (float)((state >> 16) & 0x7fff) / 32767.0f;
+	}
 };
 
 // Pre-flight check for PATTERN_CUTOUT patterns, added after two different
@@ -321,8 +330,55 @@ public:
 
 } //namespace
 
+namespace {
+
+// Printed as before, and kept for get_last_error() / get_last_warnings() (the fracture dialog shows them).
+void fail(PhysXBlastFractureOutput &r_output, const String &p_message) {
+	ERR_PRINT(p_message);
+	r_output.error = p_message.trim_prefix("PhysXBlastAuthoring: ");
+}
+
+void warn(PhysXBlastFractureOutput &r_output, const String &p_message) {
+	WARN_PRINT(p_message);
+	r_output.warnings.push_back(p_message.trim_prefix("PhysXBlastAuthoring: "));
+}
+
+// The Blast objects one fracture makes, released however it ends, in this order.
+struct BlastObjects {
+	Nv::Blast::Mesh *raw_mesh = nullptr;
+	Nv::Blast::MeshCleaner *mesh_cleaner = nullptr;
+	Nv::Blast::Mesh *cleaned_mesh = nullptr;
+	Nv::Blast::FractureTool *fracture_tool = nullptr;
+	Nv::Blast::VoronoiSitesGenerator *sites_gen = nullptr;
+	Nv::Blast::BlastBondGenerator *bond_gen = nullptr;
+
+	~BlastObjects() {
+		if (bond_gen) {
+			bond_gen->release();
+		}
+		if (sites_gen) {
+			sites_gen->release();
+		}
+		if (fracture_tool) {
+			fracture_tool->release();
+		}
+		if (cleaned_mesh) {
+			cleaned_mesh->release();
+		}
+		if (raw_mesh) {
+			raw_mesh->release();
+		}
+		if (mesh_cleaner) {
+			mesh_cleaner->release();
+		}
+	}
+};
+
+} //namespace
+
 void PhysXBlastAuthoring::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("fracture_mesh", "mesh", "site_count", "seed", "pattern", "cutout_pattern"), &PhysXBlastAuthoring::fracture_mesh, DEFVAL(PATTERN_VORONOI), DEFVAL(Ref<Texture2D>()));
+	ClassDB::bind_method(D_METHOD("fracture_mesh_async", "mesh", "site_count", "seed", "pattern", "cutout_pattern"), &PhysXBlastAuthoring::fracture_mesh_async, DEFVAL(PATTERN_VORONOI), DEFVAL(Ref<Texture2D>()));
 
 	ClassDB::bind_method(D_METHOD("get_last_error"), &PhysXBlastAuthoring::get_last_error);
 	ClassDB::bind_method(D_METHOD("get_last_warnings"), &PhysXBlastAuthoring::get_last_warnings);
@@ -332,47 +388,80 @@ void PhysXBlastAuthoring::_bind_methods() {
 	BIND_ENUM_CONSTANT(PATTERN_CUTOUT);
 }
 
-// Printed as before, and kept for get_last_error() / get_last_warnings() (the fracture dialog shows them).
-Ref<PhysXBlastAsset> PhysXBlastAuthoring::_fail(const String &p_message) {
-	_error(p_message);
-	return Ref<PhysXBlastAsset>();
-}
-
-void PhysXBlastAuthoring::_error(const String &p_message) {
-	ERR_PRINT(p_message);
-	last_error = p_message.trim_prefix("PhysXBlastAuthoring: ");
-}
-
-void PhysXBlastAuthoring::_warn(const String &p_message) {
-	WARN_PRINT(p_message);
-	last_warnings.push_back(p_message.trim_prefix("PhysXBlastAuthoring: "));
+String PhysXBlastAuthoring::stage_name(int p_stage) {
+	switch (p_stage) {
+		case STAGE_CHECKING:
+			return "Checking the mesh";
+		case STAGE_CLEANING:
+			return "Cleaning up the mesh";
+		case STAGE_FRACTURING:
+			return "Fracturing";
+		case STAGE_FINALIZING:
+			return "Finalizing the pieces";
+		case STAGE_BONDS:
+			return "Building bonds and collision";
+		case STAGE_HULLS:
+			return "Cooking collision hulls";
+	}
+	return String();
 }
 
 Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh, int p_site_count, int p_seed, FracturePattern p_pattern, const Ref<Texture2D> &p_cutout_pattern) {
-	last_error = String();
-	last_warnings.clear();
+	PhysXBlastFractureInput input;
+	PhysXBlastFractureOutput output;
+	if (read_input(p_mesh, p_site_count, p_seed, p_pattern, p_cutout_pattern, input, output)) {
+		run(input, output, nullptr);
+	}
+	last_error = output.error;
+	last_warnings = output.warnings;
+	return make_asset(input, output);
+}
+
+Ref<PhysXBlastFractureTask> PhysXBlastAuthoring::fracture_mesh_async(const Ref<Mesh> &p_mesh, int p_site_count, int p_seed, FracturePattern p_pattern, const Ref<Texture2D> &p_cutout_pattern) {
+	Ref<PhysXBlastFractureTask> task;
+	task.instantiate();
+	task->running.set();
+	task->keep_alive = task;
+	GodotPhysXServer3D *server = GodotPhysXServer3D::get_singleton();
+	if (!read_input(p_mesh, p_site_count, p_seed, p_pattern, p_cutout_pattern, task->input, task->output)) {
+		// Finished on the next frame, like a fracture that fails later on, so the caller can connect to it first.
+		callable_mp(task.ptr(), &PhysXBlastFractureTask::_finish).call_deferred();
+	} else if (!server || !server->begin_background_job()) {
+		fail(task->output, "PhysXBlastAuthoring: PhysX is shutting down.");
+		callable_mp(task.ptr(), &PhysXBlastFractureTask::_finish).call_deferred();
+	} else {
+		task->task_id = WorkerThreadPool::get_singleton()->add_task(callable_mp(task.ptr(), &PhysXBlastFractureTask::_work), false, "Blast fracture");
+	}
+	return task;
+}
+
+bool PhysXBlastAuthoring::read_input(const Ref<Mesh> &p_mesh, int p_site_count, int p_seed, FracturePattern p_pattern, const Ref<Texture2D> &p_cutout_pattern, PhysXBlastFractureInput &r_input, PhysXBlastFractureOutput &r_output) {
 	if (p_mesh.is_null() || p_mesh->get_surface_count() < 1) {
-		return _fail("PhysXBlastAuthoring: mesh is null or has no surfaces.");
+		fail(r_output, "PhysXBlastAuthoring: mesh is null or has no surfaces.");
+		return false;
 	}
 	PxPhysics *physics = GodotPhysXServer3D::get_singleton() ? GodotPhysXServer3D::get_singleton()->get_px_physics() : nullptr;
 	if (!physics) {
-		return _fail("PhysXBlastAuthoring: PhysX not initialized.");
+		fail(r_output, "PhysXBlastAuthoring: PhysX not initialized.");
+		return false;
 	}
+	r_input.site_count = p_site_count;
+	r_input.seed = p_seed;
+	r_input.pattern = p_pattern;
 
 	// Every triangle surface goes into one mesh, each triangle tagged with its surface (Blast's material id, carried
 	// through the cuts), so the pieces keep each surface's faces apart and the asset keeps each surface's material.
-	PackedVector3Array verts;
-	PackedVector3Array src_normals;
-	PackedVector2Array src_uvs;
-	LocalVector<uint32_t> indices;
-	LocalVector<int32_t> triangle_surfaces;
-	TypedArray<Material> surface_materials;
+	PackedVector3Array &verts = r_input.verts;
+	PackedVector3Array &src_normals = r_input.normals;
+	PackedVector2Array &src_uvs = r_input.uvs;
+	LocalVector<uint32_t> &indices = r_input.indices;
 	const int surface_count = MIN(p_mesh->get_surface_count(), (int)Nv::Blast::kMaterialInteriorId);
+	r_input.surface_count = surface_count;
 	bool any_normals = false;
 	for (int s = 0; s < surface_count; s++) {
 		if (p_mesh->surface_get_primitive_type(s) != Mesh::PRIMITIVE_TRIANGLES) {
-			_warn(vformat("PhysXBlastAuthoring: surface %d isn't a triangle list; left out.", s));
-			surface_materials.push_back(Ref<Material>());
+			warn(r_output, vformat("PhysXBlastAuthoring: surface %d isn't a triangle list; left out.", s));
+			r_input.surface_materials.push_back(Ref<Material>());
 			continue;
 		}
 		const Array arrays = p_mesh->surface_get_arrays(s);
@@ -380,7 +469,7 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 		const PackedVector3Array surface_normals = arrays[Mesh::ARRAY_NORMAL];
 		const PackedVector2Array surface_uvs = arrays[Mesh::ARRAY_TEX_UV];
 		const PackedInt32Array surface_indices = arrays[Mesh::ARRAY_INDEX];
-		surface_materials.push_back(p_mesh->surface_get_material(s));
+		r_input.surface_materials.push_back(p_mesh->surface_get_material(s));
 		const uint32_t base = (uint32_t)verts.size();
 		for (int i = 0; i < surface_verts.size(); i++) {
 			verts.push_back(surface_verts[i]);
@@ -394,7 +483,8 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 		if (surface_indices.size() >= 3) {
 			for (int i = 0; i < surface_indices.size(); i++) {
 				if (surface_indices[i] < 0 || surface_indices[i] >= surface_verts.size()) {
-					return _fail(vformat("PhysXBlastAuthoring: surface %d's index %d points past its %d vertices.", s, surface_indices[i], surface_verts.size()));
+					fail(r_output, vformat("PhysXBlastAuthoring: surface %d's index %d points past its %d vertices.", s, surface_indices[i], surface_verts.size()));
+					return false;
 				}
 				indices.push_back(base + (uint32_t)surface_indices[i]);
 			}
@@ -405,21 +495,75 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 			}
 		}
 		if ((indices.size() - first_index) % 3 != 0) {
-			return _fail(vformat("PhysXBlastAuthoring: surface %d's %d indices aren't a whole number of triangles.", s, (int)(indices.size() - first_index)));
+			fail(r_output, vformat("PhysXBlastAuthoring: surface %d's %d indices aren't a whole number of triangles.", s, (int)(indices.size() - first_index)));
+			return false;
 		}
 		for (uint32_t t = first_index; t < indices.size(); t += 3) {
-			triangle_surfaces.push_back(s);
+			r_input.triangle_surfaces.push_back(s);
 		}
 	}
 	if (p_mesh->get_surface_count() > surface_count) {
-		_warn(vformat("PhysXBlastAuthoring: only the first %d surfaces are fractured.", surface_count));
+		warn(r_output, vformat("PhysXBlastAuthoring: only the first %d surfaces are fractured.", surface_count));
 	}
 	if (verts.size() < 4) {
-		return _fail("PhysXBlastAuthoring: mesh has too few vertices.");
+		fail(r_output, "PhysXBlastAuthoring: mesh has too few vertices.");
+		return false;
 	}
 	if (!any_normals) {
 		src_normals.clear();
 	}
+
+	// PATTERN_CUTOUT's pattern, read here (a texture is the main thread's); a problem with it is reported where it was
+	// before, when fracturing starts.
+	if (p_pattern == PATTERN_CUTOUT) {
+		// Unlike Voronoi/Slicing, NvBlast doesn't generate this pattern itself
+		// -- same as Unreal's own Blast integration, the caller supplies a
+		// grayscale bitmap (see this class's header for why) and
+		// NvBlastExtAuthoringBuildCutoutSet segments it into per-region loops.
+		if (p_cutout_pattern.is_null()) {
+			r_input.cutout_error = "PhysXBlastAuthoring: PATTERN_CUTOUT requires a cutout_pattern texture.";
+		} else {
+			Ref<Image> pattern_img = p_cutout_pattern->get_image();
+			if (pattern_img.is_null() || pattern_img->is_empty()) {
+				r_input.cutout_error = "PhysXBlastAuthoring: cutout_pattern texture has no image data.";
+			} else {
+				if (pattern_img->is_compressed()) {
+					pattern_img->decompress();
+				}
+				pattern_img->convert(Image::FORMAT_L8);
+				r_input.cutout_gray = pattern_img->get_data();
+				r_input.cutout_width = (uint32_t)pattern_img->get_width();
+				r_input.cutout_height = (uint32_t)pattern_img->get_height();
+			}
+		}
+	}
+	return true;
+}
+
+void PhysXBlastAuthoring::run(const PhysXBlastFractureInput &p_input, PhysXBlastFractureOutput &r_output, PhysXBlastFractureTask *p_task) {
+	// Between stages (and hulls), the task can stop it: a stage already running can't be interrupted.
+	const auto stage = [&](int p_stage, const String &p_detail) -> bool {
+		if (p_task && !p_task->report_stage(p_stage, p_detail)) {
+			r_output.cancelled = true;
+			r_output.error = "Cancelled.";
+			return false;
+		}
+		return true;
+	};
+	PxPhysics *physics = GodotPhysXServer3D::get_singleton() ? GodotPhysXServer3D::get_singleton()->get_px_physics() : nullptr;
+	if (!physics) {
+		fail(r_output, "PhysXBlastAuthoring: PhysX not initialized.");
+		return;
+	}
+	if (!stage(STAGE_CHECKING, String())) {
+		return;
+	}
+
+	const PackedVector3Array &verts = p_input.verts;
+	const PackedVector3Array &src_normals = p_input.normals;
+	const PackedVector2Array &src_uvs = p_input.uvs;
+	LocalVector<uint32_t> indices(p_input.indices); // flipped below if the mesh is inside out
+	const int surface_count = p_input.surface_count;
 
 	LocalVector<NvcVec3> positions;
 	LocalVector<NvcVec3> normals;
@@ -437,23 +581,27 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 	// Blast trusts its input: an index past the vertices was read out of bounds, a partial triangle crashed, and a
 	// NaN vertex or a mesh collapsed to a point spun the mesh cleaner forever. Checked here instead.
 	if (indices.size() < 3 || indices.size() % 3 != 0) {
-		return _fail(vformat("PhysXBlastAuthoring: %d indices isn't a whole number of triangles.", (int)indices.size()));
+		fail(r_output, vformat("PhysXBlastAuthoring: %d indices isn't a whole number of triangles.", (int)indices.size()));
+		return;
 	}
 	for (uint32_t i = 0; i < indices.size(); i++) {
 		if (indices[i] >= (uint32_t)verts.size()) {
-			return _fail(vformat("PhysXBlastAuthoring: index %d points past the mesh's %d vertices.", (int)indices[i], verts.size()));
+			fail(r_output, vformat("PhysXBlastAuthoring: index %d points past the mesh's %d vertices.", (int)indices[i], verts.size()));
+			return;
 		}
 	}
 	AABB bounds(verts[0], Vector3());
 	for (int i = 0; i < verts.size(); i++) {
 		if (!verts[i].is_finite()) {
-			return _fail(vformat("PhysXBlastAuthoring: vertex %d isn't a finite position.", i));
+			fail(r_output, vformat("PhysXBlastAuthoring: vertex %d isn't a finite position.", i));
+			return;
 		}
 		bounds.expand_to(verts[i]);
 	}
 	const real_t thinnest = bounds.size[bounds.get_shortest_axis_index()];
 	if (thinnest <= MAX(bounds.get_longest_axis_size(), (real_t)1.0) * (real_t)1e-5) {
-		return _fail(vformat("PhysXBlastAuthoring: the mesh has no volume to fracture (its bounds are %s).", bounds.size));
+		fail(r_output, vformat("PhysXBlastAuthoring: the mesh has no volume to fracture (its bounds are %s).", bounds.size));
+		return;
 	}
 
 	// Inside out (its triangles face inward: a negative volume, Godot's front faces being clockwise): Blast keeps the
@@ -470,17 +618,24 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 		for (uint32_t t = 0; t < indices.size(); t += 3) {
 			SWAP(indices[t + 1], indices[t + 2]);
 		}
-		_warn("PhysXBlastAuthoring: the mesh was inside out (its triangles faced inward); fractured with its triangles flipped.");
+		warn(r_output, "PhysXBlastAuthoring: the mesh was inside out (its triangles faced inward); fractured with its triangles flipped.");
 	}
 
-	Nv::Blast::Mesh *raw_mesh = NvBlastExtAuthoringCreateMesh(positions.ptr(), normals.ptr(), uvs.ptr(),
+	// Declared before the Blast objects: the bond generator holds it until it's released.
+	GodotConvexMeshBuilder collision_builder(physics);
+	BlastObjects blast;
+	blast.raw_mesh = NvBlastExtAuthoringCreateMesh(positions.ptr(), normals.ptr(), uvs.ptr(),
 			(uint32_t)positions.size(), indices.ptr(), (uint32_t)indices.size());
-	if (!raw_mesh) {
-		return _fail("PhysXBlastAuthoring: NvBlastExtAuthoringCreateMesh failed.");
+	if (!blast.raw_mesh) {
+		fail(r_output, "PhysXBlastAuthoring: NvBlastExtAuthoringCreateMesh failed.");
+		return;
 	}
 	// One facet per triangle, in order.
-	raw_mesh->setMaterialId(triangle_surfaces.ptr());
+	blast.raw_mesh->setMaterialId(p_input.triangle_surfaces.ptr());
 
+	if (!stage(STAGE_CLEANING, String())) {
+		return;
+	}
 	// FractureTool requires a closed (watertight), self-intersection-free,
 	// open-edge-free mesh (NvBlastExtAuthoringMeshCleaner.h) -- a Godot
 	// PrimitiveMesh like BoxMesh doesn't weld vertices across face
@@ -494,49 +649,46 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 	// What the cleaner returns is checked against the source: empty or reaching outside the source's bounds (it broke
 	// the shape), and the raw mesh is fractured instead; smaller than the source (it dropped pieces that weren't part
 	// of a closed solid, a stray triangle), and it's kept, with a warning.
-	Nv::Blast::MeshCleaner *mesh_cleaner = nullptr;
-	Nv::Blast::Mesh *cleaned_mesh = nullptr;
 	if (!is_closed(indices)) {
-		mesh_cleaner = NvBlastExtAuthoringCreateMeshCleaner();
-		cleaned_mesh = mesh_cleaner->cleanMesh(raw_mesh);
-		if (!cleaned_mesh) {
-			_warn("PhysXBlastAuthoring: the mesh cleaner failed; fracturing the mesh as it is.");
+		blast.mesh_cleaner = NvBlastExtAuthoringCreateMeshCleaner();
+		blast.cleaned_mesh = blast.mesh_cleaner->cleanMesh(blast.raw_mesh);
+		if (!blast.cleaned_mesh) {
+			warn(r_output, "PhysXBlastAuthoring: the mesh cleaner failed; fracturing the mesh as it is.");
 		} else {
-			const NvcBounds3 &cb = cleaned_mesh->getBoundingBox();
+			const NvcBounds3 &cb = blast.cleaned_mesh->getBoundingBox();
 			const AABB cleaned_bounds(Vector3(cb.minimum.x, cb.minimum.y, cb.minimum.z),
 					Vector3(cb.maximum.x - cb.minimum.x, cb.maximum.y - cb.minimum.y, cb.maximum.z - cb.minimum.z));
 			const real_t tolerance = bounds.get_longest_axis_size() * (real_t)0.01;
 			const AABB allowed = bounds.grow(tolerance);
-			if (cleaned_mesh->getFacetCount() == 0 || !allowed.encloses(cleaned_bounds)) {
-				_warn(vformat("PhysXBlastAuthoring: the mesh cleaner broke the mesh (bounds %s, was %s); fracturing the mesh as it is.", cleaned_bounds, bounds));
-				cleaned_mesh->release();
-				cleaned_mesh = nullptr;
+			if (blast.cleaned_mesh->getFacetCount() == 0 || !allowed.encloses(cleaned_bounds)) {
+				warn(r_output, vformat("PhysXBlastAuthoring: the mesh cleaner broke the mesh (bounds %s, was %s); fracturing the mesh as it is.", cleaned_bounds, bounds));
+				blast.cleaned_mesh->release();
+				blast.cleaned_mesh = nullptr;
 			} else if (!cleaned_bounds.grow(tolerance).encloses(bounds)) {
-				_warn(vformat("PhysXBlastAuthoring: the mesh cleaner dropped parts of the mesh that weren't a closed solid (bounds %s, was %s).", cleaned_bounds, bounds));
+				warn(r_output, vformat("PhysXBlastAuthoring: the mesh cleaner dropped parts of the mesh that weren't a closed solid (bounds %s, was %s).", cleaned_bounds, bounds));
 			}
 		}
 	}
-	Nv::Blast::Mesh *blast_mesh = cleaned_mesh ? cleaned_mesh : raw_mesh;
+	Nv::Blast::Mesh *blast_mesh = blast.cleaned_mesh ? blast.cleaned_mesh : blast.raw_mesh;
 
-	Nv::Blast::FractureTool *fTool = NvBlastExtAuthoringCreateFractureTool();
+	if (!stage(STAGE_FRACTURING, String())) {
+		return;
+	}
+	blast.fracture_tool = NvBlastExtAuthoringCreateFractureTool();
 	const Nv::Blast::Mesh *src_meshes[1] = { blast_mesh };
-	fTool->setSourceMeshes(src_meshes, 1);
+	blast.fracture_tool->setSourceMeshes(src_meshes, 1);
 
 	GodotRandomGenerator rng;
-	rng.seed(p_seed);
+	rng.seed(p_input.seed);
 
-	Ref<PhysXBlastAsset> result;
-	Nv::Blast::VoronoiSitesGenerator *sites_gen = nullptr;
-	int32_t frac_result;
-
-	if (p_pattern == PATTERN_SLICING) {
+	if (p_input.pattern == PATTERN_SLICING) {
 		// slicing() works in slice-counts-per-axis, not a single site count --
 		// approximate p_site_count with a roughly-cube-root split so the
 		// property still reads as "about this many pieces" regardless of
 		// which pattern is picked. A small amount of offset/angle variation
 		// by default so the cuts don't look like a perfectly uniform grid.
 		int per_axis = 1;
-		const int target = MAX(p_site_count, 1);
+		const int target = MAX(p_input.site_count, 1);
 		while ((per_axis + 1) * (per_axis + 1) * (per_axis + 1) <= target) {
 			per_axis++;
 		}
@@ -546,209 +698,283 @@ Ref<PhysXBlastAsset> PhysXBlastAuthoring::fracture_mesh(const Ref<Mesh> &p_mesh,
 		conf.z_slices = per_axis;
 		conf.offset_variations = 0.2f;
 		conf.angle_variations = 0.2f;
-		frac_result = fTool->slicing(0, conf, false, &rng);
+		const int32_t frac_result = blast.fracture_tool->slicing(0, conf, false, &rng);
 		if (frac_result != 0) {
-			_error(vformat("PhysXBlastAuthoring: slicing failed, code=%d.", frac_result));
+			fail(r_output, vformat("PhysXBlastAuthoring: slicing failed, code=%d.", frac_result));
+			return;
 		}
-	} else if (p_pattern == PATTERN_CUTOUT) {
-		// Unlike Voronoi/Slicing, NvBlast doesn't generate this pattern itself
-		// -- same as Unreal's own Blast integration, the caller supplies a
-		// grayscale bitmap (see this class's header for why) and
-		// NvBlastExtAuthoringBuildCutoutSet segments it into per-region loops.
-		if (p_cutout_pattern.is_null()) {
-			_error("PhysXBlastAuthoring: PATTERN_CUTOUT requires a cutout_pattern texture.");
-			frac_result = -1;
-		} else {
-			Ref<Image> pattern_img = p_cutout_pattern->get_image();
-			if (pattern_img.is_null() || pattern_img->is_empty()) {
-				_error("PhysXBlastAuthoring: cutout_pattern texture has no image data.");
-				frac_result = -1;
-			} else {
-				if (pattern_img->is_compressed()) {
-					pattern_img->decompress();
-				}
-				// NvBlastExtAuthoringCutout.h's own doc comment claims "each
-				// pixel is represented by one byte," but this SDK build's
-				// actual createCutoutSet() (NvBlastExtAuthoringCutoutImpl.cpp)
-				// reads 3 bytes/pixel -- a weighted RGB luminance, thresholded
-				// near-binary (roughly: value below ~1/16 of max is interior/
-				// fill, anything brighter is a wall/crack line). Confirmed by
-				// reading that source directly after the stale 1-byte-per-
-				// pixel assumption crashed with an out-of-bounds read -- it
-				// walks 3 bytes per pixel regardless of what the header says.
-				// Matches Unreal's own Blast integration, which independently
-				// packs the same 3-bytes-per-pixel format for the same call.
-				pattern_img->convert(Image::FORMAT_L8);
-				const PackedByteArray gray = pattern_img->get_data();
-				const uint32_t pw = (uint32_t)pattern_img->get_width();
-				const uint32_t ph = (uint32_t)pattern_img->get_height();
-				PackedByteArray pixels;
-				pixels.resize((int64_t)pw * ph * 3);
-				{
-					uint8_t *dst = pixels.ptrw();
-					const uint8_t *src = gray.ptr();
-					const int64_t n = (int64_t)pw * ph;
-					for (int64_t i = 0; i < n; i++) {
-						dst[i * 3 + 0] = src[i];
-						dst[i * 3 + 1] = src[i];
-						dst[i * 3 + 2] = src[i];
-					}
-				}
+	} else if (p_input.pattern == PATTERN_CUTOUT) {
+		if (!p_input.cutout_error.is_empty()) {
+			fail(r_output, p_input.cutout_error);
+			return;
+		}
+		// NvBlastExtAuthoringCutout.h's own doc comment claims "each
+		// pixel is represented by one byte," but this SDK build's
+		// actual createCutoutSet() (NvBlastExtAuthoringCutoutImpl.cpp)
+		// reads 3 bytes/pixel -- a weighted RGB luminance, thresholded
+		// near-binary (roughly: value below ~1/16 of max is interior/
+		// fill, anything brighter is a wall/crack line). Confirmed by
+		// reading that source directly after the stale 1-byte-per-
+		// pixel assumption crashed with an out-of-bounds read -- it
+		// walks 3 bytes per pixel regardless of what the header says.
+		// Matches Unreal's own Blast integration, which independently
+		// packs the same 3-bytes-per-pixel format for the same call.
+		const PackedByteArray &gray = p_input.cutout_gray;
+		const uint32_t pw = p_input.cutout_width;
+		const uint32_t ph = p_input.cutout_height;
+		PackedByteArray pixels;
+		pixels.resize((int64_t)pw * ph * 3);
+		{
+			uint8_t *dst = pixels.ptrw();
+			const uint8_t *src = gray.ptr();
+			const int64_t n = (int64_t)pw * ph;
+			for (int64_t i = 0; i < n; i++) {
+				dst[i * 3 + 0] = src[i];
+				dst[i * 3 + 1] = src[i];
+				dst[i * 3 + 2] = src[i];
+			}
+		}
 
-				// Refuse rather than risk the crash a floating (edge-
-				// unreached) crack island caused twice while building this
-				// pattern -- see cutout_pattern_has_floating_wall_island()'s
-				// own comment for the full story. A native SDK crash can't
-				// be caught from here (it takes the whole process down), so
-				// this has to be ruled out before ever calling cutout().
-				if (cutout_pattern_has_floating_wall_island(gray, pw, ph)) {
-					_error("PhysXBlastAuthoring: cutout_pattern rejected -- it has a crack/wall shape that "
+		// Refuse rather than risk the crash a floating (edge-
+		// unreached) crack island caused twice while building this
+		// pattern -- see cutout_pattern_has_floating_wall_island()'s
+		// own comment for the full story. A native SDK crash can't
+		// be caught from here (it takes the whole process down), so
+		// this has to be ruled out before ever calling cutout().
+		if (cutout_pattern_has_floating_wall_island(gray, pw, ph)) {
+			fail(r_output, "PhysXBlastAuthoring: cutout_pattern rejected -- it has a crack/wall shape that "
 						   "doesn't reach the image edge (a 'floating island'). Every crack line needs to "
 						   "reach the pattern's boundary, the same way a real broken pane's cracks do -- "
 						   "otherwise the fill region wraps around it with a hole in the middle, which is "
 						   "known to crash the underlying Blast SDK's Cutout code rather than fail cleanly.");
-					frac_result = -1;
-				} else {
-					Nv::Blast::CutoutSet *cutout_set = NvBlastExtAuthoringCreateCutoutSet();
-					NvBlastExtAuthoringBuildCutoutSet(*cutout_set, pixels.ptr(), pw, ph,
-							/*segmentationErrorThreshold*/ 1e-3f, /*snapThreshold*/ 1.0f,
-							/*periodic*/ false, /*expandGaps*/ false);
+			return;
+		}
+		Nv::Blast::CutoutSet *cutout_set = NvBlastExtAuthoringCreateCutoutSet();
+		NvBlastExtAuthoringBuildCutoutSet(*cutout_set, pixels.ptr(), pw, ph,
+				/*segmentationErrorThreshold*/ 1e-3f, /*snapThreshold*/ 1.0f,
+				/*periodic*/ false, /*expandGaps*/ false);
 
-					Nv::Blast::CutoutConfiguration conf;
-					conf.cutoutSet = cutout_set;
-					// Defaults otherwise: scale (-1,-1) auto-fits the pattern
-					// to the chunk's own AABB, isRelativeTransform=true
-					// centers it on the chunk -- exactly what a "just works"
-					// first pass wants without per-mesh sizing math of our own.
-					frac_result = fTool->cutout(0, conf, false, &rng);
-					if (frac_result != 0) {
-						_error(vformat("PhysXBlastAuthoring: cutout failed, code=%d.", frac_result));
-					}
-					cutout_set->release();
-				}
-			}
+		Nv::Blast::CutoutConfiguration conf;
+		conf.cutoutSet = cutout_set;
+		// Defaults otherwise: scale (-1,-1) auto-fits the pattern
+		// to the chunk's own AABB, isRelativeTransform=true
+		// centers it on the chunk -- exactly what a "just works"
+		// first pass wants without per-mesh sizing math of our own.
+		const int32_t frac_result = blast.fracture_tool->cutout(0, conf, false, &rng);
+		cutout_set->release();
+		if (frac_result != 0) {
+			fail(r_output, vformat("PhysXBlastAuthoring: cutout failed, code=%d.", frac_result));
+			return;
 		}
 	} else {
-		sites_gen = NvBlastExtAuthoringCreateVoronoiSitesGenerator(blast_mesh, &rng);
-		sites_gen->uniformlyGenerateSitesInMesh((uint32_t)MAX(p_site_count, 1));
+		blast.sites_gen = NvBlastExtAuthoringCreateVoronoiSitesGenerator(blast_mesh, &rng);
+		blast.sites_gen->uniformlyGenerateSitesInMesh((uint32_t)MAX(p_input.site_count, 1));
 		const NvcVec3 *sites = nullptr;
-		const uint32_t site_count = sites_gen->getVoronoiSites(sites);
-		frac_result = fTool->voronoiFracturing(0, site_count, sites, false);
+		const uint32_t site_count = blast.sites_gen->getVoronoiSites(sites);
+		const int32_t frac_result = blast.fracture_tool->voronoiFracturing(0, site_count, sites, false);
 		if (frac_result != 0) {
-			_error(vformat("PhysXBlastAuthoring: voronoiFracturing failed, code=%d.", frac_result));
+			fail(r_output, vformat("PhysXBlastAuthoring: voronoiFracturing failed, code=%d.", frac_result));
+			return;
 		}
 	}
 
-	if (frac_result == 0) {
-		fTool->finalizeFracturing();
+	if (!stage(STAGE_FINALIZING, String())) {
+		return;
+	}
+	blast.fracture_tool->finalizeFracturing();
 
-		GodotConvexMeshBuilder collision_builder(physics);
-		Nv::Blast::BlastBondGenerator *bond_gen = NvBlastExtAuthoringCreateBondGenerator(&collision_builder);
-		Nv::Blast::ConvexDecompositionParams cparams;
-		// Voronoi cells and slicing planes of a convex source stay convex,
-		// but a cutout region can easily be concave (an L-shaped brick, a
-		// crack loop that isn't itself convex) -- allow real decomposition
-		// there instead of silently producing a wrong/degenerate hull.
-		cparams.maximumNumberOfHulls = (p_pattern == PATTERN_CUTOUT) ? 8 : 1;
+	if (!stage(STAGE_BONDS, String())) {
+		return;
+	}
+	blast.bond_gen = NvBlastExtAuthoringCreateBondGenerator(&collision_builder);
+	Nv::Blast::ConvexDecompositionParams cparams;
+	// Voronoi cells and slicing planes of a convex source stay convex,
+	// but a cutout region can easily be concave (an L-shaped brick, a
+	// crack loop that isn't itself convex) -- allow real decomposition
+	// there instead of silently producing a wrong/degenerate hull.
+	cparams.maximumNumberOfHulls = (p_input.pattern == PATTERN_CUTOUT) ? 8 : 1;
 
-		Nv::Blast::AuthoringResult *ares = NvBlastExtAuthoringProcessFracture(*fTool, *bond_gen, collision_builder, cparams);
-		if (!ares) {
-			_error("PhysXBlastAuthoring: NvBlastExtAuthoringProcessFracture failed.");
-		} else {
-			const uint32_t asset_size = NvBlastAssetGetSize(ares->asset, blast_authoring_log);
-			PackedByteArray asset_bytes;
-			asset_bytes.resize(asset_size);
-			memcpy(asset_bytes.ptrw(), ares->asset, asset_size);
+	Nv::Blast::AuthoringResult *ares = NvBlastExtAuthoringProcessFracture(*blast.fracture_tool, *blast.bond_gen, collision_builder, cparams);
+	if (!ares) {
+		fail(r_output, "PhysXBlastAuthoring: NvBlastExtAuthoringProcessFracture failed.");
+		return;
+	}
+	const uint32_t asset_size = NvBlastAssetGetSize(ares->asset, blast_authoring_log);
+	r_output.asset_bytes.resize(asset_size);
+	memcpy(r_output.asset_bytes.ptrw(), ares->asset, asset_size);
 
-			Array chunk_points;
-			Array chunk_normals;
-			Array chunk_uvs;
-			Array chunk_surface_starts;
-			PackedInt32Array chunk_interior_starts;
-			chunk_points.resize(ares->chunkCount);
-			chunk_normals.resize(ares->chunkCount);
-			chunk_uvs.resize(ares->chunkCount);
-			chunk_surface_starts.resize(ares->chunkCount);
-			chunk_interior_starts.resize(ares->chunkCount);
-			CutFaceUVs cut_face_uvs;
-			for (uint32_t c = 0; c < ares->chunkCount; c++) {
-				PackedVector3Array points;
-				PackedVector3Array vertex_normals;
-				PackedVector2Array vertex_uvs;
-				PackedInt32Array surface_starts;
-				surface_starts.resize(surface_count);
-				const uint32_t begin = ares->geometryOffset[c];
-				const uint32_t end = ares->geometryOffset[c + 1];
-				// Each source surface's faces in turn, then the cut ones (slot surface_count).
-				for (int slot = 0; slot <= surface_count; slot++) {
-					const bool interior = slot == surface_count;
+	Array &chunk_points = r_output.chunk_points;
+	Array &chunk_normals = r_output.chunk_normals;
+	Array &chunk_uvs = r_output.chunk_uvs;
+	Array &chunk_surface_starts = r_output.chunk_surface_starts;
+	PackedInt32Array &chunk_interior_starts = r_output.chunk_interior_starts;
+	chunk_points.resize(ares->chunkCount);
+	chunk_normals.resize(ares->chunkCount);
+	chunk_uvs.resize(ares->chunkCount);
+	chunk_surface_starts.resize(ares->chunkCount);
+	chunk_interior_starts.resize(ares->chunkCount);
+	CutFaceUVs cut_face_uvs;
+	for (uint32_t c = 0; c < ares->chunkCount; c++) {
+		PackedVector3Array points;
+		PackedVector3Array vertex_normals;
+		PackedVector2Array vertex_uvs;
+		PackedInt32Array surface_starts;
+		surface_starts.resize(surface_count);
+		const uint32_t begin = ares->geometryOffset[c];
+		const uint32_t end = ares->geometryOffset[c + 1];
+		// Each source surface's faces in turn, then the cut ones (slot surface_count).
+		for (int slot = 0; slot <= surface_count; slot++) {
+			const bool interior = slot == surface_count;
+			if (interior) {
+				chunk_interior_starts.write[c] = points.size();
+			} else {
+				surface_starts.write[slot] = points.size();
+			}
+			for (uint32_t t = begin; t < end; t++) {
+				const Nv::Blast::Triangle &tri = ares->geometry[t];
+				const int tri_slot = tri.materialId == (int32_t)Nv::Blast::kMaterialInteriorId ? surface_count : (tri.materialId >= 0 && tri.materialId < surface_count ? tri.materialId : 0);
+				if (tri_slot != slot) {
+					continue;
+				}
+				const Nv::Blast::Vertex *corners[3] = { &tri.a, &tri.b, &tri.c };
+				Vector3 p[3];
+				for (int v = 0; v < 3; v++) {
+					p[v] = Vector3(corners[v]->p.x, corners[v]->p.y, corners[v]->p.z);
+				}
+				// The winding PhysXDestructible3D renders them with: see _compute_chunk_surfaces().
+				Vector3 face_normal = (p[2] - p[0]).cross(p[1] - p[0]);
+				face_normal = face_normal.is_zero_approx() ? Vector3(0, 1, 0) : face_normal.normalized();
+				for (int v = 0; v < 3; v++) {
+					points.push_back(p[v]);
 					if (interior) {
-						chunk_interior_starts.write[c] = points.size();
+						vertex_normals.push_back(face_normal);
+						vertex_uvs.push_back(cut_face_uvs.uv(p[v], face_normal));
 					} else {
-						surface_starts.write[slot] = points.size();
-					}
-					for (uint32_t t = begin; t < end; t++) {
-						const Nv::Blast::Triangle &tri = ares->geometry[t];
-						const int tri_slot = tri.materialId == (int32_t)Nv::Blast::kMaterialInteriorId ? surface_count : (tri.materialId >= 0 && tri.materialId < surface_count ? tri.materialId : 0);
-						if (tri_slot != slot) {
-							continue;
-						}
-						const Nv::Blast::Vertex *corners[3] = { &tri.a, &tri.b, &tri.c };
-						Vector3 p[3];
-						for (int v = 0; v < 3; v++) {
-							p[v] = Vector3(corners[v]->p.x, corners[v]->p.y, corners[v]->p.z);
-						}
-						// The winding PhysXDestructible3D renders them with: see _compute_chunk_surfaces().
-						Vector3 face_normal = (p[2] - p[0]).cross(p[1] - p[0]);
-						face_normal = face_normal.is_zero_approx() ? Vector3(0, 1, 0) : face_normal.normalized();
-						for (int v = 0; v < 3; v++) {
-							points.push_back(p[v]);
-							if (interior) {
-								vertex_normals.push_back(face_normal);
-								vertex_uvs.push_back(cut_face_uvs.uv(p[v], face_normal));
-							} else {
-								Vector3 n(corners[v]->n.x, corners[v]->n.y, corners[v]->n.z);
-								n = inside_out ? -n : n;
-								vertex_normals.push_back(src_normals.is_empty() || n.is_zero_approx() ? face_normal : n.normalized());
-								vertex_uvs.push_back(Vector2(corners[v]->uv[0].x, corners[v]->uv[0].y));
-							}
-						}
+						Vector3 n(corners[v]->n.x, corners[v]->n.y, corners[v]->n.z);
+						n = inside_out ? -n : n;
+						vertex_normals.push_back(src_normals.is_empty() || n.is_zero_approx() ? face_normal : n.normalized());
+						vertex_uvs.push_back(Vector2(corners[v]->uv[0].x, corners[v]->uv[0].y));
 					}
 				}
-				chunk_points[c] = points;
-				chunk_normals[c] = vertex_normals;
-				chunk_uvs[c] = vertex_uvs;
-				chunk_surface_starts[c] = surface_starts;
 			}
-
-			result.instantiate();
-			result->set_asset_bytes(asset_bytes);
-			result->set_chunk_points(chunk_points);
-			result->set_chunk_normals(chunk_normals);
-			result->set_chunk_uvs(chunk_uvs);
-			result->set_chunk_interior_starts(chunk_interior_starts);
-			result->set_chunk_surface_starts(chunk_surface_starts);
-			result->set_surface_materials(surface_materials);
-
-			NvBlastExtAuthoringReleaseAuthoringResult(collision_builder, ares);
 		}
-		bond_gen->release();
+		chunk_points[c] = points;
+		chunk_normals[c] = vertex_normals;
+		chunk_uvs[c] = vertex_uvs;
+		chunk_surface_starts[c] = surface_starts;
 	}
+	NvBlastExtAuthoringReleaseAuthoringResult(collision_builder, ares);
 
-	if (sites_gen) {
-		sites_gen->release();
+	// Each chunk's hull, so breaking doesn't cook it (as PhysXBlastAsset::cook_hulls() does). If none cooks, the asset
+	// has none and they're cooked at runtime instead, as before.
+	Array hulls;
+	hulls.resize(chunk_points.size());
+	int cooked = 0;
+	for (int c = 0; c < chunk_points.size(); c++) {
+		if (!stage(STAGE_HULLS, vformat("%d of %d", c + 1, chunk_points.size()))) {
+			return;
+		}
+		const PackedByteArray hull = GodotPhysXShape3D::cook_convex(chunk_points[c]);
+		cooked += hull.is_empty() ? 0 : 1;
+		hulls[c] = hull;
 	}
-	fTool->release();
-	if (cleaned_mesh) {
-		cleaned_mesh->release();
+	if (cooked > 0 || chunk_points.is_empty()) {
+		r_output.chunk_hulls = hulls;
+		r_output.hull_format = GodotPhysXShape3D::cooked_convex_format();
+	} else {
+		r_output.warnings.push_back("The pieces' collision hulls couldn't be cooked ahead of time; they're cooked when the pieces first break off.");
 	}
-	raw_mesh->release();
-	if (mesh_cleaner) {
-		mesh_cleaner->release();
+	r_output.done = true;
+}
+
+Ref<PhysXBlastAsset> PhysXBlastAuthoring::make_asset(const PhysXBlastFractureInput &p_input, const PhysXBlastFractureOutput &p_output) {
+	if (!p_output.done) {
+		return Ref<PhysXBlastAsset>();
 	}
-	// Each chunk's hull, so breaking doesn't cook it. A hull that fails here is cooked at runtime instead, as before.
-	if (result.is_valid() && result->cook_hulls() != OK) {
-		last_warnings.push_back("The pieces' collision hulls couldn't be cooked ahead of time; they're cooked when the pieces first break off.");
+	Ref<PhysXBlastAsset> result;
+	result.instantiate();
+	result->set_asset_bytes(p_output.asset_bytes);
+	result->set_chunk_points(p_output.chunk_points);
+	result->set_chunk_normals(p_output.chunk_normals);
+	result->set_chunk_uvs(p_output.chunk_uvs);
+	result->set_chunk_interior_starts(p_output.chunk_interior_starts);
+	result->set_chunk_surface_starts(p_output.chunk_surface_starts);
+	result->set_surface_materials(p_input.surface_materials);
+	if (!p_output.hull_format.is_empty()) {
+		result->set_chunk_hulls(p_output.chunk_hulls);
+		result->set_hull_format(p_output.hull_format);
 	}
 	return result;
+}
+
+void PhysXBlastFractureTask::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("cancel"), &PhysXBlastFractureTask::cancel);
+	ClassDB::bind_method(D_METHOD("is_running"), &PhysXBlastFractureTask::is_running);
+	ClassDB::bind_method(D_METHOD("is_cancelled"), &PhysXBlastFractureTask::is_cancelled);
+	ClassDB::bind_method(D_METHOD("get_stage"), &PhysXBlastFractureTask::get_stage);
+	ClassDB::bind_method(D_METHOD("get_stage_count"), &PhysXBlastFractureTask::get_stage_count);
+	ClassDB::bind_method(D_METHOD("get_stage_description"), &PhysXBlastFractureTask::get_stage_description);
+	ClassDB::bind_method(D_METHOD("get_asset"), &PhysXBlastFractureTask::get_asset);
+	ClassDB::bind_method(D_METHOD("get_last_error"), &PhysXBlastFractureTask::get_last_error);
+	ClassDB::bind_method(D_METHOD("get_last_warnings"), &PhysXBlastFractureTask::get_last_warnings);
+
+	ADD_SIGNAL(MethodInfo("stage_changed", PropertyInfo(Variant::INT, "stage"), PropertyInfo(Variant::INT, "stage_count"), PropertyInfo(Variant::STRING, "description")));
+	ADD_SIGNAL(MethodInfo("finished", PropertyInfo(Variant::OBJECT, "asset", PROPERTY_HINT_RESOURCE_TYPE, "PhysXBlastAsset")));
+}
+
+bool PhysXBlastFractureTask::report_stage(int p_stage, const String &p_detail) {
+	const GodotPhysXServer3D *server = GodotPhysXServer3D::get_singleton();
+	if (cancel_requested.is_set() || !server || server->is_finishing()) {
+		return false;
+	}
+	String text = PhysXBlastAuthoring::stage_name(p_stage);
+	if (!p_detail.is_empty()) {
+		text += vformat(" (%s)", p_detail);
+	}
+	stage.set(p_stage);
+	{
+		MutexLock lock(description_mutex);
+		description = text;
+	}
+	callable_mp(this, &PhysXBlastFractureTask::_emit_stage).call_deferred(p_stage, text);
+	return true;
+}
+
+void PhysXBlastFractureTask::_work() {
+	PhysXBlastAuthoring::run(input, output, this);
+	GodotPhysXServer3D::get_singleton()->end_background_job();
+	callable_mp(this, &PhysXBlastFractureTask::_finish).call_deferred();
+}
+
+void PhysXBlastFractureTask::_emit_stage(int p_stage, const String &p_description) {
+	emit_signal(SNAME("stage_changed"), p_stage, (int)PhysXBlastAuthoring::STAGE_COUNT, p_description);
+}
+
+void PhysXBlastFractureTask::_finish() {
+	if (task_id != WorkerThreadPool::INVALID_TASK_ID) {
+		WorkerThreadPool::get_singleton()->wait_for_task_completion(task_id);
+		task_id = WorkerThreadPool::INVALID_TASK_ID;
+	}
+	cancelled = output.cancelled;
+	last_error = output.error;
+	last_warnings = output.warnings;
+	if (!cancelled) {
+		asset = PhysXBlastAuthoring::make_asset(input, output);
+	}
+	input = PhysXBlastFractureInput();
+	output = PhysXBlastFractureOutput();
+	running.clear();
+	// Whoever started it may have let go of it already: this may be its last reference, kept until the signal is out.
+	Ref<PhysXBlastFractureTask> self = keep_alive;
+	keep_alive.unref();
+	emit_signal(SNAME("finished"), asset);
+}
+
+void PhysXBlastFractureTask::cancel() {
+	cancel_requested.set();
+}
+
+String PhysXBlastFractureTask::get_stage_description() {
+	MutexLock lock(description_mutex);
+	return description;
 }

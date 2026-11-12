@@ -1606,7 +1606,26 @@ void GodotPhysXServer3D::flush_queries() {
 	flushing_queries = false;
 }
 
+bool GodotPhysXServer3D::begin_background_job() {
+	// Counted before the check, so finish() can't miss a job that starts as it begins.
+	background_jobs.increment();
+	if (finishing.is_set()) {
+		background_jobs.decrement();
+		return false;
+	}
+	return true;
+}
+
 void GodotPhysXServer3D::finish() {
+	// A background job stops at its next check, but a Blast stage already running can't be interrupted.
+	finishing.set();
+	const uint64_t give_up = OS::get_singleton()->get_ticks_msec() + 120000;
+	while (background_jobs.get() > 0 && OS::get_singleton()->get_ticks_msec() < give_up) {
+		OS::get_singleton()->delay_usec(2000);
+	}
+	if (background_jobs.get() > 0) {
+		ERR_PRINT("PhysX: a background job (a Blast fracture) was still running after 2 minutes; shutting down anyway.");
+	}
 	if (dispatch_body.is_valid()) {
 		free_rid(dispatch_body);
 		dispatch_body = RID();

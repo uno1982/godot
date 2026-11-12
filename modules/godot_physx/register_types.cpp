@@ -167,6 +167,7 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(PhysXDestructible3D);
 		GDREGISTER_CLASS(PhysXBlastAsset);
 		GDREGISTER_CLASS(PhysXBlastAuthoring);
+		GDREGISTER_CLASS(PhysXBlastFractureTask);
 #endif
 #ifdef GODOT_PHYSX_FLOW
 		GDREGISTER_CLASS(PhysXFlow3D);

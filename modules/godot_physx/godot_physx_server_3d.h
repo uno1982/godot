@@ -34,6 +34,7 @@
 #include "core/templates/hash_map.h"
 #include "core/templates/hash_set.h"
 #include "core/templates/rid_owner.h"
+#include "core/templates/safe_refcount.h"
 #include "core/variant/callable.h"
 #include "servers/physics_3d/physics_server_3d_dummy.h"
 
@@ -115,6 +116,9 @@ class GodotPhysXServer3D : public PhysicsServer3DDummy {
 
 	RID _shape_create(PhysicsServer3D::ShapeType p_type);
 
+	SafeNumeric<uint32_t> background_jobs;
+	SafeFlag finishing;
+
 public:
 	static GodotPhysXServer3D *get_singleton() { return singleton; }
 
@@ -128,6 +132,12 @@ public:
 	GodotPhysXSpace3D *get_space(RID p_rid) const { return space_owner.get_or_null(p_rid); }
 
 	physx::PxPhysics *get_px_physics() const { return px_physics; }
+
+	// Work on another thread that uses get_px_physics() (a background Blast fracture) holds a job: finish() asks it to
+	// stop (is_finishing()) and waits for it before releasing PhysX. begin_background_job() is false once finishing.
+	bool begin_background_job();
+	void end_background_job() { background_jobs.decrement(); }
+	bool is_finishing() const { return finishing.is_set(); }
 
 	// Whether this thread may touch the PhysX scenes now: the physics thread, or the main thread while that thread
 	// is parked (physics process) or when physics doesn't run on its own thread. The module's nodes reach PhysX

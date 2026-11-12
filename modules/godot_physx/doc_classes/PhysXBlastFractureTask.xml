@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXBlastFractureTask" inherits="RefCounted" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A Blast fracture running in the background.
+	</brief_description>
+	<description>
+		Returned by [method PhysXBlastAuthoring.fracture_mesh_async]. The fracture goes through six stages (see [method get_stage]); the task reports each one as it starts, and finishes with the asset. Its signals are emitted on the main thread.
+		Blast can't stop partway through a stage, so how far along a stage is can't be known, and [method cancel] takes effect when the running stage ends. For a detailed mesh, cleaning it up (stage 2) takes most of the time.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="cancel">
+			<return type="void" />
+			<description>
+				Stops the fracture once the stage it's on ends (at once, between hulls): [signal finished] is then emitted with [code]null[/code], and [method is_cancelled] is [code]true[/code].
+			</description>
+		</method>
+		<method name="get_asset" qualifiers="const">
+			<return type="PhysXBlastAsset" />
+			<description>
+				The fractured asset once finished, the same one [signal finished] gave; [code]null[/code] while running, on failure, or if cancelled.
+			</description>
+		</method>
+		<method name="get_last_error" qualifiers="const">
+			<return type="String" />
+			<description>
+				Why the fracture failed, once finished: the same text [method PhysXBlastAuthoring.get_last_error] gives for [method PhysXBlastAuthoring.fracture_mesh], or [code]"Cancelled."[/code]. Empty if it succeeded.
+			</description>
+		</method>
+		<method name="get_last_warnings" qualifiers="const">
+			<return type="PackedStringArray" />
+			<description>
+				What the fracture warned about, once finished, as [method PhysXBlastAuthoring.get_last_warnings].
+			</description>
+		</method>
+		<method name="get_stage" qualifiers="const">
+			<return type="int" />
+			<description>
+				The stage it's on, from [code]1[/code] to [method get_stage_count]; [code]0[/code] before the first starts. In order: checking the mesh, cleaning it up, fracturing, finalizing the pieces, building bonds and collision, cooking the pieces' collision hulls.
+			</description>
+		</method>
+		<method name="get_stage_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				How many stages there are: [code]6[/code].
+			</description>
+		</method>
+		<method name="get_stage_description">
+			<return type="String" />
+			<description>
+				The stage it's on, as [signal stage_changed] last described it (for example [code]"Cooking collision hulls (12 of 64)"[/code]).
+			</description>
+		</method>
+		<method name="is_cancelled" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether it finished because [method cancel] stopped it.
+			</description>
+		</method>
+		<method name="is_running" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether it hasn't finished yet: [code]false[/code] once [signal finished] is emitted.
+			</description>
+		</method>
+	</methods>
+	<signals>
+		<signal name="finished">
+			<param index="0" name="asset" type="PhysXBlastAsset" />
+			<description>
+				Emitted once, when the fracture ends: with the asset, or [code]null[/code] if it failed or was cancelled (see [method get_last_error]).
+			</description>
+		</signal>
+		<signal name="stage_changed">
+			<param index="0" name="stage" type="int" />
+			<param index="1" name="stage_count" type="int" />
+			<param index="2" name="description" type="String" />
+			<description>
+				Emitted when a stage starts, and again for each piece while their collision hulls are cooked. [param description] names the stage, for example [code]"Cleaning up the mesh"[/code] or [code]"Cooking collision hulls (12 of 64)"[/code].
+			</description>
+		</signal>
+	</signals>
+</class>

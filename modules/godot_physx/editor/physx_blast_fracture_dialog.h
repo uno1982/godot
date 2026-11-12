@@ -32,10 +32,15 @@
 
 #ifdef GODOT_PHYSX_BLAST
 
+#include "../blast/physx_blast_authoring.h"
+
 #include "scene/gui/dialogs.h"
 
+class Button;
 class EditorResourcePicker;
 class HBoxContainer;
+class PhysXBlastFractureTask;
+class TextureRect;
 class ArrayMesh;
 class HSlider;
 class Label;
@@ -92,6 +97,18 @@ class PhysXBlastFractureDialog : public ConfirmationDialog {
 
 	int seed = 1;
 	Ref<PhysXBlastAsset> authored_asset;
+
+	// The fracture runs in the background: a spinner and its stage show meanwhile, and Stop cancels it.
+	Ref<PhysXBlastFractureTask> running_task;
+	TextureRect *spinner = nullptr;
+	Button *stop_button = nullptr;
+	int spinner_frame = 0;
+	double spinner_time = 0.0;
+	void _set_running(bool p_running);
+	void _cancel_running();
+	void _on_stop();
+	void _on_stage(int p_stage, int p_stage_count, const String &p_description, const Ref<PhysXBlastFractureTask> &p_task);
+	void _on_finished(const Ref<PhysXBlastAsset> &p_asset, const Ref<PhysXBlastFractureTask> &p_task);
 
 	void _start(const Ref<Mesh> &p_mesh);
 	void _regenerate();

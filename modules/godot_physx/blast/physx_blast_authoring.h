@@ -33,9 +33,52 @@
 #include "physx_blast_asset.h"
 
 #include "core/object/ref_counted.h"
+#include "core/object/worker_thread_pool.h"
+#include "core/os/mutex.h"
+#include "core/templates/local_vector.h"
+#include "core/templates/safe_refcount.h"
+#include "core/variant/typed_array.h"
 
+class Material;
 class Mesh;
 class Texture2D;
+class PhysXBlastFractureTask;
+
+// What fracture_mesh() reads from the Mesh (and the cutout texture) before any of the work: the rest runs on these
+// alone, so it can run on another thread.
+struct PhysXBlastFractureInput {
+	PackedVector3Array verts;
+	PackedVector3Array normals; // empty if no surface had any
+	PackedVector2Array uvs;
+	LocalVector<uint32_t> indices;
+	LocalVector<int32_t> triangle_surfaces;
+	int surface_count = 0;
+	TypedArray<Material> surface_materials;
+	int site_count = 0;
+	int seed = 0;
+	int pattern = 0;
+	// PATTERN_CUTOUT: the pattern as one gray byte per pixel, or why there's none (reported when fracturing starts).
+	PackedByteArray cutout_gray;
+	uint32_t cutout_width = 0;
+	uint32_t cutout_height = 0;
+	String cutout_error;
+};
+
+// What the work produces, or why it failed.
+struct PhysXBlastFractureOutput {
+	String error;
+	PackedStringArray warnings;
+	bool cancelled = false;
+	bool done = false;
+	PackedByteArray asset_bytes;
+	Array chunk_points;
+	Array chunk_normals;
+	Array chunk_uvs;
+	Array chunk_surface_starts;
+	PackedInt32Array chunk_interior_starts;
+	Array chunk_hulls;
+	String hull_format;
+};
 
 // In-engine mesh fracturing -- the real replacement for the standalone
 // throwaway blast_test_gen.cpp tool this whole Blast effort prototyped with.
@@ -103,17 +146,82 @@ public:
 	// surfaces, cooking failed, etc).
 	Ref<PhysXBlastAsset> fracture_mesh(const Ref<Mesh> &p_mesh, int p_site_count, int p_seed, FracturePattern p_pattern = PATTERN_VORONOI, const Ref<Texture2D> &p_cutout_pattern = Ref<Texture2D>());
 
+	// The same fracture on a worker thread: the mesh is read here, the rest runs in the background. The task reports
+	// each stage and finishes with the asset (on the main thread), and can be cancelled.
+	Ref<PhysXBlastFractureTask> fracture_mesh_async(const Ref<Mesh> &p_mesh, int p_site_count, int p_seed, FracturePattern p_pattern = PATTERN_VORONOI, const Ref<Texture2D> &p_cutout_pattern = Ref<Texture2D>());
+
 	// Why the last fracture_mesh() failed (empty if it didn't), and what it warned about -- the same text it printed,
 	// for a UI to show (the fracture dialog does).
 	String get_last_error() const { return last_error; }
 	PackedStringArray get_last_warnings() const { return last_warnings; }
 
+	// The stages the work goes through, in order (fracture_mesh_async() reports them).
+	enum Stage {
+		STAGE_CHECKING = 1,
+		STAGE_CLEANING,
+		STAGE_FRACTURING,
+		STAGE_FINALIZING,
+		STAGE_BONDS,
+		STAGE_HULLS,
+		STAGE_COUNT = STAGE_HULLS,
+	};
+	static String stage_name(int p_stage);
+
+	// Reads the mesh and the cutout texture: false (with r_output.error) if there's nothing usable to fracture.
+	static bool read_input(const Ref<Mesh> &p_mesh, int p_site_count, int p_seed, FracturePattern p_pattern, const Ref<Texture2D> &p_cutout_pattern, PhysXBlastFractureInput &r_input, PhysXBlastFractureOutput &r_output);
+	// The work itself, on any thread. p_task (may be null) is told each stage, and is asked between stages whether to stop.
+	static void run(const PhysXBlastFractureInput &p_input, PhysXBlastFractureOutput &r_output, PhysXBlastFractureTask *p_task);
+	// The asset from a finished run, or null if it failed.
+	static Ref<PhysXBlastAsset> make_asset(const PhysXBlastFractureInput &p_input, const PhysXBlastFractureOutput &p_output);
+
 private:
 	String last_error;
 	PackedStringArray last_warnings;
-	Ref<PhysXBlastAsset> _fail(const String &p_message);
-	void _error(const String &p_message);
-	void _warn(const String &p_message);
+};
+
+// A fracture running in the background (PhysXBlastAuthoring::fracture_mesh_async()). Its signals come on the main thread.
+// Blast can't stop partway through a stage, so cancel() takes effect when the running stage ends; finished is emitted
+// then, with no asset.
+class PhysXBlastFractureTask : public RefCounted {
+	GDCLASS(PhysXBlastFractureTask, RefCounted);
+
+	friend class PhysXBlastAuthoring;
+
+	PhysXBlastFractureInput input;
+	PhysXBlastFractureOutput output;
+	Ref<PhysXBlastFractureTask> keep_alive; // while the worker runs
+	WorkerThreadPool::TaskID task_id = WorkerThreadPool::INVALID_TASK_ID;
+	SafeFlag cancel_requested;
+	SafeFlag running;
+	SafeNumeric<int> stage;
+	Mutex description_mutex;
+	String description;
+	// Copied from output on the main thread when finished.
+	Ref<PhysXBlastAsset> asset;
+	String last_error;
+	PackedStringArray last_warnings;
+	bool cancelled = false;
+
+	void _work();
+	void _emit_stage(int p_stage, const String &p_description);
+	void _finish();
+
+protected:
+	static void _bind_methods();
+
+public:
+	// From the worker: the stage it's starting (p_detail: progress within it, e.g. "12 of 64"). False if it should stop.
+	bool report_stage(int p_stage, const String &p_detail = String());
+
+	void cancel();
+	bool is_running() const { return running.is_set(); }
+	bool is_cancelled() const { return cancelled; }
+	int get_stage() const { return stage.get(); }
+	int get_stage_count() const { return PhysXBlastAuthoring::STAGE_COUNT; }
+	String get_stage_description();
+	Ref<PhysXBlastAsset> get_asset() const { return asset; }
+	String get_last_error() const { return last_error; }
+	PackedStringArray get_last_warnings() const { return last_warnings; }
 };
 
 VARIANT_ENUM_CAST(PhysXBlastAuthoring::FracturePattern);

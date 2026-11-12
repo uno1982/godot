@@ -20,9 +20,26 @@
 			<description>
 				Fractures [param mesh] and returns the finished [PhysXBlastAsset], or a null reference on failure: a null mesh; a surface whose indices aren't whole triangles or point past its vertices, or a NaN or infinite vertex; a mesh with no volume (flat, or collapsed to a point); a mesh whose triangles don't form a closed watertight surface after the automatic cleanup pass; or [constant PATTERN_CUTOUT] without a usable [param cutout_pattern]. [method get_last_error] says which. Every triangle surface of [param mesh] is fractured together, each piece keeping which surface its faces came from and the asset keeping each surface's material (a surface that isn't a triangle list is left out, with a warning).
 				A mesh that is already closed (every edge shared by two triangles) skips the cleanup pass. If the cleanup returns nothing or reshapes the mesh beyond its bounds, the mesh is fractured as it was; if it only drops loose parts that weren't a closed solid, the cleaned mesh is used. An inside-out mesh (its triangles facing inward) is fractured with its triangles flipped, so the pieces face outward. Each of these warns (see [method get_last_warnings]).
-				[param site_count] is the cell/slice count: for [constant PATTERN_VORONOI] it is the number of random cells the mesh is split into; for [constant PATTERN_SLICING] it is cut into roughly that many brick-like pieces on the longest axis; it is ignored for [constant PATTERN_CUTOUT] (the pattern texture alone defines the pieces). [param seed] makes [constant PATTERN_VORONOI] reproducible -- the same mesh, count and seed always produce the same asset.
+				[param site_count] is the cell/slice count: for [constant PATTERN_VORONOI] it is the number of random cells the mesh is split into; for [constant PATTERN_SLICING] it is cut into roughly that many brick-like pieces on the longest axis; it is ignored for [constant PATTERN_CUTOUT] (the pattern texture alone defines the pieces). [param seed] makes [constant PATTERN_VORONOI] reproducible -- the same mesh, count and seed always produce the same asset, on every platform.
 				Note the mesh is authored as-is: a source [MeshInstance3D]'s node transform (including scale) is not baked in.
 				Each piece's collision hull is cooked here and stored in the asset (see [member PhysXBlastAsset.chunk_hulls]), so breaking doesn't cook it.
+				The whole fracture runs before this returns, which takes seconds for a detailed mesh; [method fracture_mesh_async] runs it in the background instead.
+			</description>
+		</method>
+		<method name="fracture_mesh_async">
+			<return type="PhysXBlastFractureTask" />
+			<param index="0" name="mesh" type="Mesh" />
+			<param index="1" name="site_count" type="int" />
+			<param index="2" name="seed" type="int" />
+			<param index="3" name="pattern" type="int" enum="PhysXBlastAuthoring.FracturePattern" default="0" />
+			<param index="4" name="cutout_pattern" type="Texture2D" default="null" />
+			<description>
+				The same fracture as [method fracture_mesh], with the same result, on a worker thread: [param mesh] and [param cutout_pattern] are read before this returns, the rest runs in the background while the game or editor keeps running. The returned task reports each stage it starts ([signal PhysXBlastFractureTask.stage_changed]) and emits [signal PhysXBlastFractureTask.finished] with the asset, or with [code]null[/code] on failure (see [method PhysXBlastFractureTask.get_last_error]). Both signals come on the main thread, from the next frame on. The task doesn't need to be kept: it runs until it finishes either way.
+				[codeblock]
+				var task = PhysXBlastAuthoring.new().fracture_mesh_async(mesh, 32, 1)
+				task.stage_changed.connect(func(stage, count, description): label.text = "Stage %d of %d: %s" % [stage, count, description])
+				task.finished.connect(func(asset): if asset: $Destructible.blast_asset = asset)
+				[/codeblock]
 			</description>
 		</method>
 		<method name="get_last_error" qualifiers="const">

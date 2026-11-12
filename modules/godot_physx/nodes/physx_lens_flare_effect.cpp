@@ -38,6 +38,7 @@
 #include "scene/resources/3d/world_3d.h"
 #include "servers/rendering/renderer_rd/framebuffer_cache_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h"
+#include "servers/rendering/renderer_rd/storage_rd/render_scene_data_rd.h"
 #include "servers/rendering/rendering_device_binds.h"
 #include "servers/rendering/rendering_server.h"
 #include "servers/rendering/storage/render_data.h"
@@ -58,6 +59,7 @@ layout(push_constant, std430) uniform Params {
 	vec4 ghost; // x: intensity, y: chroma shift, z: count
 	vec4 halo; // x: intensity, y: width, z: mask, w: compression
 	vec4 color; // rgb: tint * intensity; a: the halo's chroma shift
+	vec4 centre; // xy: the point the flare mirrors through (uv): the screen's centre, or for an XR eye where straight ahead is
 } p;
 )";
 
@@ -154,8 +156,8 @@ vec3 edged(vec2 uv) {
 // a real lens gives its reflections. Each channel fades by where it samples, so a shifted channel doesn't run into
 // the frame's edge.
 vec3 split(vec2 uv, float shift) {
-	vec2 o = uv - 0.5;
-	return vec3(edged(o * (1.0 + shift) + 0.5).r, edged(uv).g, edged(o * (1.0 - shift) + 0.5).b);
+	vec2 o = uv - p.centre.xy;
+	return vec3(edged(o * (1.0 + shift) + p.centre.xy).r, edged(uv).g, edged(o * (1.0 - shift) + p.centre.xy).b);
 }
 
 void main() {
@@ -165,7 +167,7 @@ void main() {
 	}
 	vec2 uv = (vec2(px) + 0.5) / vec2(p.size.xy);
 	vec2 aspect = vec2(p.misc.w, 1.0);
-	vec2 from_centre = uv - 0.5;
+	vec2 from_centre = uv - p.centre.xy;
 
 	// Each ghost: this pixel shows the bright light at its own offset from the centre times the ghost's scale (a
 	// negative scale mirrors it through the centre). A ghost drawn larger than the light spreads the same light over
@@ -174,7 +176,7 @@ void main() {
 	int count = int(p.ghost.z);
 	for (int i = 0; i < count; i++) {
 		float scale = g.scales[i / 4][i % 4];
-		ghosts += split(from_centre * scale + 0.5, p.ghost.y) * g.colors[i].rgb * min(scale * scale, 1.0);
+		ghosts += split(from_centre * scale + p.centre.xy, p.ghost.y) * g.colors[i].rgb * min(scale * scale, 1.0);
 	}
 
 	// The halo: a ring around the centre, the bright light a fixed step from each pixel toward the centre, so a light
@@ -184,7 +186,7 @@ void main() {
 	float r = length(from_centre * aspect);
 	vec2 bent = from_centre / (1.0 + p.halo.w * r);
 	vec2 inward = r > 1e-4 ? -normalize(from_centre * aspect) / aspect : vec2(0.0);
-	vec2 at = bent + inward * p.halo.y * 0.5 + 0.5;
+	vec2 at = bent + inward * p.halo.y * 0.5 + p.centre.xy;
 	float ring = smoothstep(p.halo.z, 1.0, clamp(r / (0.5 * p.misc.w), 0.0, 1.0) * 0.5 + 0.5);
 	vec3 halo = split(at, p.color.a) * ring * (0.1 * p.halo.x);
 
@@ -221,6 +223,7 @@ struct Push {
 	float ghost[4];
 	float halo[4];
 	float color[4];
+	float centre[4];
 };
 static_assert(sizeof(Push) <= 128);
 
@@ -455,8 +458,7 @@ void PhysXLensFlareEffect::_render(int p_callback_type, const RenderData *p_rend
 		return;
 	}
 	const Size2i frame = buffers->get_internal_size();
-	const RID color = buffers->get_internal_texture();
-	if (frame.x < 8 || frame.y < 8 || !color.is_valid()) {
+	if (frame.x < 8 || frame.y < 8 || !buffers->get_internal_texture().is_valid()) {
 		return;
 	}
 	_ensure_targets(rd, frame);
@@ -490,6 +492,38 @@ void PhysXLensFlareEffect::_render(int p_callback_type, const RenderData *p_rend
 	push.color[2] = s.color.b;
 	push.color[3] = s.halo_chroma_shift;
 
+	// An XR camera renders its eyes as the layers of one frame: each eye flares
+	// on its own slice. The flare mirrors through the screen's centre; an eye's
+	// centre points a little away from the head's straight ahead, so each eye
+	// mirrors through where straight ahead is in it instead -- the same
+	// direction for both, so their ghosts agree (through their own centres
+	// they'd land on opposite sides, at a depth that doesn't fuse).
+	const uint32_t view_count = MAX(buffers->get_view_count(), 1u);
+	RenderSceneDataRD *scene = Object::cast_to<RenderSceneDataRD>(p_render_data->get_render_scene_data());
+	for (uint32_t v = 0; v < view_count; v++) {
+		const RID color = view_count > 1 ? buffers->get_internal_texture(v) : buffers->get_internal_texture();
+		if (!color.is_valid()) {
+			continue;
+		}
+		push.centre[0] = 0.5f;
+		push.centre[1] = 0.5f;
+		if (view_count > 1 && scene != nullptr) {
+			const Vector4 clip = scene->get_view_projection(v).xform(Vector4(0.0, 0.0, -1.0, 0.0));
+			if (clip.w > 1e-4) {
+				push.centre[0] = (float)(clip.x / clip.w * 0.5 + 0.5);
+				push.centre[1] = (float)(clip.y / clip.w * 0.5 + 0.5);
+			}
+		}
+		_render_view(rd, frame, color, &push, sizeof(push));
+	}
+}
+
+void PhysXLensFlareEffect::_render_view(RenderingDevice *p_rd, const Size2i &p_frame, const RID &p_color, const void *p_push, uint32_t p_push_size) {
+	RenderingDevice *rd = p_rd;
+	const Size2i frame = p_frame;
+	const RID color = p_color;
+	ERR_FAIL_COND(p_push_size != sizeof(Push));
+	Push push = *(const Push *)p_push;
 	auto sized = [&](const Size2i &p_out, const Size2i &p_in) {
 		push.size[0] = p_out.x;
 		push.size[1] = p_out.y;

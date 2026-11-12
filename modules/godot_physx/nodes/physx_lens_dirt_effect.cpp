@@ -383,18 +383,34 @@ void PhysXLensDirtEffect::_render(int p_callback_type, const RenderData *p_rende
 		return;
 	}
 	const Size2i frame = buffers->get_internal_size();
-	const RID color = buffers->get_internal_texture();
 	// The dirt as the GPU has it (its sRGB view, so it reads linear like the frame).
 	const RID dirt = RendererRD::TextureStorage::get_singleton()->texture_get_rd_texture(s.dirt_texture, true);
-	if (frame.x < 8 || frame.y < 8 || !color.is_valid() || !dirt.is_valid()) {
+	if (frame.x < 8 || frame.y < 8 || !buffers->get_internal_texture().is_valid() || !dirt.is_valid()) {
 		return;
 	}
 	_ensure_targets(rd, frame);
+	// An XR camera renders its eyes as the layers of one frame: each eye's lens
+	// gets its own pass, on its own slice.
+	const uint32_t view_count = MAX(buffers->get_view_count(), 1u);
+	for (uint32_t v = 0; v < view_count; v++) {
+		const RID color = view_count > 1 ? buffers->get_internal_texture(v) : buffers->get_internal_texture();
+		if (color.is_valid()) {
+			_render_view(rd, s, buffers->get_luminance_multiplier(), frame, color, dirt);
+		}
+	}
+}
+
+void PhysXLensDirtEffect::_render_view(RenderingDevice *p_rd, const Snapshot &p_dirt, float p_luminance, const Size2i &p_frame, const RID &p_color, const RID &p_dirt_texture) {
+	RenderingDevice *rd = p_rd;
+	const Snapshot &s = p_dirt;
+	const Size2i frame = p_frame;
+	const RID color = p_color;
+	const RID dirt = p_dirt_texture;
 
 	Push push = {};
 	// The Mobile renderer (without HDR 2D) stores color halved, so 0..2 fits its buffer: read it back up, and keep the
 	// threshold under what it can hold.
-	const float luminance = buffers->get_luminance_multiplier();
+	const float luminance = p_luminance;
 	push.misc[0] = luminance > 1.0f ? MIN(s.threshold, 0.75f * luminance) : s.threshold;
 	push.misc[1] = luminance;
 	push.color[0] = s.color.r;

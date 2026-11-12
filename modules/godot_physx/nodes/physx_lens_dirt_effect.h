@@ -85,6 +85,7 @@ private:
 	void _dispatch(RenderingDevice *p_rd, int p_pass, const Vector<RD::Uniform> &p_uniforms, const Size2i &p_size, const void *p_push, uint32_t p_push_size);
 	void _composite(RenderingDevice *p_rd, const RID &p_color, const RID &p_bloom, const RID &p_dirt, const void *p_push, uint32_t p_push_size);
 	void _render(int p_callback_type, const RenderData *p_render_data);
+	void _render_view(RenderingDevice *p_rd, const Snapshot &p_dirt, float p_luminance, const Size2i &p_frame, const RID &p_color, const RID &p_dirt_texture);
 
 protected:
 	static void _bind_methods() {}

@@ -4,7 +4,7 @@
 		A mesh that fractures into real rigid-body debris at runtime, provided by the PhysX module's NvBlast integration.
 	</brief_description>
 	<description>
-		Author one by right-clicking a [MeshInstance3D] in the Scene tree dock (or a [Mesh] resource in the FileSystem dock) and picking [b]Fracture with Blast...[/b] -- a live in-viewport dialog lets you pick a fracture pattern and Accept replaces the node with a [PhysXDestructible3D] using the result, saved as a [member blast_asset] resource next to the scene. Script-side authoring goes through [method PhysXBlastAuthoring.fracture_mesh].
+		Author one by right-clicking a [MeshInstance3D] in the Scene tree dock (or a [Mesh] resource in the FileSystem dock) and picking [b]Fracture with Blast...[/b] -- a live in-viewport dialog lets you pick a fracture pattern and Accept replaces the node with a [PhysXDestructible3D] using the result, saved as a [member blast_asset] resource next to the scene. Script-side authoring goes through [method PhysXBlastAuthoring.fracture_mesh], or [method PhysXBlastAuthoring.fracture_mesh_async] to fracture in the background.
 		While intact, it renders and collides as the whole unfractured mesh through one [PhysicsServer3D] body. [method apply_radial_damage] breaks it explicitly -- an explosion, a weapon hit -- and each newly detached piece becomes its own real rigid body with a cooked convex collision hull, kicked outward from the damage origin at [member shatter_speed]. [member dynamic] additionally makes the intact object fall and collide like any other rigid body, and lets a hard enough physical impact fracture it on its own via [member impact_strength] / [member impact_damage_scale] / [member impact_radius], the way stacked destructible props behave in other engines' Blast integrations.
 		[b]How damage, health, and radius actually interact:[/b] every bond holding two pieces of the mesh together starts with [member health] "hit points." A single [method apply_radial_damage] call applies its [code]damage[/code] amount [i]in full[/i] to every bond within [code]min_radius[/code] of the hit, falling off linearly to zero by [code]max_radius[/code] (nothing beyond that radius is touched at all). A bond breaks once the damage it has received -- from one hit or accumulated across several -- reaches its [member health]. So [code]damage &gt;= health[/code] at full strength (inside [code]min_radius[/code]) breaks that bond outright in one hit; a weaker or more distant hit only chips at it, leaving it standing until a harder or closer follow-up (or several weaker ones) finishes the job. A piece only visibly detaches once every bond connecting it to the rest of the structure has broken -- a hit that weakens several bonds without fully breaking any of them can leave the object looking untouched even though it took real damage.
 		[member dynamic]'s auto-fracture path feeds the exact same pipeline: a collision whose impulse clears [member impact_strength] is converted to [code]damage = (impulse - impact_strength) * impact_damage_scale[/code] (floored so it always at least matches [member health] × 1.5, guaranteeing a real break rather than a hit that looked hard but silently did nothing) and applied via [method apply_radial_damage] at the contact point with [code]min_radius = 0[/code] and [code]max_radius = [/code][member impact_radius].
@@ -137,7 +137,7 @@
 			Distance from the camera at which every piece starts being visible, the same as [member GeometryInstance3D.visibility_range_begin]. [code]0.0[/code] disables the near limit.
 		</member>
 		<member name="visibility_range_begin_margin" type="float" setter="set_visibility_range_begin_margin" getter="get_visibility_range_begin_margin" default="0.0">
-			Fade transition distance for [member visibility_range_begin], the same as [member GeometryInstance3D.visibility_range_begin_margin]. Only has an effect when [member visibility_range_fade_mode] isn't [constant VISIBILITY_RANGE_FADE_DISABLED].
+			Fade transition distance for [member visibility_range_begin], the same as [member GeometryInstance3D.visibility_range_begin_margin]. With [member visibility_range_fade_mode] at [constant VISIBILITY_RANGE_FADE_DISABLED], it is a hysteresis distance instead: pieces change visibility only once they are this far past the limit.
 		</member>
 		<member name="visibility_range_end" type="float" setter="set_visibility_range_end" getter="get_visibility_range_end" default="0.0">
 			Distance from the camera beyond which every piece stops being visible, the same as [member GeometryInstance3D.visibility_range_end]. [code]0.0[/code] disables the far limit.
@@ -159,7 +159,7 @@
 	</signals>
 	<constants>
 		<constant name="GI_MODE_DISABLED" value="0" enum="GIMode">
-			Pieces neither receive nor are captured by baked or dynamic GI.
+			Pieces aren't baked into GI, but still receive the indirect light and reflections of [VoxelGI] and SDFGI, as with [constant GeometryInstance3D.GI_MODE_DISABLED].
 		</constant>
 		<constant name="GI_MODE_STATIC" value="1" enum="GIMode">
 			Pieces are treated as static geometry for GI purposes, matching a plain [MeshInstance3D]'s default. The default for [member gi_mode].
@@ -186,7 +186,7 @@
 			Each piece fades its own alpha in/out at the visibility range edges.
 		</constant>
 		<constant name="VISIBILITY_RANGE_FADE_DEPENDENCIES" value="2" enum="VisibilityRangeFadeMode">
-			Pieces this object is visually linked to (via a shared LOD group) fade together instead of independently.
+			As [constant GeometryInstance3D.VISIBILITY_RANGE_FADE_DEPENDENCIES]: the pieces don't fade themselves, the nodes whose [member Node3D.visibility_parent] they are fade in. Pieces are no node's visibility parent, so they pop in and out as with [constant VISIBILITY_RANGE_FADE_DISABLED].
 		</constant>
 		<constant name="ANCHOR_FRAMED" value="0" enum="Anchor">
 			Pieces still touching the bottom, top, left or right edge stay in place; a piece cut free of all four falls. For a wall that is part of a building, a door, a window or a panel in a frame: its upper part can hang from the frame, but a chunk punched out of the middle drops.

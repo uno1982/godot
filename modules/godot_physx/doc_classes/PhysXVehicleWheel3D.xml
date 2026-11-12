@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <class name="PhysXVehicleWheel3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
 	<brief_description>
-		One wheel of a [PhysXVehicle3D]. Add exactly 4 as children of a [PhysXVehicle3D], the same way [VehicleWheel3D] children work on a [VehicleBody3D].
+		One wheel of a [PhysXVehicle3D] or [PhysXMotorcycle3D]. Add exactly 4 as children of a [PhysXVehicle3D], or 2 of a [PhysXMotorcycle3D], the same way [VehicleWheel3D] children work on a [VehicleBody3D].
 	</brief_description>
 	<description>
 		This node's own [member Node3D.position] is where the wheel rests under its own static share of the vehicle's weight -- the same convention [VehicleWheel3D]'s own position uses. It is not a separate offset property, so a [MeshInstance3D] parented under it lines up with the real, live wheel motion (suspension jounce, steering angle, roll) automatically, with no manual transform syncing, and the Inspector's own gizmo shows the wheel sitting exactly where Play will settle it -- no separate editor-time-vs-runtime estimate involved.
-		Exactly 2 of a vehicle's 4 wheels must have [member use_as_steering] enabled (the front axle) -- [PhysXVehicle3D] surfaces a configuration warning if that is not the case.
+		Exactly 2 of a [PhysXVehicle3D]'s 4 wheels (the front axle), or 1 of a [PhysXMotorcycle3D]'s 2 (the front wheel), must have [member use_as_steering] enabled -- the vehicle shows a configuration warning if that is not the case.
 	</description>
 	<tutorials>
 	</tutorials>
@@ -47,10 +47,10 @@
 			Grip once the tire is fully sliding/locked (100% wheel slip), as a fraction of [member tire_friction]. Lower values make a locked wheel (hard braking) or a spun-out wheel (hard throttle) slide/skid more readily instead of gripping like a rolling tire; [code]1.0[/code] disables the falloff entirely (a locked tire grips as well as a rolling one).
 		</member>
 		<member name="use_as_steering" type="bool" setter="set_use_as_steering" getter="is_used_as_steering" default="false">
-			Whether this wheel is on the steering (front) axle. Exactly 2 of a vehicle's 4 wheels must have this enabled -- [PhysXVehicle3D] surfaces a configuration warning otherwise. Also determines which axle [member PhysXVehicle3D.ackermann_strength] applies Ackermann correction to.
+			Whether this wheel steers (the front axle, or a motorcycle's front wheel). Exactly 2 of a [PhysXVehicle3D]'s 4 wheels, or 1 of a [PhysXMotorcycle3D]'s 2, must have this enabled -- the vehicle shows a configuration warning otherwise. Also determines which axle [member PhysXVehicle3D.ackermann_strength] applies Ackermann correction to.
 		</member>
 		<member name="use_as_traction" type="bool" setter="set_use_as_traction" getter="is_used_as_traction" default="true">
-			Whether this wheel receives engine torque from [member PhysXVehicle3D.throttle]. All 4 wheels default to [code]true[/code] (all-wheel drive) -- disable on the rear (or front) pair for front-wheel (or rear-wheel) drive instead.
+			Whether this wheel of a [PhysXVehicle3D] receives engine torque from [member PhysXVehicle3D.throttle]. All 4 wheels default to [code]true[/code] (all-wheel drive) -- disable on the rear (or front) pair for front-wheel (or rear-wheel) drive instead. A [PhysXMotorcycle3D] ignores it: its rear wheel is always the driven one.
 		</member>
 		<member name="wheel_mass" type="float" setter="set_wheel_mass" getter="get_wheel_mass" default="20.0">
 			The wheel's own mass, in kg -- affects how quickly it spins up/down under engine torque or braking, independent of the vehicle's own [member PhysXVehicle3D.mass].

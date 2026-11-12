@@ -976,16 +976,28 @@ static/dynamic baking per piece (defaults to Static, matching a plain
 fracture can spawn many pieces at once and a VoxelGI's dynamic-object
 tracking cost scales with how many it has to follow).
 
-Pieces keep the source mesh's UVs and normals through the cuts, and have
-tangents for normal maps. `material_override` textures them (the fracture dialog
-sets it from the mesh's material), and `interior_material` gives the cut faces
-their own: rock inside a painted wall, splinters inside a plank. Cut-face UVs are
+Every surface of the mesh is fractured, and each piece draws its faces with
+their own surface's material (stored in the asset; the fracture dialog takes the
+`MeshInstance3D`'s surface override materials where it has them). Pieces keep the source mesh's
+UVs and normals through the cuts, and have tangents for normal maps.
+`material_override` replaces all the materials, and `interior_material` gives
+the cut faces their own: rock inside a painted wall, splinters inside a plank. Cut-face UVs are
 in mesh units, 1 UV to 1 unit, so the material's `uv1_scale` sets the tiling. They
 don't stretch, every piece has the same texture density, and the two faces of a
 crack show the same part of the texture, while each flat cut gets its own
 projection, so the pattern doesn't line up from one face of a piece to the next.
-Only the mesh's first surface is fractured. An asset saved before this keeps
-working, flat-shaded and without UVs: fracture the mesh again to get them.
+An asset saved before these were kept still works, flat-shaded, without UVs and
+with its first surface only: fracture the mesh again to get them.
+
+Fracturing also cooks each piece's collision hull and stores it in the asset,
+so a break doesn't cook them on the main thread. A destructible whose asset was
+fractured before that shows a warning, and the asset's Inspector has a **Cook
+Hulls** button. Fracturing runs in
+the background: the dialog shows which of its six stages it is on, with a
+**Stop** button, and `PhysXBlastAuthoring.fracture_mesh_async()` does the same
+from a script. Fracturing a detailed mesh takes seconds, most of it cleaning
+the mesh up first (Godot's `SphereMesh` and `TorusMesh` repeat vertices along
+their UV seams, so they always get the cleanup).
 
 ## Vehicles — `PhysXVehicle3D`, `PhysXMotorcycle3D`, `PhysXTank3D`
 

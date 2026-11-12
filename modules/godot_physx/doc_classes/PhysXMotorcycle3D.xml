@@ -276,7 +276,7 @@
 			Same meaning as [member CollisionObject3D.collision_mask]. Applies to the chassis (see [member collision_layer]) and to the wheels' ground raycasts: like a [RayCast3D], a wheel only rests on a shape whose collision layer is in this mask, and never on an [Area3D].
 		</member>
 		<member name="drivetrain" type="int" setter="set_drivetrain" getter="get_drivetrain" enum="PhysXMotorcycle3D.Drivetrain" default="0">
-			How [member throttle] reaches the rear wheel. [constant DRIVETRAIN_DIRECT] is wheel torque up to [member max_engine_torque]. [constant DRIVETRAIN_ENGINE] is PhysX's engine drive, as on [PhysXVehicle3D]: an engine, clutch and gearbox, set up with the engine and gearbox properties, which the inspector shows only in that mode. They default to a sport bike's: 110 N·m to 12000 RPM and six gears, about 115 km/h in first. Changing it while playing rebuilds the motorcycle.
+			How [member throttle] reaches the rear wheel. [constant DRIVETRAIN_DIRECT] is wheel torque up to [member max_engine_torque]. [constant DRIVETRAIN_ENGINE] is PhysX's engine drive, as on [PhysXVehicle3D]: an engine, clutch and gearbox, set up with the engine and gearbox properties, which the inspector shows only in that mode. They default to a sport bike's: 110 N·m to 12000 RPM and six gears, about 115 km/h in first on a 0.3 m wheel. Changing it while playing rebuilds the motorcycle.
 		</member>
 		<member name="engine_damping_full_throttle" type="float" setter="set_engine_damping_full_throttle" getter="get_engine_damping_full_throttle" default="0.02">
 			How quickly the engine slows on its own at full throttle. The damping eases between this and the zero-throttle rates as the throttle moves. Only with [member drivetrain] set to [constant DRIVETRAIN_ENGINE].

@@ -44,7 +44,7 @@
 #include "servers/rendering/storage/render_data.h"
 
 Mutex PhysXLightShaftsEffect::mutex;
-bool PhysXLightShaftsEffect::backdrop_ready = false;
+uint32_t PhysXLightShaftsEffect::backdrop_ready = 0;
 HashMap<ObjectID, PhysXLightShaftsEffect::Snapshot> PhysXLightShaftsEffect::shafts;
 HashMap<ObjectID, int> PhysXLightShaftsEffect::worlds;
 
@@ -217,28 +217,35 @@ static_assert(sizeof(Push) == 128);
 
 } // namespace
 
-RID PhysXLightShaftsEffect::gas_backdrop(RenderingDevice *p_rd, const Size2i &p_size) {
+RID PhysXLightShaftsEffect::gas_backdrop(RenderingDevice *p_rd, const Size2i &p_size, uint32_t p_view) {
 	{
 		MutexLock lock(mutex);
 		if (shafts.is_empty()) {
 			return RID();
 		}
 	}
+	ERR_FAIL_UNSIGNED_INDEX_V(p_view, MAX_VIEWS, RID());
 	Ref<PhysXLightShaftsEffect> effect = get_shared();
-	if (effect->backdrop.is_null() || effect->backdrop_size != p_size) {
-		if (effect->backdrop.is_valid()) {
-			p_rd->free_rid(effect->backdrop);
+	if (effect->backdrop_size != p_size) {
+		for (RID &r : effect->backdrop) {
+			if (r.is_valid()) {
+				p_rd->free_rid(r);
+				r = RID();
+			}
 		}
+		effect->backdrop_size = p_size;
+	}
+	RID &backdrop = effect->backdrop[p_view];
+	if (backdrop.is_null()) {
 		RD::TextureFormat tf;
 		tf.width = p_size.x;
 		tf.height = p_size.y;
 		tf.format = RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
 		tf.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT;
-		effect->backdrop = p_rd->texture_create(tf, RD::TextureView());
-		effect->backdrop_size = p_size;
+		backdrop = p_rd->texture_create(tf, RD::TextureView());
 	}
-	backdrop_ready = true;
-	return effect->backdrop;
+	backdrop_ready |= 1u << p_view;
+	return backdrop;
 }
 
 void PhysXLightShaftsEffect::set_shafts(const ObjectID &p_node, const Snapshot &p_snapshot) {
@@ -297,8 +304,10 @@ PhysXLightShaftsEffect::~PhysXLightShaftsEffect() {
 			return;
 		}
 		_free_targets(rd);
-		if (backdrop.is_valid()) {
-			rd->free_rid(backdrop);
+		for (const RID &r : backdrop) {
+			if (r.is_valid()) {
+				rd->free_rid(r);
+			}
 		}
 		for (const KeyValue<int64_t, RID> &kv : composite_pipelines) {
 			rd->free_rid(kv.value);
@@ -395,9 +404,10 @@ void PhysXLightShaftsEffect::_dispatch(RenderingDevice *p_rd, int p_pass, const 
 }
 
 void PhysXLightShaftsEffect::_render(int p_callback_type, const RenderData *p_render_data) {
-	// Flow copied the frame before its gas this frame (only for this frame).
-	const bool gas = backdrop_ready;
-	backdrop_ready = false;
+	// The views Flow copied the frame of before its gas this frame (only for
+	// this frame).
+	const uint32_t gas = backdrop_ready;
+	backdrop_ready = 0;
 	Snapshot s;
 	{
 		MutexLock lock(mutex);
@@ -416,18 +426,40 @@ void PhysXLightShaftsEffect::_render(int p_callback_type, const RenderData *p_re
 		return;
 	}
 	const Size2i frame = buffers->get_internal_size();
-	const RID color = buffers->get_internal_texture();
-	const RID depth = buffers->get_depth_texture();
-	if (frame.x <= 0 || frame.y <= 0 || !color.is_valid() || !depth.is_valid()) {
+	if (frame.x <= 0 || frame.y <= 0 || !buffers->get_internal_texture().is_valid() || !buffers->get_depth_texture().is_valid()) {
 		return;
 	}
-	const Projection proj = scene->get_cam_projection();
-	if (proj.is_orthogonal() || s.light_direction.is_zero_approx()) {
+	if (scene->get_cam_projection().is_orthogonal() || s.light_direction.is_zero_approx()) {
 		return; // a sun at infinity has no place on an orthographic screen
 	}
+	const float luminance = buffers->get_luminance_multiplier();
+	// An XR camera renders its eyes as the layers of one frame: each eye gets
+	// its own pass on its own slice, with its own projection (which carries the
+	// eye's offset from the shared camera transform).
+	const uint32_t view_count = MAX(buffers->get_view_count(), 1u);
+	for (uint32_t v = 0; v < MIN(view_count, MAX_VIEWS); v++) {
+		const bool stereo = view_count > 1;
+		const RID color = stereo ? buffers->get_internal_texture(v) : buffers->get_internal_texture();
+		const RID depth = stereo ? buffers->get_depth_texture(v) : buffers->get_depth_texture();
+		if (!color.is_valid() || !depth.is_valid()) {
+			continue;
+		}
+		const RID backdrop_view = (gas & (1u << v)) && backdrop_size == frame ? backdrop[v] : RID();
+		_render_view(rd, s, frame, color, depth, backdrop_view, scene->get_cam_transform(), stereo ? scene->get_view_projection(v) : scene->get_cam_projection(), stereo ? scene->get_view_eye_offset(v) : Vector3(), luminance);
+	}
+}
 
-	// The sun's place on screen: the direction toward it, projected.
-	const Vector3 to_sun = scene->get_cam_transform().basis.xform_inv(-s.light_direction.normalized());
+void PhysXLightShaftsEffect::_render_view(RenderingDevice *p_rd, const Snapshot &p_shafts, const Size2i &p_frame, const RID &p_color, const RID &p_depth, const RID &p_backdrop, const Transform3D &p_camera, const Projection &p_projection, const Vector3 &p_eye_offset, float p_luminance) {
+	RenderingDevice *rd = p_rd;
+	const Snapshot &s = p_shafts;
+	const Size2i frame = p_frame;
+	const RID color = p_color;
+	const RID depth = p_depth;
+	const Projection proj = p_projection;
+
+	// The sun's place on screen: the direction toward it, projected (a
+	// direction, so an eye's offset doesn't move it, only its turn).
+	const Vector3 to_sun = p_camera.basis.xform_inv(-s.light_direction.normalized());
 	const Vector4 clip = proj.xform(Vector4(to_sun.x, to_sun.y, to_sun.z, 0.0));
 	if (clip.w <= 1e-4) {
 		return; // behind the camera
@@ -444,7 +476,9 @@ void PhysXLightShaftsEffect::_render(int p_callback_type, const RenderData *p_re
 	_ensure_targets(rd, half);
 
 	Push push = {};
-	const Projection inv_proj = proj.inverse();
+	// Clip space back to positions around this eye: unprojecting gives them
+	// around the shared camera, which the eye is offset from.
+	const Projection inv_proj = Projection(Transform3D(Basis(), -p_eye_offset)) * proj.inverse();
 	for (int c = 0; c < 4; c++) {
 		for (int r = 0; r < 4; r++) {
 			push.inv_proj[c * 4 + r] = (float)inv_proj.columns[c][r];
@@ -461,7 +495,7 @@ void PhysXLightShaftsEffect::_render(int p_callback_type, const RenderData *p_re
 	push.misc[0] = s.occlusion_strength;
 	// The Mobile renderer (without HDR 2D) stores color halved, so 0..2 fits its
 	// buffer: read it back up, and keep the threshold under what it can hold.
-	const float luminance = buffers->get_luminance_multiplier();
+	const float luminance = p_luminance;
 	push.misc[1] = luminance;
 	if (luminance > 1.0f) {
 		push.bloom[3] = MIN(push.bloom[3], 0.75f * luminance);
@@ -473,7 +507,7 @@ void PhysXLightShaftsEffect::_render(int p_callback_type, const RenderData *p_re
 	push.size[2] = frame.x;
 	push.size[3] = frame.y;
 
-	_dispatch(rd, PASS_PREPARE, { RD::Uniform(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ linear_sampler, color })), RD::Uniform(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 1, Vector<RID>({ linear_sampler, depth })), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 2, half_a), RD::Uniform(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 3, Vector<RID>({ linear_sampler, gas && backdrop_size == frame ? backdrop : color })), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 4, gas_cover) }, half, &push, sizeof(push));
+	_dispatch(rd, PASS_PREPARE, { RD::Uniform(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ linear_sampler, color })), RD::Uniform(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 1, Vector<RID>({ linear_sampler, depth })), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 2, half_a), RD::Uniform(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 3, Vector<RID>({ linear_sampler, p_backdrop.is_valid() ? p_backdrop : color })), RD::Uniform(RD::UNIFORM_TYPE_IMAGE, 4, gas_cover) }, half, &push, sizeof(push));
 	// Three passes, each reaching SAMPLES times further: the last reaches the
 	// full ray length.
 	RID src = half_a;

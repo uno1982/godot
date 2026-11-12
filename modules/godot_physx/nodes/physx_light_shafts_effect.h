@@ -31,6 +31,8 @@
 #pragma once
 
 #include "core/math/color.h"
+#include "core/math/projection.h"
+#include "core/math/transform_3d.h"
 #include "core/math/vector3.h"
 #include "core/os/mutex.h"
 #include "core/templates/hash_map.h"
@@ -86,27 +88,30 @@ private:
 	RID half_b;
 	RID gas_cover; // half size: how much of each pixel is gas (written by the prepare pass)
 	Size2i half_size;
-	// The frame as it was before PhysXFlow3D drew its gas (see gas_backdrop()).
-	RID backdrop;
+	// The frame as it was before PhysXFlow3D drew its gas (see gas_backdrop()),
+	// one per view (an XR camera's eyes).
+	static constexpr uint32_t MAX_VIEWS = 2;
+	RID backdrop[MAX_VIEWS];
 	Size2i backdrop_size;
-	static bool backdrop_ready; // copied this frame
+	static uint32_t backdrop_ready; // a bit per view copied this frame
 
 	bool _ensure(RenderingDevice *p_rd);
 	void _ensure_targets(RenderingDevice *p_rd, const Size2i &p_size);
 	void _free_targets(RenderingDevice *p_rd);
 	void _dispatch(RenderingDevice *p_rd, int p_pass, const Vector<RD::Uniform> &p_uniforms, const Size2i &p_size, const void *p_push, uint32_t p_push_size);
 	void _composite(RenderingDevice *p_rd, const RID &p_color, const RID &p_shafts, const RID &p_depth, const void *p_push, uint32_t p_push_size);
+	void _render_view(RenderingDevice *p_rd, const Snapshot &p_shafts, const Size2i &p_frame, const RID &p_color, const RID &p_depth, const RID &p_backdrop, const Transform3D &p_camera, const Projection &p_projection, const Vector3 &p_eye_offset, float p_luminance);
 	void _render(int p_callback_type, const RenderData *p_render_data);
 
 protected:
 	static void _bind_methods() {}
 
 public:
-	// For PhysXFlowRenderEffect, before it draws its gas: a texture of p_size
-	// to copy the frame into (the shafts take their light from the frame
-	// without the gas, dimmed by how much the gas covers), or an invalid RID
-	// when there are no shafts to draw.
-	static RID gas_backdrop(RenderingDevice *p_rd, const Size2i &p_size);
+	// For PhysXFlowRenderEffect, before it draws its gas in view p_view: a
+	// texture of p_size to copy that view's frame into (the shafts take their
+	// light from the frame without the gas, dimmed by how much the gas covers),
+	// or an invalid RID when there are no shafts to draw.
+	static RID gas_backdrop(RenderingDevice *p_rd, const Size2i &p_size, uint32_t p_view);
 
 	static void set_shafts(const ObjectID &p_node, const Snapshot &p_snapshot);
 	static void remove_shafts(const ObjectID &p_node);

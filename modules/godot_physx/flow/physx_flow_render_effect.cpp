@@ -378,12 +378,10 @@ void PhysXFlowRenderEffect::_render(int p_callback_type, const RenderData *p_ren
 		}
 		// The light shafts (drawn next) take their light from the frame without the
 		// gas: glowing gas isn't the sun. (As the frame holds it: halved on Mobile.)
-		// They draw one view, the first.
-		if (v == 0) {
-			const RID backdrop = PhysXLightShaftsEffect::gas_backdrop(rd, size);
-			if (backdrop.is_valid()) {
-				copy_texture(rd, target, backdrop, size, direct ? 1.0f : 1.0f / luminance);
-			}
+		// Each view has its own.
+		const RID backdrop = PhysXLightShaftsEffect::gas_backdrop(rd, size, v);
+		if (backdrop.is_valid()) {
+			copy_texture(rd, target, backdrop, size, direct ? 1.0f : 1.0f / luminance);
 		}
 		for (PhysXFlow3D *flow : sorted) {
 			flow->render_rd(this, rd, view_f, projection_f, size, depth, target, inv_view_projection, view_eye, render_data_rd != nullptr ? render_data_rd->lights : nullptr, render_data_rd != nullptr ? render_data_rd->shadow_atlas : RID(), v == 0, v + 1 == view_count);

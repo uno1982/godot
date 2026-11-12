@@ -124,7 +124,7 @@ void main() {
 	float through = clamp(luma(texture(color_tex, uv).rgb * p.misc.y) / lum, 0.0, 1.0);
 	open *= through;
 	// Gas wherever it visibly changes the frame (by color, not just darkening:
-	// grey smoke over a grey wall barely darkens it, and where it doesn't
+	// gray smoke over a gray wall barely darkens it, and where it doesn't
 	// change the frame at all it can't be seen either way).
 	vec3 with_gas = texture(color_tex, uv).rgb * p.misc.y;
 	vec3 diff = abs(with_gas - c);

@@ -33,9 +33,8 @@
 #include "flow_scatter_rd.h"
 
 #include "core/os/mutex.h"
-#include "core/templates/paged_array.h"
-
 #include "core/templates/local_vector.h"
+#include "core/templates/paged_array.h"
 #include "scene/3d/node_3d.h"
 #include "scene/resources/gradient.h"
 
@@ -161,6 +160,7 @@ private:
 	bool scattering_directional = false;
 	int scattering_shadow_steps = 4;
 	float scattering_shadow_reach = 4.0f;
+
 public:
 	// Which lights' shadows the glow receives (a checkbox list). Directional
 	// will be a third flag (4) when the sun's shadow reaches the gas.

@@ -2295,7 +2295,8 @@ void PhysXGIView::ensure(RenderingDevice *p_rd, const Size2i &p_frame) {
 	trace_size = Size2i(MAX(p_frame.x / 4, 1), MAX(p_frame.y / 4, 1));
 	RD::TextureFormat tf;
 	tf.format = RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
-	tf.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT;
+	// Copy-to, so they can be cleared below.
+	tf.usage_bits = RD::TEXTURE_USAGE_STORAGE_BIT | RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_COPY_TO_BIT;
 	tf.width = trace_size.x;
 	tf.height = trace_size.y;
 	trace = p_rd->texture_create(tf, RD::TextureView());
@@ -2322,6 +2323,11 @@ void PhysXGIView::ensure(RenderingDevice *p_rd, const Size2i &p_frame) {
 	for (int i = 0; i < 2; i++) {
 		reflect_accum[i] = p_rd->texture_create(tf, RD::TextureView());
 		reflect_filtered[i] = p_rd->texture_create(tf, RD::TextureView());
+	}
+	// A new texture's memory isn't cleared on every driver (Vulkan hands back what was there, D3D12 mostly zeros): start
+	// them all black, so nothing a pass reads before it's been written (a neighbour, the other history) is garbage.
+	for (const RID &r : { trace, accum[0], accum[1], accum_depth[0], accum_depth[1], moments[0], moments[1], variance, filtered[0], filtered[1], filtered_variance[0], filtered_variance[1], reflect_trace, reflect_accum[0], reflect_accum[1], reflect_depth[0], reflect_depth[1], reflect_filtered[0], reflect_filtered[1] }) {
+		p_rd->texture_clear(r, Color(0, 0, 0, 0), 0, 1, 0, 1);
 	}
 }
 
@@ -2373,7 +2379,7 @@ void PhysXGIEffect::_render(int p_callback_type, const RenderData *p_render_data
 	const RID reflection = buffers->get_texture(gi_scope, reflection_name);
 	const RID normal = buffers->get_texture(clustered_scope, normal_name);
 	const RID depth = buffers->get_depth_texture();
-	const RID color = buffers->get_internal_texture(); // still last frame's image: the opaque pass hasn't run yet
+	RID color = buffers->get_internal_texture(); // still last frame's image: the opaque pass hasn't run yet
 	const RD::TextureFormat out_format = rd->texture_get_format(ambient);
 	const Size2i out_size(out_format.width, out_format.height);
 	// This viewport's targets and history.
@@ -2385,6 +2391,12 @@ void PhysXGIEffect::_render(int p_callback_type, const RenderData *p_render_data
 	}
 	PhysXGIView &v = *view.ptr();
 	v.ensure(rd, size);
+	// No last frame yet (the first, or the first since the buffers were remade at a new size): Godot's image is a new
+	// texture then, never drawn into, and on Vulkan holds whatever its memory did. Read as the light at the rays' hits,
+	// that garbage would go into the radiance cache and spread from there for hundreds of frames; black instead.
+	if (!v.have_history) {
+		color = RendererRD::TextureStorage::get_singleton()->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK);
+	}
 
 	const Transform3D cam_transform = scene->get_cam_transform();
 	// The raw projection, as Godot's own GI step uses it: get_cam_projection() already has the depth correction (and TAA

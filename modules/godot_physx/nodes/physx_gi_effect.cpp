@@ -2368,11 +2368,30 @@ void PhysXGIEffect::_render(int p_callback_type, const RenderData *p_render_data
 	if (buffers == nullptr || scene == nullptr || rd == nullptr || !_ensure(rd)) {
 		return;
 	}
-	// Godot's GI step makes the buffers on its first run: nothing to write into until then.
 	static const StringName gi_scope = "rbgi", ambient_name = "ambient", reflection_name = "reflection";
 	static const StringName clustered_scope = "forward_clustered", normal_name = "normal_roughness";
-	if (!buffers->has_texture(gi_scope, ambient_name) || !buffers->has_texture(clustered_scope, normal_name)) {
+	if (!buffers->has_texture(clustered_scope, normal_name)) {
 		return;
+	}
+	// Godot's GI step makes the GI buffers on its first run after the render buffers are (re)made, which is after this:
+	// left to it, they'd be made on a frame this didn't write them, and its own step is the do-nothing hook, so the
+	// surfaces would read a new texture never written (on Vulkan whatever its memory held: a frame of colored noise each
+	// time the viewport is resized). Made here instead, as Godot makes them, and written below; its step then keeps them.
+	if (!buffers->has_texture(gi_scope, ambient_name)) {
+		RendererRD::GI *gi = RendererSceneRenderRD::get_singleton()->get_gi();
+		const bool half = gi->half_resolution;
+		Size2i gi_size = buffers->get_internal_size();
+		if (half) {
+			gi_size.x >>= 1;
+			gi_size.y >>= 1;
+		}
+		const uint32_t usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT;
+		buffers->create_texture(gi_scope, ambient_name, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, usage_bits, RD::TEXTURE_SAMPLES_1, gi_size);
+		buffers->create_texture(gi_scope, reflection_name, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, usage_bits, RD::TEXTURE_SAMPLES_1, gi_size);
+		if (buffers->has_custom_data(gi_scope)) {
+			Ref<RendererRD::GI::RenderBuffersGI> rbgi = buffers->get_custom_data(gi_scope);
+			rbgi->using_half_size_gi = half;
+		}
 	}
 	const Size2i size = buffers->get_internal_size();
 	const RID ambient = buffers->get_texture(gi_scope, ambient_name);

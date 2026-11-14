@@ -106,7 +106,7 @@ layout(set = 0, binding = 9, std140) uniform Frame {
 	vec4 sky_y;
 	vec4 sky_z;
 	vec4 sky_flat;
-	// Traced + probes: the reflection probes whose capture colours a reflection's off-screen hits (probe_source) and
+	// Traced + probes: the reflection probes whose capture colors a reflection's off-screen hits (probe_source) and
 	// fills in the rest inside their box (probe_reflection): world-to-box rows, the box's half extents (w: the probe's
 	// layer in Godot's reflection atlas times two, plus one when it's box projected), the capture point in the box (w:
 	// the brightness the capture is scaled by) and in the world (w: the box's blend distance).
@@ -776,7 +776,7 @@ uint hash_u(uint x) {
 // The slot of the cell holding x (facing n), claiming an empty one when asked; -1 when the table is full there.
 int cache_slot(vec3 x, vec3 n, bool claim, out bool claimed) {
 	claimed = false;
-	// Cells a quarter metre across near the camera, doubling with each doubling of distance past 8 m.
+	// Cells a quarter meter across near the camera, doubling with each doubling of distance past 8 m.
 	float dist = length(x - f.view_to_world[3].xyz);
 	uint level = uint(clamp(floor(log2(max(dist, 1.0) / 8.0)) + 1.0, 0.0, 5.0));
 	ivec3 cell = ivec3(floor(x / (0.25 * float(1u << level))));
@@ -953,7 +953,7 @@ vec3 direct_light(vec3 x, vec3 n) {
 // The light leaving a shape's surface toward the ray: last frame's image where that point was on it; otherwise what it
 // emits, plus its radiance cache cell (bounce light included) once that has been refined, or else the direct light on
 // its albedo. A pixel's ray (from_pixels) claims the cell for the cache and keeps it alive. A sharp one (a reflection,
-// which shows the point itself) takes the cells around it blended, as a cell is a quarter metre or more across, too
+// which shows the point itself) takes the cells around it blended, as a cell is a quarter meter or more across, too
 // coarse to show as it is; a mirror's (mirror_hit) lights the point directly and takes only their bounce light (a
 // glossy surface's rays land somewhere new each frame, and lit directly they'd flicker between light and shadow).
 // Whether the shape in record slot p_hit is one of the emissives sampled directly.
@@ -1041,7 +1041,7 @@ int emissive_at(vec3 w) {
 	return -1;
 }
 
-// How far along l from x a ray enters the box (centre c, half axes ax, ay, az) grown by p_grow; 0 from inside it. A box
+// How far along l from x a ray enters the box (center c, half axes ax, ay, az) grown by p_grow; 0 from inside it. A box
 // flat along one axis (a panel) takes that axis from the other two.
 float emissive_entry(vec3 x, vec3 l, vec3 c, vec3 ax, vec3 ay, vec3 az, float p_grow) {
 	vec3 lens = vec3(length(ax), length(ay), length(az));
@@ -1265,7 +1265,7 @@ layout(rgba16f, set = 0, binding = 3) uniform restrict writeonly image2D dst;
 
 @WORLD@
 
-// Interleaved gradient noise: neighbouring texels get evenly spread values (blue-ish noise), which a small filter and
+// Interleaved gradient noise: neighboring texels get evenly spread values (blue-ish noise), which a small filter and
 // a few frames average out far faster than white noise. Each dimension of a ray's sample (its direction's two angles,
 // the march's jitter) takes its own, differently offset noise, stepped along an R2 sequence by frame and ray, so a
 // texel's directions cover the hemisphere evenly over time.
@@ -1372,7 +1372,7 @@ void main() {
 		vec3 nw = normalize(mat3(f.view_to_world) * n);
 		float index = f.misc.x;
 		// Hashed by texel, as the cache's cells are, not ign(): its offsets and directions are all the one regular pattern,
-		// so the emissive picked and the point on it stayed related, and neighbouring texels stepped through the frame
+		// so the emissive picked and the point on it stayed related, and neighboring texels stepped through the frame
 		// sequence together, which nearly repeats every 21 frames (a slow pulse, a crawl, on what the emissives light).
 		uint h = hash_u(uint(px.x) | (uint(px.y) << 16u));
 		vec2 xi = vec2(fract(float(h & 0xffffu) / 65536.0 + index * 0.7548776662), fract(float(h >> 16u) / 65536.0 + index * 0.5698402910));
@@ -1458,7 +1458,7 @@ void main() {
 	imageStore(variance, px, vec4(var));
 }
 )",
-	// PASS_ATROUS: one pass of an edge-aware a-trous filter (5x5 taps, spaced by the pass's step): neighbours on the same
+	// PASS_ATROUS: one pass of an edge-aware a-trous filter (5x5 taps, spaced by the pass's step): neighbors on the same
 	// surface (the same plane, facing the same way) are averaged, more where the texel is still noisy, and the variance
 	// is carried to the next pass.
 	R"(
@@ -1920,7 +1920,7 @@ void main() {
 		}
 		if (rweights > 1e-4) {
 			vec4 r = rsum / rweights;
-			// Faded out over the last quarter of the cutoff, so neighbouring roughnesses on either side of it don't
+			// Faded out over the last quarter of the cutoff, so neighboring roughnesses on either side of it don't
 			// switch between two different reflections.
 			float fade = smoothstep(0.0, 1.0, (f.reflect.y - rough) / max(0.25 * f.reflect.y, 1e-3));
 			reflection = vec4(r.a > 1e-3 ? r.rgb / r.a : vec3(0.0), r.a * fade);
@@ -2014,7 +2014,7 @@ void main() {
 }
 )",
 	// PASS_REFLECT_FILTER: one pass of an edge-avoiding a-trous filter over the accumulated reflections (5x5 taps, spaced
-	// by the pass's step): a glossy surface's one-ray-a-texel reflection averaged with its neighbours on the same surface
+	// by the pass's step): a glossy surface's one-ray-a-texel reflection averaged with its neighbors on the same surface
 	// (the same plane, facing the same way, about as rough), over a reach growing with its roughness; a mirror's left as
 	// it is. The history itself stays unfiltered: this only feeds the resolve.
 	R"(
@@ -2325,7 +2325,7 @@ void PhysXGIView::ensure(RenderingDevice *p_rd, const Size2i &p_frame) {
 		reflect_filtered[i] = p_rd->texture_create(tf, RD::TextureView());
 	}
 	// A new texture's memory isn't cleared on every driver (Vulkan hands back what was there, D3D12 mostly zeros): start
-	// them all black, so nothing a pass reads before it's been written (a neighbour, the other history) is garbage.
+	// them all black, so nothing a pass reads before it's been written (a neighbor, the other history) is garbage.
 	for (const RID &r : { trace, accum[0], accum[1], accum_depth[0], accum_depth[1], moments[0], moments[1], variance, filtered[0], filtered[1], filtered_variance[0], filtered_variance[1], reflect_trace, reflect_accum[0], reflect_accum[1], reflect_depth[0], reflect_depth[1], reflect_filtered[0], reflect_filtered[1] }) {
 		p_rd->texture_clear(r, Color(0, 0, 0, 0), 0, 1, 0, 1);
 	}
@@ -2480,7 +2480,7 @@ void PhysXGIEffect::_render(int p_callback_type, const RenderData *p_render_data
 				const RID sky = scene_render->environment_get_sky(env);
 				const RendererRD::SkyRD::Sky *sky_data = sky.is_valid() ? scene_render->get_sky()->get_sky(sky) : nullptr;
 				if (sky_data && sky_data->radiance.is_valid()) {
-					// The radiance map is baked at an exposure of its own (Godot's IBL normalisation).
+					// The radiance map is baked at an exposure of its own (Godot's IBL normalization).
 					float exposure_ibl = 1.0f;
 					if (p_render_data->get_camera_attributes().is_valid()) {
 						exposure_ibl = exposure * scene_render->environment_get_bg_intensity(env) / MAX(0.001f, scene_render->get_sky()->sky_get_baked_exposure(sky));

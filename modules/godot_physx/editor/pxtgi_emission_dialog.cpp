@@ -39,6 +39,7 @@
 #include "editor/editor_data.h"
 #include "editor/editor_node.h"
 #include "editor/editor_undo_redo_manager.h"
+#include "editor/scene/3d/node_3d_editor_plugin.h"
 #include "scene/3d/mesh_instance_3d.h"
 #include "scene/gui/box_container.h"
 #include "scene/gui/button.h"
@@ -102,6 +103,7 @@ PXTGIEmissionDialog::PXTGIEmissionDialog() {
 	tree->set_column_title(COLUMN_GLOW, physical_units() ? "Glow (nits)" : "Glow (energy)");
 	tree->set_column_title(COLUMN_MESHES, "Meshes");
 	tree->set_column_title(COLUMN_NOTES, "Notes");
+	tree->set_column_title_tooltip_text(COLUMN_NOTES, "Empty unless something needs attention: a glow that changes over time (its mean is shown), a material inside an imported file (a tag there is lost on reimport, so it can't be ticked), or one built into another scene (kept when that scene is saved).");
 	tree->set_column_expand(COLUMN_MATERIAL, true);
 	tree->set_column_expand(COLUMN_GLOW, false);
 	tree->set_column_custom_minimum_width(COLUMN_GLOW, 140);
@@ -196,7 +198,7 @@ void PXTGIEmissionDialog::_measured(const Array &p_results) {
 		item->set_editable(COLUMN_GLOW, true);
 		const Array meshes = users.get(material, Array());
 		item->set_text(COLUMN_MESHES, itos(meshes.size()));
-		item->set_tooltip_text(COLUMN_MESHES, "Double-click the row to select one.");
+		item->set_tooltip_text(COLUMN_MESHES, "Double-click the row to select one and move the 3D view to it.");
 		item->set_text(COLUMN_NOTES, String("; ").join(notes));
 		item->set_tooltip_text(COLUMN_NOTES, String("\n").join(notes));
 	}
@@ -261,6 +263,12 @@ void PXTGIEmissionDialog::_item_activated() {
 		EditorSelection *selection = EditorNode::get_singleton()->get_editor_selection();
 		selection->clear();
 		selection->add_node(mesh);
+		// And the 3D view to it, as Focus Selection (F) does.
+		if (Node3DEditor::get_singleton()) {
+			if (Node3DEditorViewport *view = Node3DEditor::get_singleton()->get_last_used_viewport()) {
+				view->focus_selection();
+			}
+		}
 	}
 }
 

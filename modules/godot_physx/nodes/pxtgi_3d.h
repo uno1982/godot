@@ -51,6 +51,10 @@ class PXTGI3D : public Node3D {
 	GDCLASS(PXTGI3D, Node3D);
 
 	static int users;
+	// Where every node's primitives and geometry versions come from: the GPU side has one set of buffers and uploads
+	// only when the version it's handed differs from the last, so two nodes (two editor tabs, one leaving the world)
+	// counting each from 0 could hand it the same number for different data, and keep the other scene's buffers.
+	static uint64_t versions;
 
 	float intensity = 1.0f;
 	float max_distance = 8.0f;

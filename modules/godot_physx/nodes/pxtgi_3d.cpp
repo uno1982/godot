@@ -75,6 +75,7 @@
 #include <algorithm>
 
 int PXTGI3D::users = 0;
+uint64_t PXTGI3D::versions = 0;
 
 namespace {
 
@@ -1280,7 +1281,7 @@ void PXTGI3D::_rescan() {
 		placed.insert(shape_id, Vector2i(entry.geometry_a, entry.geometry_b));
 	}
 	if (rebuild) {
-		geometry_version++;
+		geometry_version = ++versions;
 	}
 }
 
@@ -1588,7 +1589,7 @@ void PXTGI3D::_update_primitives(PhysXGIEffect::Snapshot &r_snapshot) {
 			memcpy(published_nodes.ptrw(), tree_nodes.ptr(), tree_nodes.size() * sizeof(float));
 		}
 		published_count = leaf_order.size();
-		primitives_version++;
+		primitives_version = ++versions;
 	}
 	r_snapshot.primitives = published_primitives;
 	r_snapshot.primitive_count = published_count;

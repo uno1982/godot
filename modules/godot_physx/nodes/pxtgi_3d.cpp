@@ -365,7 +365,7 @@ void PXTGI3D::_detach() {
 
 namespace {
 
-// Textures' average colours, worked out once each (forgotten whenever the GI walks the scene again, so the map
+// Textures' average colors, worked out once each (forgotten whenever the GI walks the scene again, so the map
 // doesn't keep growing with textures long gone).
 HashMap<ObjectID, Color> texture_averages;
 
@@ -558,7 +558,7 @@ bool mesh_has_collision(MeshInstance3D *p_mesh) {
 	return false;
 }
 
-// The look of the mesh a body belongs to (body_mesh), else a neutral grey. A "pxtgi_albedo" or "pxtgi_emission" Color
+// The look of the mesh a body belongs to (body_mesh), else a neutral gray. A "pxtgi_albedo" or "pxtgi_emission" Color
 // in the body's own metadata says it outright.
 void body_look(Node *p_body, Color &r_albedo, Color &r_emission) {
 	r_albedo = Color(0.5, 0.5, 0.5);
@@ -649,8 +649,8 @@ struct BuildItem {
 	Vector3 hi;
 };
 
-// The binned SAH split of p_items[p_from, p_to): 12 bins per axis over the centres, the split that minimises both
-// sides' surface area times shape count; returns the split point (items partitioned), or p_from when the centres all
+// The binned SAH split of p_items[p_from, p_to): 12 bins per axis over the centers, the split that minimizes both
+// sides' surface area times shape count; returns the split point (items partitioned), or p_from when the centers all
 // fall in one bin.
 uint32_t sah_split(LocalVector<BuildItem> &p_items, uint32_t p_from, uint32_t p_to, const AABB &p_centres) {
 	constexpr int BINS = 12;
@@ -756,7 +756,7 @@ int build_bvh(LocalVector<BuildItem> &p_items, uint32_t p_from, uint32_t p_to, c
 		c_lo = c_lo.min(it.center);
 		c_hi = c_hi.max(it.center);
 	}
-	const AABB centres(c_lo, c_hi - c_lo);
+	const AABB centers(c_lo, c_hi - c_lo);
 	const int node = r_nodes.size() / PhysXGIEffect::NODE_FLOATS;
 	r_nodes.resize(r_nodes.size() + PhysXGIEffect::NODE_FLOATS);
 	float *out = &r_nodes[node * PhysXGIEffect::NODE_FLOATS];
@@ -769,9 +769,9 @@ int build_bvh(LocalVector<BuildItem> &p_items, uint32_t p_from, uint32_t p_to, c
 	const uint32_t count = p_to - p_from;
 	uint32_t mid = p_from;
 	if (count > p_max_leaf && p_depth < 15) {
-		mid = sah_split(p_items, p_from, p_to, centres);
+		mid = sah_split(p_items, p_from, p_to, centers);
 		if (mid == p_from || mid == p_to) {
-			const int axis = centres.get_longest_axis_index();
+			const int axis = centers.get_longest_axis_index();
 			mid = p_from + count / 2;
 			std::nth_element(p_items.ptr() + p_from, p_items.ptr() + mid, p_items.ptr() + p_to, [axis](const BuildItem &a, const BuildItem &b) {
 				return a.center[axis] < b.center[axis];
@@ -813,10 +813,10 @@ void store_int(float *r_at, int p_value) {
 // a 24-entry stack).
 int build_triangle_tree(LocalVector<TriangleItem> &p_items, uint32_t p_from, uint32_t p_to, const Vector<Vector3> &p_corners, Vector<float> &r_nodes, Vector<float> &r_triangles, int p_depth = 0) {
 	AABB bounds = p_items[p_from].bounds;
-	AABB centres(p_items[p_from].center, Vector3());
+	AABB centers(p_items[p_from].center, Vector3());
 	for (uint32_t i = p_from + 1; i < p_to; i++) {
 		bounds.merge_with(p_items[i].bounds);
-		centres.expand_to(p_items[i].center);
+		centers.expand_to(p_items[i].center);
 	}
 	const int node = r_nodes.size() / 8;
 	r_nodes.resize(r_nodes.size() + 8);
@@ -832,9 +832,9 @@ int build_triangle_tree(LocalVector<TriangleItem> &p_items, uint32_t p_from, uin
 	const uint32_t count = p_to - p_from;
 	uint32_t mid = p_from;
 	if (count > 4 && p_depth < 23) {
-		mid = sah_split(p_items, p_from, p_to, centres);
+		mid = sah_split(p_items, p_from, p_to, centers);
 		if (mid == p_from || mid == p_to) {
-			const int axis = centres.get_longest_axis_index();
+			const int axis = centers.get_longest_axis_index();
 			mid = p_from + count / 2;
 			std::nth_element(p_items.ptr() + p_from, p_items.ptr() + mid, p_items.ptr() + p_to, [axis](const TriangleItem &a, const TriangleItem &b) {
 				return a.center[axis] < b.center[axis];
@@ -893,7 +893,7 @@ const PXTGI3D::GeometryBlock *PXTGI3D::_geometry_for(const Ref<Shape3D> &p_shape
 	} else if (Ref<ConcavePolygonShape3D> concave = p_shape; concave.is_valid()) {
 		corners = concave->get_faces();
 	} else if (Ref<HeightMapShape3D> height = p_shape; height.is_valid()) {
-		// Godot's height map: a grid one unit apart, centred on the shape's origin.
+		// Godot's height map: a grid one unit apart, centered on the shape's origin.
 		const int w = height->get_map_width();
 		const int d = height->get_map_depth();
 		const Vector<real_t> heights = height->get_map_data();
@@ -1634,7 +1634,7 @@ void PXTGI3D::_publish() {
 	{
 		// The emissives sampled directly (up to MAX_EMISSIVES), and how often each is picked: by the light each could give
 		// what the camera sees -- its glow times its largest face over the squared distance to the view (the first
-		// metres straight ahead of the camera) -- so a big bright panel a room away beats a dim strip at the camera's
+		// meters straight ahead of the camera) -- so a big bright panel a room away beats a dim strip at the camera's
 		// feet. Those chosen last frame get a head start, so the set changes gradually as the camera moves.
 		const Vector3 view_end = eye + eye_forward * 3.0f;
 		LocalVector<Pair<float, int>> scored;
@@ -1727,7 +1727,7 @@ void PXTGI3D::_publish() {
 	}
 	// Reflection probes: inside their box Godot's scene shader replaces the GI buffers' ambient (ambient mode other
 	// than Disabled) and reflections (intensity above 0) with the probe's, so those pixels needn't be traced. Only
-	// where the override is whole -- inside the blend distance, less a margin for the filters' neighbours -- and only
+	// where the override is whole -- inside the blend distance, less a margin for the filters' neighbors -- and only
 	// for probes reaching every layer (the trace can't tell a pixel's layers).
 	s.probe_count = 0;
 	for (const ObjectID &id : probes) {

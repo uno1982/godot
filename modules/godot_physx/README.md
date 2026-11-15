@@ -370,6 +370,17 @@ multiple bounces.
   `EMISSION` by a hidden factor, say, as some importers' converted materials
   do), probes and reflections disagree with PXTGI's light: a probe capturing
   far brighter lamps than the tag says blows out what it lights.
+- **Find Emissive Materials** (a button on a `PXTGI3D`'s inspector) does the
+  tagging for a scene: it lists the `ShaderMaterial`s that have no
+  `pxtgi_emission` tag (on the material or its mesh), each measured by
+  drawing it with no light (`PXTGIEmissionMeter`), so the glow shown is what
+  the shader really draws, hidden multipliers included. The ones that glow
+  come ticked; edit a value to override it, untick what shouldn't light the
+  scene, and Tag Selected writes the tags (undoable) and saves materials kept
+  in their own files. Double-click a row to go to a mesh using it. A glow
+  that changes over time is tagged with its mean; a material inside an
+  imported file can't be tagged (the tag would be lost on reimport), make it
+  unique or save it to a file first.
 - A material's `AO` output above 1 multiplies all of its indirect light
   (PXTGI's included) instead of darkening it; keep it within 0–1.
   Converted materials can carry intensities far above 1 that their source

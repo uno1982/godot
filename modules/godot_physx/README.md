@@ -361,6 +361,19 @@ multiple bounces.
   `pxtgi_emission` Color in its metadata (or put them on the
   `MeshInstance3D` or the physics body), or it bounces as neutral gray with
   no glow off screen.
+- A `pxtgi_emission` Color must say how bright the material actually draws.
+  It's read as sRGB, like an albedo color; its linear value is the glow's
+  strength in the material's own units (nits with physical light units on):
+  for a glow of `L`, use `Color(L, L, L).linear_to_srgb()`. PXTGI lights the
+  scene from it, but the camera, reflection probes and PXTGI's own screen
+  rays see what the shader draws. If the two differ (a shader that scales its
+  `EMISSION` by a hidden factor, say, as some importers' converted materials
+  do), probes and reflections disagree with PXTGI's light: a probe capturing
+  far brighter lamps than the tag says blows out what it lights.
+- A material's `AO` output above 1 multiplies all of its indirect light
+  (PXTGI's included) instead of darkening it; keep it within 0–1.
+  Converted materials can carry intensities far above 1 that their source
+  engine clamps.
 - Lights: the sun is the brightest visible `DirectionalLight3D` that lights
   surfaces; of omni and spot lights, the 8 of each Godot draws that come
   nearest the camera, chosen every frame. Nodes added or removed are picked

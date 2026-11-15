@@ -94,7 +94,8 @@ PXTGIEmissionDialog::PXTGIEmissionDialog() {
 	add_child(box);
 	status = memnew(Label);
 	status->set_autowrap_mode(TextServer::AUTOWRAP_WORD_SMART);
-	status->set_custom_minimum_size(Size2(1, 0));
+	// A real width: wrapping at 1 pixel, the dialog would size itself to that text's height (screen tall).
+	status->set_custom_minimum_size(Size2(860, 0));
 	box->add_child(status);
 	tree = memnew(Tree);
 	tree->set_columns(4);
@@ -112,7 +113,7 @@ PXTGIEmissionDialog::PXTGIEmissionDialog() {
 	tree->set_column_expand(COLUMN_NOTES, true);
 	tree->set_hide_root(true);
 	tree->set_v_size_flags(Control::SIZE_EXPAND_FILL);
-	tree->set_custom_minimum_size(Size2(900, 360));
+	tree->set_custom_minimum_size(Size2(860, 240));
 	tree->connect("item_activated", callable_mp(this, &PXTGIEmissionDialog::_item_activated));
 	box->add_child(tree);
 	rescan = add_button("Measure Again", false, "rescan");
@@ -123,7 +124,7 @@ PXTGIEmissionDialog::PXTGIEmissionDialog() {
 }
 
 void PXTGIEmissionDialog::popup_for_scene() {
-	popup_centered_clamped(Size2(960, 520), 0.8);
+	popup_centered_clamped(Size2(920, 560), 0.7);
 	_scan();
 }
 

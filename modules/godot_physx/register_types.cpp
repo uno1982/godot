@@ -88,6 +88,7 @@
 #include "editor/physx_cloth_paint_plugin.h"
 #include "editor/physx_editor_plugin.h"
 #include "editor/physx_export_plugin.h"
+#include "editor/pxtgi_emission_dialog.h"
 #ifdef GODOT_PHYSX_ALEMBIC
 #include "groom/alembic/resource_importer_alembic_groom.h"
 #endif
@@ -180,6 +181,8 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 
 #ifdef TOOLS_ENABLED
 	if (p_level == MODULE_INITIALIZATION_LEVEL_EDITOR) {
+		GDREGISTER_INTERNAL_CLASS(PXTGIEmissionDialog);
+		GDREGISTER_INTERNAL_CLASS(EditorInspectorPluginPXTGI);
 		EditorPlugins::add_by_type<PhysXEditorPlugin>();
 		EditorPlugins::add_by_type<PhysXClothPaintPlugin>();
 		EditorNode::add_init_callback(_physx_editor_init);

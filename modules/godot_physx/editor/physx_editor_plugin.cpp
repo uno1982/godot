@@ -33,6 +33,7 @@
 #include "../nodes/physx_cloth_3d.h"
 #include "../nodes/physx_particle_fluid_3d.h"
 #include "../vehicle/physx_vehicle_wheel_3d.h"
+#include "pxtgi_emission_dialog.h"
 #ifdef GODOT_PHYSX_BLAST
 #include "../blast/physx_destructible_3d.h"
 #include "physx_blast_asset_inspector_plugin.h"
@@ -431,6 +432,13 @@ PhysXDestructible3DGizmoPlugin::PhysXDestructible3DGizmoPlugin() {
 #endif
 
 PhysXEditorPlugin::PhysXEditorPlugin() {
+	PXTGIEmissionDialog *emission_dialog = memnew(PXTGIEmissionDialog);
+	EditorNode::get_singleton()->get_gui_base()->add_child(emission_dialog);
+	Ref<EditorInspectorPluginPXTGI> pxtgi_inspector;
+	pxtgi_inspector.instantiate();
+	pxtgi_inspector->set_dialog(emission_dialog);
+	add_inspector_plugin(pxtgi_inspector);
+
 	Ref<PhysXParticleFluid3DGizmoPlugin> fluid_gizmo;
 	fluid_gizmo.instantiate();
 	Node3DEditor::get_singleton()->add_gizmo_plugin(fluid_gizmo);

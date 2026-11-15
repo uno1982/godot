@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PXTGIEmissionMeter" inherits="RefCounted" api_type="core" experimental="Part of PXTGI3D, which may still change." xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Measures how brightly materials glow, for [PXTGI3D]'s [code]pxtgi_emission[/code] tags.
+	</brief_description>
+	<description>
+		[PXTGI3D] can't read a [ShaderMaterial]'s glow: such a material needs a [code]pxtgi_emission[/code] [Color] in its metadata to light the scene off screen. This measures what a material actually emits by drawing it: each material on a tile of one HDR viewport, with no lights and no environment light, at a known exposure. The result includes everything the shader does to its emission (textures, tints, any multiplier it hides), so it's the value a tag should have. The editor's [b]Find Emissive Materials[/b] tool, on the [PXTGI3D] inspector, uses it.
+		Each material is read several times over about half a second: its glow is the mean of those readings, and one that changes over time (animated by [code]TIME[/code]) is flagged. The values are in the material's own units: nits with physical light units on.
+		[codeblock]
+		var meter := PXTGIEmissionMeter.new()
+		var found := PXTGIEmissionMeter.find_untagged(get_tree().edited_scene_root)
+		meter.measure(found.keys())
+		for result in await meter.finished:
+		    if result.luminance &gt; 0.0:
+		        result.material.set_meta("pxtgi_emission", PXTGIEmissionMeter.emission_tag(result.glow))
+		[/codeblock]
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="emission_tag" qualifiers="static">
+			<return type="Color" />
+			<param index="0" name="glow" type="Color" />
+			<description>
+				The [code]pxtgi_emission[/code] [Color] that stands for a measured (linear) [param glow]: sRGB encoded, as [PXTGI3D] reads it.
+			</description>
+		</method>
+		<method name="find_untagged" qualifiers="static">
+			<return type="Dictionary" />
+			<param index="0" name="root" type="Node" />
+			<description>
+				The [ShaderMaterial]s used under [param root] (itself included) that [PXTGI3D] can't read a glow from: with no [code]pxtgi_emission[/code] on the material or on the [MeshInstance3D] using it. Each maps to an [Array] of the [MeshInstance3D]s using it.
+			</description>
+		</method>
+		<method name="is_measuring" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether a [method measure] is still running.
+			</description>
+		</method>
+		<method name="measure">
+			<return type="int" enum="Error" />
+			<param index="0" name="materials" type="Material[]" />
+			<description>
+				Starts measuring [param materials] (any kind of [Material]); [signal finished] gives the results. Needs a running [SceneTree], with a window: it draws. Returns [constant ERR_BUSY] while a measuring is running.
+			</description>
+		</method>
+	</methods>
+	<signals>
+		<signal name="finished">
+			<param index="0" name="results" type="Array" />
+			<description>
+				The measurements, one [Dictionary] for each material in the order given: [code]material[/code], [code]glow[/code] (a linear [Color]), [code]luminance[/code] (its brightness) and [code]changes[/code] (whether it changed while being read).
+			</description>
+		</signal>
+	</signals>
+</class>

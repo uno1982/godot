@@ -62,6 +62,7 @@
 #include "nodes/physx_light_shafts_effect.h"
 #include "nodes/physx_particle_fluid_3d.h"
 #include "nodes/pxtgi_3d.h"
+#include "nodes/pxtgi_emission_meter.h"
 #include "vehicle/godot_physx_motorcycle_probe.h"
 #include "vehicle/godot_physx_tank_probe.h"
 #include "vehicle/godot_physx_vehicle_probe.h"
@@ -138,6 +139,7 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(PhysXLightShafts3D);
 		GDREGISTER_INTERNAL_CLASS(PhysXLightShaftsEffect);
 		GDREGISTER_CLASS(PXTGI3D);
+		GDREGISTER_CLASS(PXTGIEmissionMeter);
 		GDREGISTER_INTERNAL_CLASS(PhysXGIEffect);
 		GDREGISTER_CLASS(PhysXLensDirt3D);
 		GDREGISTER_INTERNAL_CLASS(PhysXLensDirtEffect);

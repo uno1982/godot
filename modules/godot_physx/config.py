@@ -56,6 +56,7 @@ def get_doc_classes():
         "PhysXLensFlareSettings",
         "PhysXLightShafts3D",
         "PXTGI3D",
+        "PXTGIEmissionMeter",
         "PhysXVehicle3D",
         "PhysXVehicleWheel3D",
         "PhysXMotorcycle3D",

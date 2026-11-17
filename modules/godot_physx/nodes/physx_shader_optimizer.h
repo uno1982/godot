@@ -55,12 +55,16 @@ public:
 	// The code with its parameters' default values left out (a "uniform ... = value;" becomes "uniform ...;"); instance
 	// and global uniforms are kept whole (their defaults can't be set on a material).
 	static String code_without_defaults(const String &p_code);
-	// The shaders p_materials use, in groups that could be one shader (each group two or more shaders), as
+	// The shader's default textures (a VisualShader's texture nodes become them) as text, the same for the same
+	// textures. Not bound: the editor dialog uses it to count shaders that differ only in those.
+	static String default_textures_key(const Ref<Shader> &p_shader);
+	// The shaders p_materials use, in groups that could be one shader (same code without defaults, same default
+	// textures; each group two or more shaders), as
 	// dictionaries: "shader" (the one kept: the one most materials use among those in their own files; null when none
 	// is, so nothing can be merged), "shaders" (all of them, that one first), "identical" (the same code, defaults too),
 	// "materials" (those to move onto "shader") and "parameters" (for each of those, the values to set on it: the
-	// defaults it relied on that "shader" doesn't share); "skipped": shaders left as they are (a default texture of
-	// "shader" theirs lack: their materials would need "no texture", which a material can't hold).
+	// defaults it relied on that "shader" doesn't share); "skipped": shaders left as they are (their materials would
+	// need a value a material can't hold: a texture parameter's "no texture" where "shader" has a default).
 	static Array find_groups(const TypedArray<ShaderMaterial> &p_materials);
 	// Moves a group's materials onto its shader and sets their parameters (saves nothing).
 	static void merge_group(const Dictionary &p_group);

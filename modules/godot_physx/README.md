@@ -443,8 +443,9 @@ test scene where 192 do the same.
   `instance uniform` or `global uniform` default (it can't be set on a
   material), shaders whose default textures differ (a `VisualShader`'s
   texture nodes: Godot hides those parameters from materials, so a material
-  can't be given its own; shaders with the same textures still merge), and
-  groups with no shader in its own file (one
+  can't be given its own; shaders with the same textures still merge; the
+  dialog counts these, as changing those nodes to Texture2D Parameter nodes
+  would let them merge), and groups with no shader in its own file (one
   built into a file can't be used from another; save one as a `.tres`).
 - Merge Selected moves the ticked groups' materials as one undoable action
   and saves them, keeping their UIDs. The changes are written to disk and can

@@ -202,11 +202,24 @@ void PhysXShaderOptimizerDialog::_scan() {
 	}
 	groups = PhysXShaderOptimizer::find_groups(materials);
 	HashSet<ObjectID> used;
+	// The shaders that differ only in textures built into their graphs (texture nodes, not parameters): not merged, as
+	// a material can't be given its own for those; counted so the user knows making them parameters would help.
+	HashMap<String, HashSet<String>> textures_by_code;
 	for (int i = 0; i < materials.size(); i++) {
 		const Ref<ShaderMaterial> material = materials[i];
-		if (material.is_valid() && material->get_shader().is_valid()) {
-			used.insert(material->get_shader()->get_instance_id());
+		if (material.is_valid() && material->get_shader().is_valid() && !used.has(material->get_shader()->get_instance_id())) {
+			const Ref<Shader> shader = material->get_shader();
+			used.insert(shader->get_instance_id());
+			const String code = PhysXShaderOptimizer::code_without_defaults(shader->get_code());
+			if (!textures_by_code.has(code)) {
+				textures_by_code.insert(code, HashSet<String>());
+			}
+			textures_by_code[code].insert(PhysXShaderOptimizer::default_textures_key(shader));
 		}
+	}
+	int texture_only = 0;
+	for (const KeyValue<String, HashSet<String>> &E : textures_by_code) {
+		texture_only += E.value.size() - 1;
 	}
 
 	tree->clear();
@@ -240,7 +253,7 @@ void PhysXShaderOptimizerDialog::_scan() {
 				notes += vformat(" %d default value%s set on materials.", values, values == 1 ? "" : "s");
 			}
 			if (!skipped.is_empty()) {
-				notes += vformat(" %d left as they are (a default texture the kept shader has and they don't).", skipped.size());
+				notes += vformat(" %d left as they are (a texture parameter with no texture where the kept shader has one, which a material can't hold).", skipped.size());
 			}
 			merged += shaders.size() - 1 - skipped.size();
 		}
@@ -267,11 +280,16 @@ void PhysXShaderOptimizerDialog::_scan() {
 			}
 		}
 	}
+	String text;
 	if (groups.is_empty()) {
-		status->set_text(vformat("%d materials use %d shaders, and none could be merged.", materials.size(), used.size()));
+		text = vformat("%d materials use %d shaders, and none could be merged.", materials.size(), used.size());
 	} else {
-		status->set_text(vformat("%d materials use %d shaders; merging every group leaves %d.\nThe shaders in each group are duplicates, but Godot compiles and keeps every copy, which costs memory and loading time. Merging points their materials at one shared shader; nothing looks different.\nChanges are written to disk, so back up your project or make sure it's tracked in version control (such as git) first. Double-click a shader to find it in the FileSystem dock.", materials.size(), used.size(), used.size() - merged));
+		text = vformat("%d materials use %d shaders; merging every group leaves %d.\nThe shaders in each group are duplicates, but Godot compiles and keeps every copy, which costs memory and loading time. Merging points their materials at one shared shader; nothing looks different.\nChanges are written to disk, so back up your project or make sure it's tracked in version control (such as git) first. Double-click a shader to find it in the FileSystem dock.", materials.size(), used.size(), used.size() - merged);
 	}
+	if (texture_only > 0) {
+		text += vformat("\n%d more shader%s from others only in the textures picked inside their graphs (Texture nodes). Those can't be merged, as a material can't be given its own texture for them; changing them to Texture2D Parameter nodes would let them merge.", texture_only, texture_only == 1 ? " differs" : "s differ");
+	}
+	status->set_text(text);
 	get_ok_button()->set_disabled(groups.is_empty());
 }
 

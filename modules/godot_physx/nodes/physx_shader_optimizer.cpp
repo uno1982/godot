@@ -99,7 +99,7 @@ Variant default_of(const Ref<Shader> &p_shader, const PropertyInfo &p_param) {
 // The shader's default textures (a VisualShader's texture nodes become them), as text. A uniform with a default
 // texture is hidden from materials: one can't be given a value for it that's saved, so shaders whose default textures
 // differ can't share a shader.
-String default_textures_key(const Ref<Shader> &p_shader) {
+String textures_key(const Ref<Shader> &p_shader) {
 	List<StringName> names;
 	p_shader->get_default_texture_parameter_list(&names);
 	LocalVector<String> parts;
@@ -122,6 +122,10 @@ String default_textures_key(const Ref<Shader> &p_shader) {
 }
 
 } // namespace
+
+String PhysXShaderOptimizer::default_textures_key(const Ref<Shader> &p_shader) {
+	return textures_key(p_shader);
+}
 
 PackedStringArray PhysXShaderOptimizer::find_material_paths(const String &p_dir) {
 	PackedStringArray paths;

@@ -33,6 +33,7 @@
 #include "../nodes/physx_cloth_3d.h"
 #include "../nodes/physx_particle_fluid_3d.h"
 #include "../vehicle/physx_vehicle_wheel_3d.h"
+#include "physx_shader_optimizer_dialog.h"
 #include "pxtgi_emission_dialog.h"
 #ifdef GODOT_PHYSX_BLAST
 #include "../blast/physx_destructible_3d.h"
@@ -42,6 +43,7 @@
 #include "physx_blast_icons.h"
 #endif
 
+#include "core/object/callable_mp.h"
 #include "editor/editor_undo_redo_manager.h"
 #include "editor/scene/3d/node_3d_editor_plugin.h"
 #include "editor/settings/editor_settings.h"
@@ -438,6 +440,10 @@ PhysXEditorPlugin::PhysXEditorPlugin() {
 	pxtgi_inspector.instantiate();
 	pxtgi_inspector->set_dialog(emission_dialog);
 	add_inspector_plugin(pxtgi_inspector);
+
+	PhysXShaderOptimizerDialog *shader_dialog = memnew(PhysXShaderOptimizerDialog);
+	EditorNode::get_singleton()->get_gui_base()->add_child(shader_dialog);
+	add_tool_menu_item("Optimize Shaders...", callable_mp(shader_dialog, &PhysXShaderOptimizerDialog::popup_for_project));
 
 	Ref<PhysXParticleFluid3DGizmoPlugin> fluid_gizmo;
 	fluid_gizmo.instantiate();

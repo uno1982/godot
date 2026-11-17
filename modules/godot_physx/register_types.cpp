@@ -61,6 +61,7 @@
 #include "nodes/physx_light_shafts_3d.h"
 #include "nodes/physx_light_shafts_effect.h"
 #include "nodes/physx_particle_fluid_3d.h"
+#include "nodes/physx_shader_optimizer.h"
 #include "nodes/pxtgi_3d.h"
 #include "nodes/pxtgi_emission_meter.h"
 #include "vehicle/godot_physx_motorcycle_probe.h"
@@ -88,6 +89,7 @@
 #include "editor/physx_cloth_paint_plugin.h"
 #include "editor/physx_editor_plugin.h"
 #include "editor/physx_export_plugin.h"
+#include "editor/physx_shader_optimizer_dialog.h"
 #include "editor/pxtgi_emission_dialog.h"
 #ifdef GODOT_PHYSX_ALEMBIC
 #include "groom/alembic/resource_importer_alembic_groom.h"
@@ -141,6 +143,7 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		GDREGISTER_INTERNAL_CLASS(PhysXLightShaftsEffect);
 		GDREGISTER_CLASS(PXTGI3D);
 		GDREGISTER_CLASS(PXTGIEmissionMeter);
+		GDREGISTER_CLASS(PhysXShaderOptimizer);
 		GDREGISTER_INTERNAL_CLASS(PhysXGIEffect);
 		GDREGISTER_CLASS(PhysXLensDirt3D);
 		GDREGISTER_INTERNAL_CLASS(PhysXLensDirtEffect);
@@ -182,6 +185,7 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 #ifdef TOOLS_ENABLED
 	if (p_level == MODULE_INITIALIZATION_LEVEL_EDITOR) {
 		GDREGISTER_INTERNAL_CLASS(PXTGIEmissionDialog);
+		GDREGISTER_INTERNAL_CLASS(PhysXShaderOptimizerDialog);
 		GDREGISTER_INTERNAL_CLASS(EditorInspectorPluginPXTGI);
 		EditorPlugins::add_by_type<PhysXEditorPlugin>();
 		EditorPlugins::add_by_type<PhysXClothPaintPlugin>();

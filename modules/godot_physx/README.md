@@ -420,6 +420,38 @@ multiple bounces.
 - Demos: `demo/editor/rendering/gi_courtyard.tscn`, `gi_courtyard_night.tscn`,
   `gi_cornell_box.tscn`, `demo/cpu/physx_playground_gi.tscn` (key `G`).
 
+## Optimize Shaders (editor tool)
+
+**Project > Tools > Optimize Shaders...** finds the shaders a project's
+materials use that could be one shader, and merges them. Every shader Godot
+compiles is a set of render pipelines the graphics driver keeps in system
+memory (tens of MB for a big one) that take time to compile and to free, and
+two `Shader` resources with the same code are compiled twice. Exporters that
+write a shader per material leave many: an Unreal project's material
+instances, each baked into its own `VisualShader`, came to 313 shaders in a
+test scene where 192 do the same.
+
+- It reads the `ShaderMaterial`s saved in their own files (`.tres`, `.res`)
+  under `res://` and groups the shaders whose code is the same, or differs
+  only in its parameters' default values. Each group keeps the shader most
+  of its materials use; the others' materials are moved onto it.
+- Nothing looks different: a material that relied on a default the kept
+  shader doesn't share gets that value set on itself. (Godot writes every
+  parameter's value when it saves a material, so materials it saved don't
+  rely on defaults.)
+- Not merged: shaders whose code differs in anything else, a differing
+  `instance uniform` or `global uniform` default (it can't be set on a
+  material), a shader lacking a default texture the kept one has (a material
+  can't hold "no texture"), and groups with no shader in its own file (one
+  built into a file can't be used from another; save one as a `.tres`).
+- Merge Selected moves the ticked groups' materials as one undoable action
+  and saves them, keeping their UIDs. Commit your project first: it can
+  change many files. The shaders no longer used are left on disk.
+- Double-click a shader to find it in the FileSystem dock.
+- Scripts can do the same with `PhysXShaderOptimizer` (`find_materials`,
+  `find_groups`, `merge_group`); it needs a rendering device (not
+  `--headless`), and a save made outside the editor may drop the files' UIDs.
+
 ## Characters on debris piles
 
 A `CharacterBody3D` rides the floor it stands on: the body's velocity at the

@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXShaderOptimizer" inherits="RefCounted" api_type="core" experimental="New: its results may still change." xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Finds the shaders a project's materials use that could be one shader, and merges them (the editor's Project &gt; Tools &gt; Optimize Shaders), provided by the PhysX module.
+	</brief_description>
+	<description>
+		Each [Shader] Godot compiles is a set of render pipelines the graphics driver keeps in system memory (tens of MB for a big shader) and that take time to compile and to free, and two Shader resources with the same code are compiled twice. Exporters that write a shader per material (an Unreal project's material instances, each baked into its own [VisualShader]) can leave hundreds where a few would do.
+		This finds the shaders whose code is the same, or differs only in its parameters' default values, and moves their materials onto one of them. A material that relied on a default the shared shader doesn't have gets that value set on itself, so it looks the same.
+		[codeblock]
+		var groups = PhysXShaderOptimizer.find_groups(PhysXShaderOptimizer.find_materials("res://"))
+		for group in groups:
+		    if group.shader:
+		        PhysXShaderOptimizer.merge_group(group)
+		        for material in group.materials:
+		            ResourceSaver.save(material)
+		[/codeblock]
+		Saving from the editor (the Optimize Shaders dialog does, as one undoable action) keeps the files' UIDs; a script run outside the editor may drop them.
+		Needs a rendering device: with [code]--headless[/code] shaders report no parameters, and the default values can't be compared.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="code_without_defaults" qualifiers="static">
+			<return type="String" />
+			<param index="0" name="code" type="String" />
+			<description>
+				[param code] with its parameters' default values left out: [code]uniform float x = 1.0;[/code] becomes [code]uniform float x;[/code]. Instance and global uniforms are kept whole, as their defaults can't be set on a material. Two shaders with the same result can be merged.
+			</description>
+		</method>
+		<method name="find_groups" qualifiers="static">
+			<return type="Array" />
+			<param index="0" name="materials" type="ShaderMaterial[]" />
+			<description>
+				The shaders [param materials] use, in groups of two or more that could be one shader, each a [Dictionary]:
+				- [code]shader[/code]: the one kept, the one most of the materials use among those in their own files ([code]null[/code] when none is: a shader built into one file can't be used from another, so the group can't be merged);
+				- [code]shaders[/code]: all of the group's shaders, the kept one first;
+				- [code]identical[/code]: [code]true[/code] when their code is the same, defaults included;
+				- [code skip-lint]materials[/code]: the materials to move onto [code]shader[/code];
+				- [code]parameters[/code]: for each of those, a [Dictionary] of the values to set on it (the defaults it relied on that [code]shader[/code] doesn't share);
+				- [code]skipped[/code]: shaders left as they are, as their materials would need "no texture" where the kept shader has a default texture, which a material can't hold.
+			</description>
+		</method>
+		<method name="find_materials" qualifiers="static">
+			<return type="ShaderMaterial[]" />
+			<param index="0" name="dir" type="String" />
+			<description>
+				The [ShaderMaterial]s saved in their own files ([code].tres[/code], [code].res[/code]) under [param dir] and its subfolders (not hidden folders such as [code].godot[/code], nor folders with a [code].gdignore[/code]). Materials built into scenes aren't included.
+			</description>
+		</method>
+		<method name="merge_group" qualifiers="static">
+			<return type="void" />
+			<param index="0" name="group" type="Dictionary" />
+			<description>
+				Moves a group's materials (from [method find_groups]) onto its kept shader and sets their parameters. Nothing is saved.
+			</description>
+		</method>
+	</methods>
+</class>

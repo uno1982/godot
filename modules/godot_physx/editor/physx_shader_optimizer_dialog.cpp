@@ -48,6 +48,7 @@
 #include "scene/gui/item_list.h"
 #include "scene/gui/label.h"
 #include "scene/gui/tree.h"
+#include "scene/main/scene_tree.h"
 #include "scene/resources/material.h"
 #include "scene/resources/shader.h"
 
@@ -155,8 +156,9 @@ void PhysXShaderOptimizerDialog::popup_for_project() {
 	status->set_text("Reading the project's materials...");
 	get_ok_button()->set_disabled(true);
 	popup_centered_clamped(Size2(920, 560), 0.7);
-	// After the dialog has drawn: reading every material file takes a while in a big project.
-	callable_mp(this, &PhysXShaderOptimizerDialog::_scan).call_deferred();
+	// After the dialog has drawn: reading every material file takes a while in a big project. On the next frame, not
+	// deferred: the editor's progress window can't be opened from a deferred call.
+	get_tree()->connect(SNAME("process_frame"), callable_mp(this, &PhysXShaderOptimizerDialog::_scan), CONNECT_ONE_SHOT);
 }
 
 void PhysXShaderOptimizerDialog::_scan() {

@@ -445,8 +445,8 @@ test scene where 192 do the same.
   can't hold "no texture"), and groups with no shader in its own file (one
   built into a file can't be used from another; save one as a `.tres`).
 - Merge Selected moves the ticked groups' materials as one undoable action
-  and saves them, keeping their UIDs. Commit your project first: it can
-  change many files.
+  and saves them, keeping their UIDs. The changes are written to disk and can
+  touch many files: back up the project or track it in version control first.
 - The shaders no longer used stay on disk unless **Delete the shaders left
   unused** is ticked: then, after merging, a confirmation lists those no
   other file in the project depends on, and Delete moves them (and their

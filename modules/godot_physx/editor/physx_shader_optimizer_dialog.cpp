@@ -229,7 +229,7 @@ void PhysXShaderOptimizerDialog::_scan() {
 	if (groups.is_empty()) {
 		status->set_text(vformat("%d materials use %d shaders, and none could be merged.", materials.size(), used.size()));
 	} else {
-		status->set_text(vformat("%d materials use %d shaders; merging every group leaves %d. Each shader Godot compiles costs system memory (tens of MB for a big one) and time to compile and to free, and two shaders with the same code are compiled twice. The materials look the same afterward; they're saved, so commit your project first. Double-click a shader to find it in the FileSystem dock.", materials.size(), used.size(), used.size() - merged));
+		status->set_text(vformat("%d materials use %d shaders; merging every group leaves %d.\nThe shaders in each group are duplicates, but Godot compiles and keeps every copy, which costs memory and loading time. Merging points their materials at one shared shader; nothing looks different.\nChanges are written to disk, so back up your project or make sure it's tracked in version control (such as git) first. Double-click a shader to find it in the FileSystem dock.", materials.size(), used.size(), used.size() - merged));
 	}
 	get_ok_button()->set_disabled(groups.is_empty());
 }

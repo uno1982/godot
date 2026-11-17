@@ -144,7 +144,8 @@ PhysXShaderOptimizerDialog::PhysXShaderOptimizerDialog() {
 	delete_list->set_custom_minimum_size(Size2(640, 260));
 	delete_box->add_child(delete_list);
 	delete_confirm->connect(SceneStringName(confirmed), callable_mp(this, &PhysXShaderOptimizerDialog::_delete_unused));
-	add_child(delete_confirm);
+	// Beside this dialog, not in it: it opens once this one has closed, and a window inside a hidden one isn't drawn.
+	EditorNode::get_singleton()->get_gui_base()->add_child(delete_confirm);
 }
 
 void PhysXShaderOptimizerDialog::popup_for_project() {

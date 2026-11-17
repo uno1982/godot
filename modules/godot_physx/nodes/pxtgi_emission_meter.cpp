@@ -43,6 +43,8 @@
 #include "scene/resources/environment.h"
 #include "scene/resources/material.h"
 
+#include <cfloat>
+
 namespace {
 
 // Frames from a batch's start to its readings: the first once the shaders have compiled and drawn, then READS of

@@ -441,8 +441,10 @@ test scene where 192 do the same.
   rely on defaults.)
 - Not merged: shaders whose code differs in anything else, a differing
   `instance uniform` or `global uniform` default (it can't be set on a
-  material), a shader lacking a default texture the kept one has (a material
-  can't hold "no texture"), and groups with no shader in its own file (one
+  material), shaders whose default textures differ (a `VisualShader`'s
+  texture nodes: Godot hides those parameters from materials, so a material
+  can't be given its own; shaders with the same textures still merge), and
+  groups with no shader in its own file (one
   built into a file can't be used from another; save one as a `.tres`).
 - Merge Selected moves the ticked groups' materials as one undoable action
   and saves them, keeping their UIDs. The changes are written to disk and can

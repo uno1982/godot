@@ -34,6 +34,7 @@
 #include "core/io/resource_loader.h"
 #include "core/object/class_db.h"
 #include "scene/resources/shader.h"
+#include "scene/resources/texture.h"
 #include "servers/rendering/rendering_server.h"
 
 namespace {
@@ -93,6 +94,31 @@ Variant default_of(const Ref<Shader> &p_shader, const PropertyInfo &p_param) {
 	Callable::CallError error;
 	Variant::construct(p_param.type, zero, nullptr, 0, error);
 	return zero;
+}
+
+// The shader's default textures (a VisualShader's texture nodes become them), as text. A uniform with a default
+// texture is hidden from materials: one can't be given a value for it that's saved, so shaders whose default textures
+// differ can't share a shader.
+String default_textures_key(const Ref<Shader> &p_shader) {
+	List<StringName> names;
+	p_shader->get_default_texture_parameter_list(&names);
+	LocalVector<String> parts;
+	for (const StringName &name : names) {
+		// Texture arrays have one per index; 16 covers what a uniform array of samplers can be given in practice.
+		for (int i = 0; i < 16; i++) {
+			const Ref<Texture> texture = p_shader->get_default_texture_parameter(name, i);
+			if (texture.is_valid()) {
+				const String id = texture->get_path().is_empty() ? itos(texture->get_instance_id()) : texture->get_path();
+				parts.push_back(vformat("%s[%d]=%s", name, i, id));
+			}
+		}
+	}
+	parts.sort();
+	String key;
+	for (const String &part : parts) {
+		key += part + "\n";
+	}
+	return key;
 }
 
 } // namespace
@@ -180,11 +206,11 @@ Array PhysXShaderOptimizer::find_groups(const TypedArray<ShaderMaterial> &p_mate
 		list->push_back(material);
 	}
 
-	// Grouped by their code without defaults.
+	// Grouped by their code without defaults, and their default textures (which can't be moved into a material).
 	HashMap<String, LocalVector<Ref<Shader>>> by_code;
 	LocalVector<String> order;
 	for (const Ref<Shader> &shader : shaders) {
-		const String key = code_without_defaults(shader->get_code());
+		const String key = code_without_defaults(shader->get_code()) + "\n\n" + default_textures_key(shader);
 		LocalVector<Ref<Shader>> *group = by_code.getptr(key);
 		if (group == nullptr) {
 			order.push_back(key);
@@ -227,8 +253,6 @@ Array PhysXShaderOptimizer::find_groups(const TypedArray<ShaderMaterial> &p_mate
 		if (kept.is_valid()) {
 			List<PropertyInfo> params;
 			kept->get_shader_uniform_list(&params);
-			List<StringName> kept_textures;
-			kept->get_default_texture_parameter_list(&kept_textures);
 			for (const Ref<Shader> &shader : group) {
 				if (shader == kept) {
 					continue;
@@ -241,23 +265,9 @@ Array PhysXShaderOptimizer::find_groups(const TypedArray<ShaderMaterial> &p_mate
 						differ[param.name] = value;
 					}
 				}
-				List<StringName> textures;
-				shader->get_default_texture_parameter_list(&textures);
-				for (const StringName &name : kept_textures) {
-					if (!textures.find(name)) {
-						textures.push_back(name);
-					}
-				}
-				// A default texture the kept shader has and this one hasn't: its materials would need "no texture" set,
-				// which a material can't hold. Left as it is.
+				// A value a material can't hold (a texture uniform's "no texture" where the kept shader has one): left as
+				// it is.
 				bool blocked = false;
-				for (const StringName &name : textures) {
-					const Ref<Texture> texture = shader->get_default_texture_parameter(name);
-					if (texture != kept->get_default_texture_parameter(name)) {
-						blocked = blocked || texture.is_null();
-						differ[name] = texture;
-					}
-				}
 				for (const KeyValue<Variant, Variant> &E : differ) {
 					blocked = blocked || E.value.get_type() == Variant::NIL;
 				}

@@ -5,7 +5,7 @@
 	</brief_description>
 	<description>
 		Each [Shader] Godot compiles is a set of render pipelines the graphics driver keeps in system memory (tens of MB for a big shader) and that take time to compile and to free, and two Shader resources with the same code are compiled twice. Exporters that write a shader per material (an Unreal project's material instances, each baked into its own [VisualShader]) can leave hundreds where a few would do.
-		This finds the shaders whose code is the same, or differs only in its parameters' default values, and moves their materials onto one of them. A material that relied on a default the shared shader doesn't have gets that value set on itself, so it looks the same.
+		This finds the shaders whose code is the same, or differs only in its parameters' default values, and whose default textures (a [VisualShader]'s texture nodes) are the same, and moves their materials onto one of them. Default textures must match: Godot hides those parameters from materials, so a material can't be given its own. A material that relied on a default the shared shader doesn't have gets that value set on itself, so it looks the same.
 		[codeblock]
 		var groups = PhysXShaderOptimizer.find_groups(PhysXShaderOptimizer.find_materials("res://"))
 		for group in groups:
@@ -31,13 +31,13 @@
 			<return type="Array" />
 			<param index="0" name="materials" type="ShaderMaterial[]" />
 			<description>
-				The shaders [param materials] use, in groups of two or more that could be one shader, each a [Dictionary]:
+				The shaders [param materials] use, in groups of two or more that could be one shader (the same code without defaults, the same default textures), each a [Dictionary]:
 				- [code]shader[/code]: the one kept, the one most of the materials use among those in their own files ([code]null[/code] when none is: a shader built into one file can't be used from another, so the group can't be merged);
 				- [code]shaders[/code]: all of the group's shaders, the kept one first;
 				- [code]identical[/code]: [code]true[/code] when their code is the same, defaults included;
 				- [code skip-lint]materials[/code]: the materials to move onto [code]shader[/code];
 				- [code]parameters[/code]: for each of those, a [Dictionary] of the values to set on it (the defaults it relied on that [code]shader[/code] doesn't share);
-				- [code]skipped[/code]: shaders left as they are, as their materials would need "no texture" where the kept shader has a default texture, which a material can't hold.
+				- [code]skipped[/code]: shaders left as they are, as their materials would need a value a material can't hold (a texture parameter's "no texture" where the kept shader's default is a texture).
 			</description>
 		</method>
 		<method name="find_materials" qualifiers="static">

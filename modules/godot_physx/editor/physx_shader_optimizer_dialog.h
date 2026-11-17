@@ -32,22 +32,31 @@
 
 #include "scene/gui/dialogs.h"
 
+class CheckBox;
+class ItemList;
 class Label;
 class Tree;
 
 // Optimize Shaders (Project > Tools): the project's material files' shaders that could be one shader
 // (PhysXShaderOptimizer), listed by group; the ticked groups' materials are moved onto the group's kept shader, as one
-// undoable action, and saved.
+// undoable action, and saved. With "Delete the shaders left unused" ticked, the shaders the merge moved materials away
+// from that nothing else in the project uses are then listed, and moved to the system trash if confirmed.
 class PhysXShaderOptimizerDialog : public ConfirmationDialog {
 	GDCLASS(PhysXShaderOptimizerDialog, ConfirmationDialog);
 
 	Label *status = nullptr;
 	Tree *tree = nullptr;
+	CheckBox *delete_unused = nullptr;
+	ConfirmationDialog *delete_confirm = nullptr;
+	Label *delete_label = nullptr;
+	ItemList *delete_list = nullptr;
 	Array groups;
 
 	void _scan();
 	void _apply();
 	void _item_activated();
+	void _offer_delete(const PackedStringArray &p_left, const PackedStringArray &p_moved);
+	void _delete_unused();
 
 protected:
 	static void _bind_methods();

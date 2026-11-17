@@ -32,12 +32,19 @@
 
 #include "../nodes/physx_shader_optimizer.h"
 
+#include "core/config/project_settings.h"
+#include "core/io/file_access.h"
 #include "core/io/resource_saver.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
+#include "core/os/os.h"
 #include "editor/editor_interface.h"
+#include "editor/editor_node.h"
 #include "editor/editor_undo_redo_manager.h"
+#include "editor/file_system/editor_file_system.h"
 #include "scene/gui/box_container.h"
+#include "scene/gui/check_box.h"
+#include "scene/gui/item_list.h"
 #include "scene/gui/label.h"
 #include "scene/gui/tree.h"
 #include "scene/resources/material.h"
@@ -58,6 +65,28 @@ String file_label(const Ref<Resource> &p_resource) {
 		return p_resource->get_name().is_empty() ? String("(built-in)") : p_resource->get_name();
 	}
 	return path.contains("::") ? path.get_slice("::", 0).get_file() + " (built-in)" : path.get_file();
+}
+
+// The shaders of p_candidates that a file other than the candidates themselves and the materials just saved
+// (p_ignore: the editor's record of them may predate the save) depends on.
+void find_used(EditorFileSystemDirectory *p_dir, const HashSet<String> &p_candidates, const HashSet<String> &p_ignore, HashSet<String> &r_used) {
+	if (p_dir == nullptr) {
+		return;
+	}
+	for (int i = 0; i < p_dir->get_subdir_count(); i++) {
+		find_used(p_dir->get_subdir(i), p_candidates, p_ignore, r_used);
+	}
+	for (int i = 0; i < p_dir->get_file_count(); i++) {
+		const String path = p_dir->get_file_path(i);
+		if (p_candidates.has(path) || p_ignore.has(path)) {
+			continue;
+		}
+		for (const String &dep : p_dir->get_file_deps(i)) {
+			if (p_candidates.has(dep)) {
+				r_used.insert(dep);
+			}
+		}
+	}
 }
 
 } // namespace
@@ -93,7 +122,29 @@ PhysXShaderOptimizerDialog::PhysXShaderOptimizerDialog() {
 	tree->set_custom_minimum_size(Size2(860, 300));
 	tree->connect("item_activated", callable_mp(this, &PhysXShaderOptimizerDialog::_item_activated));
 	box->add_child(tree);
+	delete_unused = memnew(CheckBox);
+	delete_unused->set_text("Delete the shaders left unused");
+	delete_unused->set_tooltip_text("After merging, list the shaders the merge moved materials away from that nothing else in the project uses, to move them to the system trash (asked first).");
+	box->add_child(delete_unused);
 	connect(SceneStringName(confirmed), callable_mp(this, &PhysXShaderOptimizerDialog::_apply));
+
+	delete_confirm = memnew(ConfirmationDialog);
+	delete_confirm->set_title("Delete Unused Shaders");
+	delete_confirm->set_ok_button_text("Delete");
+	delete_confirm->set_cancel_button_text("Keep Unused");
+	VBoxContainer *delete_box = memnew(VBoxContainer);
+	delete_confirm->add_child(delete_box);
+	delete_label = memnew(Label);
+	delete_label->set_autowrap_mode(TextServer::AUTOWRAP_WORD_SMART);
+	// A real width: wrapping at 1 pixel, the dialog would size itself to that text's height (screen tall).
+	delete_label->set_custom_minimum_size(Size2(640, 0));
+	delete_box->add_child(delete_label);
+	delete_list = memnew(ItemList);
+	delete_list->set_v_size_flags(Control::SIZE_EXPAND_FILL);
+	delete_list->set_custom_minimum_size(Size2(640, 260));
+	delete_box->add_child(delete_list);
+	delete_confirm->connect(SceneStringName(confirmed), callable_mp(this, &PhysXShaderOptimizerDialog::_delete_unused));
+	add_child(delete_confirm);
 }
 
 void PhysXShaderOptimizerDialog::popup_for_project() {
@@ -186,6 +237,8 @@ void PhysXShaderOptimizerDialog::_scan() {
 void PhysXShaderOptimizerDialog::_apply() {
 	EditorUndoRedoManager *ur = EditorUndoRedoManager::get_singleton();
 	int count = 0;
+	PackedStringArray left; // the shaders materials were moved away from
+	PackedStringArray moved; // the materials moved
 	TreeItem *root = tree->get_root();
 	for (TreeItem *item = root ? root->get_first_child() : nullptr; item; item = item->get_next()) {
 		if (!item->is_checked(COLUMN_SHADER)) {
@@ -198,6 +251,14 @@ void PhysXShaderOptimizerDialog::_apply() {
 		}
 		const Array materials = group["materials"];
 		const Array parameters = group["parameters"];
+		const Array shaders = group["shaders"];
+		const Array skipped = group["skipped"];
+		for (int i = 0; i < shaders.size(); i++) {
+			const Ref<Shader> shader = shaders[i];
+			if (shader.is_valid() && shader != kept && !skipped.has(shader) && !shader->get_path().is_empty() && !shader->get_path().contains("::")) {
+				left.push_back(shader->get_path());
+			}
+		}
 		for (int i = 0; i < materials.size(); i++) {
 			const Ref<ShaderMaterial> material = materials[i];
 			if (material.is_null()) {
@@ -216,10 +277,75 @@ void PhysXShaderOptimizerDialog::_apply() {
 			}
 			ur->add_do_method(this, "save_material", material);
 			ur->add_undo_method(this, "save_material", material);
+			moved.push_back(material->get_path());
 		}
 	}
 	if (count > 0) {
 		ur->commit_action();
+	}
+	if (count > 0 && delete_unused->is_pressed() && !left.is_empty()) {
+		// After this dialog has closed.
+		callable_mp(this, &PhysXShaderOptimizerDialog::_offer_delete).call_deferred(left, moved);
+	}
+}
+
+void PhysXShaderOptimizerDialog::_offer_delete(const PackedStringArray &p_left, const PackedStringArray &p_moved) {
+	HashSet<String> left;
+	for (const String &path : p_left) {
+		left.insert(path);
+	}
+	HashSet<String> moved;
+	for (const String &path : p_moved) {
+		moved.insert(path);
+	}
+	HashSet<String> used;
+	find_used(EditorFileSystem::get_singleton()->get_filesystem(), left, moved, used);
+	LocalVector<String> unused;
+	for (const String &path : left) {
+		if (!used.has(path)) {
+			unused.push_back(path);
+		}
+	}
+	unused.sort();
+	delete_list->clear();
+	for (const String &path : unused) {
+		delete_list->add_item(path);
+	}
+	if (unused.is_empty()) {
+		delete_label->set_text("Every shader the merge moved materials away from is still used by another file: nothing to delete.");
+		delete_confirm->get_ok_button()->set_disabled(true);
+	} else {
+		String text = vformat("These %d shaders are no longer used by any file in the project. Delete moves them to the system trash; the merge can't be undone afterward without restoring them from there.", int(unused.size()));
+		if (!used.is_empty()) {
+			text += vformat(" (%d others are still used by other files and are kept.)", used.size());
+		}
+		delete_label->set_text(text);
+		delete_confirm->get_ok_button()->set_disabled(false);
+	}
+	delete_confirm->popup_centered_clamped(Size2(680, 420), 0.7);
+}
+
+void PhysXShaderOptimizerDialog::_delete_unused() {
+	PackedStringArray removed;
+	for (int i = 0; i < delete_list->get_item_count(); i++) {
+		const String file = delete_list->get_item_text(i);
+		// As the FileSystem dock deletes: a loaded copy forgets its path, the file and its .uid go to the trash.
+		if (ResourceCache::has(file)) {
+			Ref<Resource> res = ResourceCache::get_ref(file);
+			res->set_path("");
+		}
+		const String path = ProjectSettings::get_singleton()->globalize_path(file);
+		if (OS::get_singleton()->move_to_trash(path) != OK) {
+			EditorNode::get_singleton()->add_io_error("Cannot remove:\n" + file + "\n");
+			continue;
+		}
+		if (FileAccess::exists(file + ".uid")) {
+			OS::get_singleton()->move_to_trash(path + ".uid");
+		}
+		removed.push_back(file);
+	}
+	for (const String &file : removed) {
+		EditorFileSystem::get_singleton()->update_file(file);
 	}
 }
 

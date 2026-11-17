@@ -446,7 +446,12 @@ test scene where 192 do the same.
   built into a file can't be used from another; save one as a `.tres`).
 - Merge Selected moves the ticked groups' materials as one undoable action
   and saves them, keeping their UIDs. Commit your project first: it can
-  change many files. The shaders no longer used are left on disk.
+  change many files.
+- The shaders no longer used stay on disk unless **Delete the shaders left
+  unused** is ticked: then, after merging, a confirmation lists those no
+  other file in the project depends on, and Delete moves them (and their
+  `.uid` files) to the system trash; Keep Unused leaves them. Once they're
+  deleted, undoing the merge needs them restored from the trash.
 - Double-click a shader to find it in the FileSystem dock.
 - Scripts can do the same with `PhysXShaderOptimizer` (`find_materials`,
   `find_groups`, `merge_group`); it needs a rendering device (not

@@ -34,6 +34,7 @@
 
 #include "core/config/project_settings.h"
 #include "core/io/file_access.h"
+#include "core/io/resource_loader.h"
 #include "core/io/resource_saver.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
@@ -159,7 +160,44 @@ void PhysXShaderOptimizerDialog::popup_for_project() {
 }
 
 void PhysXShaderOptimizerDialog::_scan() {
-	const TypedArray<ShaderMaterial> materials = PhysXShaderOptimizer::find_materials("res://");
+	// Reading the materials (their textures with them) and the shaders' code (a VisualShader generates its own) takes a
+	// while in a big project: shown, and can be canceled.
+	const PackedStringArray paths = PhysXShaderOptimizer::find_material_paths("res://");
+	TypedArray<ShaderMaterial> materials;
+	{
+		EditorProgress progress("physx_optimize_shaders", "Reading Materials", paths.size(), true);
+		for (int i = 0; i < paths.size(); i++) {
+			if (progress.step(paths[i].get_file(), i)) {
+				hide();
+				return;
+			}
+			Ref<ShaderMaterial> material = ResourceLoader::load(paths[i]);
+			if (material.is_valid()) {
+				materials.push_back(material);
+			}
+		}
+	}
+	{
+		LocalVector<Ref<Shader>> shaders;
+		HashSet<ObjectID> seen;
+		for (int i = 0; i < materials.size(); i++) {
+			const Ref<ShaderMaterial> material = materials[i];
+			if (material->get_shader().is_valid() && !seen.has(material->get_shader()->get_instance_id())) {
+				seen.insert(material->get_shader()->get_instance_id());
+				shaders.push_back(material->get_shader());
+			}
+		}
+		EditorProgress progress("physx_optimize_shaders_code", "Reading Shaders", shaders.size(), true);
+		for (uint32_t i = 0; i < shaders.size(); i++) {
+			if (progress.step(shaders[i]->get_path().get_file(), i)) {
+				hide();
+				return;
+			}
+			(void)shaders[i]->get_code(); // a VisualShader's generated now, kept for find_groups
+			List<PropertyInfo> params;
+			shaders[i]->get_shader_uniform_list(&params);
+		}
+	}
 	groups = PhysXShaderOptimizer::find_groups(materials);
 	HashSet<ObjectID> used;
 	for (int i = 0; i < materials.size(); i++) {

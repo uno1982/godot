@@ -50,6 +50,8 @@ public:
 	// The ShaderMaterials in their own files (.tres, .res) under p_dir, its subfolders included (not .godot, nor
 	// folders with a .gdignore).
 	static TypedArray<ShaderMaterial> find_materials(const String &p_dir);
+	// Their paths, without loading them (a file's type is read from its header).
+	static PackedStringArray find_material_paths(const String &p_dir);
 	// The code with its parameters' default values left out (a "uniform ... = value;" becomes "uniform ...;"); instance
 	// and global uniforms are kept whole (their defaults can't be set on a material).
 	static String code_without_defaults(const String &p_code);

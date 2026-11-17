@@ -38,14 +38,14 @@
 
 namespace {
 
-void collect_materials(const String &p_dir, TypedArray<ShaderMaterial> &r_materials) {
+void collect_materials(const String &p_dir, PackedStringArray &r_paths) {
 	Ref<DirAccess> dir = DirAccess::open(p_dir);
 	if (dir.is_null() || dir->file_exists(".gdignore")) {
 		return;
 	}
 	for (const String &sub : dir->get_directories()) {
 		if (!sub.begins_with(".")) {
-			collect_materials(p_dir.path_join(sub), r_materials);
+			collect_materials(p_dir.path_join(sub), r_paths);
 		}
 	}
 	for (const String &file : dir->get_files()) {
@@ -54,12 +54,8 @@ void collect_materials(const String &p_dir, TypedArray<ShaderMaterial> &r_materi
 			continue;
 		}
 		const String path = p_dir.path_join(file);
-		if (ResourceLoader::get_resource_type(path) != "ShaderMaterial") {
-			continue;
-		}
-		Ref<ShaderMaterial> material = ResourceLoader::load(path);
-		if (material.is_valid()) {
-			r_materials.push_back(material);
+		if (ResourceLoader::get_resource_type(path) == "ShaderMaterial") {
+			r_paths.push_back(path);
 		}
 	}
 }
@@ -101,9 +97,20 @@ Variant default_of(const Ref<Shader> &p_shader, const PropertyInfo &p_param) {
 
 } // namespace
 
+PackedStringArray PhysXShaderOptimizer::find_material_paths(const String &p_dir) {
+	PackedStringArray paths;
+	collect_materials(p_dir, paths);
+	return paths;
+}
+
 TypedArray<ShaderMaterial> PhysXShaderOptimizer::find_materials(const String &p_dir) {
 	TypedArray<ShaderMaterial> materials;
-	collect_materials(p_dir, materials);
+	for (const String &path : find_material_paths(p_dir)) {
+		Ref<ShaderMaterial> material = ResourceLoader::load(path);
+		if (material.is_valid()) {
+			materials.push_back(material);
+		}
+	}
 	return materials;
 }
 
@@ -298,6 +305,7 @@ void PhysXShaderOptimizer::merge_group(const Dictionary &p_group) {
 
 void PhysXShaderOptimizer::_bind_methods() {
 	ClassDB::bind_static_method("PhysXShaderOptimizer", D_METHOD("find_materials", "dir"), &PhysXShaderOptimizer::find_materials);
+	ClassDB::bind_static_method("PhysXShaderOptimizer", D_METHOD("find_material_paths", "dir"), &PhysXShaderOptimizer::find_material_paths);
 	ClassDB::bind_static_method("PhysXShaderOptimizer", D_METHOD("code_without_defaults", "code"), &PhysXShaderOptimizer::code_without_defaults);
 	ClassDB::bind_static_method("PhysXShaderOptimizer", D_METHOD("find_groups", "materials"), &PhysXShaderOptimizer::find_groups);
 	ClassDB::bind_static_method("PhysXShaderOptimizer", D_METHOD("merge_group", "group"), &PhysXShaderOptimizer::merge_group);

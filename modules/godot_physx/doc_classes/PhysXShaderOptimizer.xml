@@ -47,6 +47,13 @@
 				The [ShaderMaterial]s saved in their own files ([code].tres[/code], [code].res[/code]) under [param dir] and its subfolders (not hidden folders such as [code].godot[/code], nor folders with a [code].gdignore[/code]). Materials built into scenes aren't included.
 			</description>
 		</method>
+		<method name="find_material_paths" qualifiers="static">
+			<return type="PackedStringArray" />
+			<param index="0" name="dir" type="String" />
+			<description>
+				The paths of the files [method find_materials] would load, without loading them (each file's type is read from its header). Loading them one by one shows progress in a big project.
+			</description>
+		</method>
 		<method name="merge_group" qualifiers="static">
 			<return type="void" />
 			<param index="0" name="group" type="Dictionary" />

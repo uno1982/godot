@@ -355,8 +355,10 @@ multiple bounces.
   scene see the sky (or the background colour).
 - A body's look comes from the mesh under it, or else the mesh it sits
   under (a model with its collision body as a child), or else the first
-  mesh beside it in a small group (up to 8 children): its albedo from the first surface with a
-  `StandardMaterial3D`, its glow from its brightest surface. PXTGI reads a
+  mesh beside it in a small group (up to 8 children): its albedo the colors
+  of its surfaces averaged by their areas (a wall's thin colored trim tints
+  it only as much as it covers; a surface PXTGI can't read is left out), its
+  glow from its brightest surface. PXTGI reads a
   `StandardMaterial3D`'s albedo color but not its albedo texture's colors,
   and can't read a `ShaderMaterial` at all; give one a `pxtgi_albedo` and/or
   `pxtgi_emission` Color in its metadata (or put them on the

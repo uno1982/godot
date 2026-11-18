@@ -470,28 +470,88 @@ Ref<Material> surface_material(const MeshInstance3D *p_mesh, int p_surface) {
 	return mesh.is_valid() && p_surface < mesh->get_surface_count() ? mesh->surface_get_material(p_surface) : Ref<Material>();
 }
 
-// A mesh's albedo (its first surface Godot can read the colour of, or that says it with a "pxtgi_albedo" Color in its
-// metadata) and the light it gives off (its brightest surface: a lamp's housing and bulb are often one mesh). A
-// "pxtgi_emission" Color in the MeshInstance3D's own metadata stands for the whole mesh.
+// The area of each of a mesh's surfaces, worked out once each (reading a mesh's triangles back is slow; forgotten
+// whenever the GI walks the scene again, like the texture averages).
+HashMap<ObjectID, Vector<float>> surface_areas;
+
+const Vector<float> &mesh_surface_areas(const Ref<Mesh> &p_mesh) {
+	if (const Vector<float> *areas = surface_areas.getptr(p_mesh->get_instance_id())) {
+		if (areas->size() == p_mesh->get_surface_count()) {
+			return *areas;
+		}
+	}
+	Vector<float> areas;
+	for (int s = 0; s < p_mesh->get_surface_count(); s++) {
+		float area = 0.0f;
+		if (p_mesh->surface_get_primitive_type(s) == Mesh::PRIMITIVE_TRIANGLES) {
+			const Array arrays = p_mesh->surface_get_arrays(s);
+			const PackedVector3Array vertices = arrays[Mesh::ARRAY_VERTEX];
+			const PackedInt32Array indices = arrays[Mesh::ARRAY_INDEX];
+			const Vector3 *v = vertices.ptr();
+			const int n = vertices.size();
+			if (indices.is_empty()) {
+				for (int i = 0; i + 2 < n; i += 3) {
+					area += (v[i + 1] - v[i]).cross(v[i + 2] - v[i]).length();
+				}
+			} else {
+				const int *idx = indices.ptr();
+				for (int i = 0; i + 2 < indices.size(); i += 3) {
+					if (idx[i] < n && idx[i + 1] < n && idx[i + 2] < n) {
+						area += (v[idx[i + 1]] - v[idx[i]]).cross(v[idx[i + 2]] - v[idx[i]]).length();
+					}
+				}
+			}
+		}
+		areas.push_back(area * 0.5f);
+	}
+	return surface_areas.insert(p_mesh->get_instance_id(), areas)->value;
+}
+
+// A mesh's albedo (the colors of the surfaces Godot can read the colour of, or that say it with a "pxtgi_albedo"
+// Color in their metadata, averaged by their areas: a wall's thin trim colors it only as much as it covers) and the
+// light it gives off (its brightest surface: a lamp's housing and bulb are often one mesh). A "pxtgi_emission" Color
+// in the MeshInstance3D's own metadata stands for the whole mesh.
 void mesh_look(MeshInstance3D *p_mesh, Color &r_albedo, Color &r_emission) {
 	r_albedo = Color(0.5, 0.5, 0.5);
 	r_emission = Color(0, 0, 0);
+	const Ref<Mesh> mesh = p_mesh->get_mesh();
+	const int surfaces = mesh.is_valid() ? mesh->get_surface_count() : 0;
+	Color albedo_sum(0, 0, 0, 0);
+	float area_sum = 0.0f;
+	Color first_albedo;
 	bool have_albedo = false;
-	const int surfaces = p_mesh->get_mesh().is_valid() ? p_mesh->get_mesh()->get_surface_count() : 0;
 	for (int i = 0; i < MAX(surfaces, 1); i++) {
 		const Ref<Material> material = surface_material(p_mesh, i);
 		const Ref<BaseMaterial3D> base = material;
-		if (!have_albedo && material.is_valid() && material->has_meta(meta_albedo())) {
-			r_albedo = Color(material->get_meta(meta_albedo())).srgb_to_linear();
-			have_albedo = true;
-		} else if (!have_albedo && base.is_valid()) {
-			r_albedo = base->get_albedo().srgb_to_linear();
-			have_albedo = true;
+		bool known = true;
+		Color albedo;
+		if (material.is_valid() && material->has_meta(meta_albedo())) {
+			albedo = Color(material->get_meta(meta_albedo())).srgb_to_linear();
+		} else if (base.is_valid()) {
+			albedo = base->get_albedo().srgb_to_linear();
+		} else {
+			known = false;
+		}
+		if (known) {
+			if (!have_albedo) {
+				first_albedo = albedo;
+				have_albedo = true;
+			}
+			// A mesh of one surface needs no areas.
+			const float area = surfaces > 1 ? mesh_surface_areas(mesh)[i] : 1.0f;
+			albedo_sum += albedo * area;
+			area_sum += area;
 		}
 		const Color glow = material_glow(material);
 		if (glow.get_luminance() > r_emission.get_luminance()) {
 			r_emission = glow;
 		}
+	}
+	if (area_sum > 0.0f) {
+		r_albedo = albedo_sum / area_sum;
+		r_albedo.a = 1.0f;
+	} else if (have_albedo) {
+		r_albedo = first_albedo; // surfaces with no triangles to measure
 	}
 	if (p_mesh->has_meta(meta_emission())) {
 		r_emission = Color(p_mesh->get_meta(meta_emission())).srgb_to_linear();
@@ -951,6 +1011,7 @@ void PXTGI3D::_track_all(Node *p_root) {
 	tracked.clear();
 	looks.clear();
 	texture_averages.clear();
+	surface_areas.clear();
 	collect(p_root, tracked);
 	tracked_root = p_root->get_instance_id();
 	tracked_changed = true;

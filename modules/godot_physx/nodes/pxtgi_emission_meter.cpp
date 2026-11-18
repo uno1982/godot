@@ -53,6 +53,9 @@ namespace {
 constexpr int FIRST_READ = 4;
 constexpr int READ_STEP = 6;
 constexpr int READS = 6;
+// Then the ambient light is turned on: its first reading once the drawing has caught up, then LIT_READS of them.
+constexpr int LIT_FIRST = 3;
+constexpr int LIT_READS = 2;
 
 const StringName &meta_emission() {
 	static const StringName name = "pxtgi_emission";
@@ -79,14 +82,25 @@ Error PXTGIEmissionMeter::measure(const TypedArray<Material> &p_materials) {
 	return OK;
 }
 
-// The next up to MAX_COLUMNS^2 materials, each on a quad that fills its tile of an orthographic view.
+// The next up to MAX_COLUMNS^2 - 1 materials, each on a quad that fills its tile of an orthographic view, and a white
+// reference tile last (its albedo 1: the albedos are read as shares of its).
 void PXTGIEmissionMeter::_start_batch() {
 	_clear_viewport();
 	batch.clear();
-	const int count = MIN(pending.size(), MAX_COLUMNS * MAX_COLUMNS);
+	const int count = MIN(pending.size(), MAX_COLUMNS * MAX_COLUMNS - 1);
 	for (int i = 0; i < count; i++) {
 		batch.push_back(pending[0]);
 		pending.remove_at(0);
+	}
+	if (!batch.is_empty()) {
+		if (white_reference.is_null()) {
+			Ref<Shader> shader;
+			shader.instantiate();
+			shader->set_code("shader_type spatial;\nvoid fragment() { ALBEDO = vec3(1.0); }\n");
+			white_reference.instantiate();
+			white_reference->set_shader(shader);
+		}
+		batch.push_back(white_reference);
 	}
 	if (batch.is_empty()) {
 		measuring = false;
@@ -111,6 +125,7 @@ void PXTGIEmissionMeter::_start_batch() {
 	// the sensitivity isn't used and the normalization is 1.
 	Ref<Environment> env;
 	env.instantiate();
+	environment = env;
 	env->set_background(Environment::BG_COLOR);
 	env->set_bg_color(Color(0, 0, 0));
 	env->set_ambient_source(Environment::AMBIENT_SOURCE_DISABLED);
@@ -151,6 +166,7 @@ void PXTGIEmissionMeter::_start_batch() {
 	frame = 0;
 	reads = 0;
 	sums.clear();
+	lit_sums.clear();
 	lowest.clear();
 	highest.clear();
 }
@@ -183,6 +199,10 @@ Vector<Color> PXTGIEmissionMeter::_read_tiles() const {
 
 void PXTGIEmissionMeter::_frame() {
 	frame++;
+	if (reads >= READS) {
+		_frame_lit();
+		return;
+	}
 	if (frame < FIRST_READ || (frame - FIRST_READ) % READ_STEP != 0) {
 		return;
 	}
@@ -206,15 +226,49 @@ void PXTGIEmissionMeter::_frame() {
 	if (reads < READS) {
 		return;
 	}
-	for (int i = 0; i < batch.size(); i++) {
+	// An even white ambient light. How strongly it's drawn (the camera's exposure doesn't apply to it) is read off
+	// the batch's reference tile, white, rather than assumed.
+	environment->set_ambient_source(Environment::AMBIENT_SOURCE_COLOR);
+	environment->set_ambient_light_color(Color(1, 1, 1));
+	environment->set_ambient_light_energy(1.0f);
+	frame = 0;
+}
+
+void PXTGIEmissionMeter::_frame_lit() {
+	if (frame < LIT_FIRST) {
+		return;
+	}
+	const Vector<Color> tiles = _read_tiles();
+	if (lit_sums.size() != batch.size()) {
+		lit_sums.resize(batch.size());
+		for (int i = 0; i < batch.size(); i++) {
+			lit_sums.write[i] = Color(0, 0, 0, 0);
+		}
+	}
+	for (int i = 0; i < batch.size() && i < tiles.size(); i++) {
+		lit_sums.write[i] += tiles[i];
+	}
+	if (frame < LIT_FIRST + LIT_READS - 1) {
+		return;
+	}
+	// What the ambient light added to each tile, as a share of what it added to the white reference (the last).
+	const int reference = batch.size() - 1;
+	const Color white = (lit_sums[reference] - sums[reference] * (float(LIT_READS) / float(READS))) / float(LIT_READS);
+	for (int i = 0; i < reference; i++) {
 		Color glow = sums[i] / float(READS);
 		glow.a = 1.0f;
+		const Color added = lit_sums[i] / float(LIT_READS) - glow;
+		Color albedo(0, 0, 0, 1);
+		if (white.r > 0.0f && white.g > 0.0f && white.b > 0.0f) {
+			albedo = Color(CLAMP(added.r / white.r, 0.0f, 1.0f), CLAMP(added.g / white.g, 0.0f, 1.0f), CLAMP(added.b / white.b, 0.0f, 1.0f), 1.0f);
+		}
 		Dictionary result;
 		result["material"] = batch[i];
 		result["glow"] = glow; // the average over the readings: a pulsing glow's mean
 		result["luminance"] = glow.get_luminance();
 		// A glow that moved across the readings (animated by TIME).
 		result["changes"] = highest[i] - lowest[i] > 0.02f * highest[i] + 0.01f;
+		result["albedo"] = albedo; // linear
 		results.push_back(result);
 	}
 	_start_batch();
@@ -225,6 +279,7 @@ void PXTGIEmissionMeter::_clear_viewport() {
 		vp->queue_free();
 	}
 	viewport = ObjectID();
+	environment.unref();
 }
 
 Dictionary PXTGIEmissionMeter::find_untagged(Node *p_root) {
@@ -252,6 +307,46 @@ Dictionary PXTGIEmissionMeter::find_untagged(Node *p_root) {
 	return found;
 }
 
+Dictionary PXTGIEmissionMeter::find_untagged_albedo(Node *p_root) {
+	Dictionary found;
+	ERR_FAIL_NULL_V(p_root, found);
+	const StringName meta_albedo = "pxtgi_albedo";
+	TypedArray<Node> nodes = p_root->find_children("*", "MeshInstance3D", true, false);
+	nodes.push_front(p_root);
+	for (int k = 0; k < nodes.size(); k++) {
+		MeshInstance3D *mesh = Object::cast_to<MeshInstance3D>(nodes[k]);
+		if (mesh == nullptr || mesh->get_mesh().is_null()) {
+			continue;
+		}
+		for (int i = 0; i < mesh->get_mesh()->get_surface_count(); i++) {
+			const Ref<Material> material = mesh->get_active_material(i);
+			if (material.is_null() || material->has_meta(meta_albedo)) {
+				continue;
+			}
+			// PXTGI reads a BaseMaterial3D's albedo color, but not its texture's colors; nothing of a ShaderMaterial's.
+			const Ref<BaseMaterial3D> base = material;
+			if (base.is_valid() && base->get_texture(BaseMaterial3D::TEXTURE_ALBEDO).is_null()) {
+				continue;
+			}
+			if (base.is_null() && Ref<ShaderMaterial>(material).is_null()) {
+				continue;
+			}
+			Array users = found.get(material, Array());
+			if (!users.has(mesh)) {
+				users.push_back(mesh);
+			}
+			found[material] = users;
+		}
+	}
+	return found;
+}
+
+Color PXTGIEmissionMeter::albedo_tag(const Color &p_albedo) {
+	Color tag = Color(CLAMP(p_albedo.r, 0.0f, 1.0f), CLAMP(p_albedo.g, 0.0f, 1.0f), CLAMP(p_albedo.b, 0.0f, 1.0f)).linear_to_srgb();
+	tag.a = 1.0f;
+	return tag;
+}
+
 Color PXTGIEmissionMeter::emission_tag(const Color &p_glow) {
 	Color tag = Color(MAX(p_glow.r, 0.0f), MAX(p_glow.g, 0.0f), MAX(p_glow.b, 0.0f)).linear_to_srgb();
 	tag.a = 1.0f;
@@ -263,6 +358,8 @@ void PXTGIEmissionMeter::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_measuring"), &PXTGIEmissionMeter::is_measuring);
 	ClassDB::bind_static_method("PXTGIEmissionMeter", D_METHOD("find_untagged", "root"), &PXTGIEmissionMeter::find_untagged);
 	ClassDB::bind_static_method("PXTGIEmissionMeter", D_METHOD("emission_tag", "glow"), &PXTGIEmissionMeter::emission_tag);
+	ClassDB::bind_static_method("PXTGIEmissionMeter", D_METHOD("find_untagged_albedo", "root"), &PXTGIEmissionMeter::find_untagged_albedo);
+	ClassDB::bind_static_method("PXTGIEmissionMeter", D_METHOD("albedo_tag", "albedo"), &PXTGIEmissionMeter::albedo_tag);
 	ADD_SIGNAL(MethodInfo("finished", PropertyInfo(Variant::ARRAY, "results")));
 }
 

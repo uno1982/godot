@@ -39,9 +39,10 @@ class Button;
 class Label;
 class Tree;
 
-// Find Emissive Materials: the edited scene's ShaderMaterials that PXTGI can't read a glow from, measured
-// (PXTGIEmissionMeter) and listed; the ones ticked get a pxtgi_emission tag of their measured (or edited) glow, as
-// one undoable action, and those in their own files are saved.
+// Measure Materials: the edited scene's materials that PXTGI can't read in full (a ShaderMaterial's glow or colors, a
+// texture's colors), measured (PXTGIEmissionMeter) and listed; the ones ticked get a pxtgi_emission tag of their
+// measured (or edited) glow and / or a pxtgi_albedo of their measured color, as one undoable action, and those in
+// their own files are saved.
 class PXTGIEmissionDialog : public ConfirmationDialog {
 	GDCLASS(PXTGIEmissionDialog, ConfirmationDialog);
 
@@ -49,7 +50,8 @@ class PXTGIEmissionDialog : public ConfirmationDialog {
 	Tree *tree = nullptr;
 	Button *rescan = nullptr;
 	Ref<PXTGIEmissionMeter> meter;
-	Dictionary users; // material -> the MeshInstance3Ds using it
+	Dictionary glow_users; // material -> the MeshInstance3Ds using it, for those with no pxtgi_emission
+	Dictionary albedo_users; // and those with no pxtgi_albedo
 
 	void _scan();
 	void _measured(const Array &p_results);
@@ -66,7 +68,7 @@ public:
 	PXTGIEmissionDialog();
 };
 
-// The Find Emissive Materials button on a PXTGI3D's inspector.
+// The Measure Materials button on a PXTGI3D's inspector.
 class EditorInspectorPluginPXTGI : public EditorInspectorPlugin {
 	GDCLASS(EditorInspectorPluginPXTGI, EditorInspectorPlugin);
 

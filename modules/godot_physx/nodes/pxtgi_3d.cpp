@@ -1278,6 +1278,34 @@ void PXTGI3D::_rescan() {
 			emissive_entries.push_back(i);
 		}
 	}
+	// Where each emissive's glow is on its shape: its glowing surface's box in the shape's frame (the mesh and the
+	// shape move together, so it holds as the body moves), grown 5 cm so that a hit on the collision face over a
+	// strip set a little into the mesh counts.
+	for (int i : emissive_entries) {
+		ShapeEntry &entry = shapes[i];
+		entry.glow_region_set = false;
+		Transform3D mesh_frame;
+		AABB surface_box;
+		Transform3D shape_frame;
+		float type;
+		Vector3 extents;
+		if (!_emissive_frame(i, mesh_frame, surface_box) || !_shape_frame(i, shape_frame, type, extents)) {
+			continue;
+		}
+		const EmissiveSurface *surface = emissive_surfaces.getptr(i);
+		if (surface == nullptr || surface->mesh.is_null()) {
+			continue;
+		}
+		AABB region = (shape_frame.affine_inverse() * mesh_frame).xform(surface_box);
+		Vector3 grow;
+		for (int a = 0; a < 3; a++) {
+			grow[a] = 0.05f / MAX(shape_frame.basis.get_column(a).length(), 1e-4f);
+		}
+		region.position -= grow;
+		region.size += grow * 2.0f;
+		entry.glow_region = region;
+		entry.glow_region_set = true;
+	}
 	shape_signature = 0;
 	for (uint32_t i = 0; i < shapes.size(); i++) {
 		Object *node = ObjectDB::get_instance(shapes[i].shape_node);
@@ -1448,6 +1476,16 @@ void PXTGI3D::_pack_entry(int p_index, const Transform3D &p_to_world, float p_ty
 	p[21] = entry.emission.g;
 	p[22] = entry.emission.b;
 	p[23] = entry.fixed ? 1.0f : 0.0f;
+	const Vector3 lo = entry.glow_region.position;
+	const Vector3 hi = entry.glow_region.get_end();
+	p[24] = lo.x;
+	p[25] = lo.y;
+	p[26] = lo.z;
+	p[27] = entry.glow_region_set ? 1.0f : 0.0f;
+	p[28] = hi.x;
+	p[29] = hi.y;
+	p[30] = hi.z;
+	p[31] = 0.0f;
 }
 
 // Shape p_index's GPU record and world bounds, from its node; false when it can't be traced.

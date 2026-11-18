@@ -73,6 +73,10 @@ class PXTGI3D : public Node3D {
 		ObjectID shape_node;
 		Color albedo;
 		Color emission;
+		// Where on the shape the glow is (in its own frame): its mesh's glowing surface's box, a little grown. A hit
+		// outside it doesn't glow (a pot's thin light strip lights only its band, not the pot). Unset: all of it.
+		bool glow_region_set = false;
+		AABB glow_region;
 		bool mesh_proxy = false;
 		bool fixed = false; // a static body's shape (not animatable): a reflection probe's capture of it stays true
 		ObjectID shape_resource; // a collision shape's Shape3D when found: another one means finding the shapes again

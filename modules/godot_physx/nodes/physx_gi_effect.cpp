@@ -223,6 +223,8 @@ struct Primitive {
 	vec4 shape;
 	vec4 albedo;
 	vec4 emission;
+	vec4 glow_lo; // where on the shape the glow is, in its local frame (w 1: set; unset: all of it)
+	vec4 glow_hi;
 };
 layout(std430, set = 0, binding = 4) restrict readonly buffer Primitives {
 	Primitive p[];
@@ -966,9 +968,19 @@ bool sampled_emissive(int p_hit) {
 	return false;
 }
 
+// Whether world point x on shape hit is where its glow is (its glowing surface's box, when it has one).
+bool in_glow(int hit, vec3 x) {
+	if (prims.p[hit].glow_lo.w < 0.5) {
+		return true;
+	}
+	vec3 l = vec3(dot(prims.p[hit].r0.xyz, x) + prims.p[hit].r0.w, dot(prims.p[hit].r1.xyz, x) + prims.p[hit].r1.w, dot(prims.p[hit].r2.xyz, x) + prims.p[hit].r2.w);
+	return all(greaterThanEqual(l, prims.p[hit].glow_lo.xyz)) && all(lessThanEqual(l, prims.p[hit].glow_hi.xyz));
+}
+
 vec3 world_light(vec3 x, vec3 n, int hit, sampler2D depth_tex, sampler2D color_tex, bool from_pixels, bool with_glow, bool sharp) {
 	// Without with_glow only the emissives sampled directly go without their glow here (it would count them twice);
-	// every other one glows as it is hit.
+	// every other one glows as it is hit. Only where on the shape its glow is: a pot's light strip, not the pot.
+	bool glowing_here = prims.p[hit].emission.rgb != vec3(0.0) && in_glow(hit, x);
 	bool glows = with_glow || !sampled_emissive(hit);
 	vec3 v = (f.world_to_view * vec4(x, 1.0)).xyz;
 	if (v.z < -f.clip.x) {
@@ -981,7 +993,7 @@ vec3 world_light(vec3 x, vec3 n, int hit, sampler2D depth_tex, sampler2D color_t
 				vec2 pp = prev_pixel(v, pd);
 				if (on_screen(pp)) {
 					vec3 seen = texture(color_tex, (pp + 0.5) / vec2(f.sizes.xy)).rgb;
-					return glows ? seen : max(seen - prims.p[hit].emission.rgb * f.sun_color.w, vec3(0.0));
+					return glows || !glowing_here ? seen : max(seen - prims.p[hit].emission.rgb * f.sun_color.w, vec3(0.0));
 				}
 			}
 		}
@@ -996,7 +1008,7 @@ vec3 world_light(vec3 x, vec3 n, int hit, sampler2D depth_tex, sampler2D color_t
 	}
 #endif
 	vec3 albedo = prims.p[hit].albedo.rgb;
-	vec3 glow = glows ? prims.p[hit].emission.rgb * f.sun_color.w : vec3(0.0);
+	vec3 glow = glows && glowing_here ? prims.p[hit].emission.rgb * f.sun_color.w : vec3(0.0);
 	if (f.cache.z != 0u) {
 		bool claimed;
 		int slot = cache_slot(x, n, from_pixels, claimed);

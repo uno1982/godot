@@ -358,7 +358,9 @@ multiple bounces.
   mesh beside it in a small group (up to 8 children): its albedo the colors
   of its surfaces averaged by their areas (a wall's thin colored trim tints
   it only as much as it covers; a surface PXTGI can't read is left out), its
-  glow from its brightest surface. PXTGI reads a
+  glow from its brightest surface, given off only where that surface is on
+  the shape (a pot's thin light strip glows as a band, not the whole pot;
+  a glow given in a node's metadata covers the whole shape). PXTGI reads a
   `StandardMaterial3D`'s albedo color but not its albedo texture's colors,
   and can't read a `ShaderMaterial` at all; give one a `pxtgi_albedo` and/or
   `pxtgi_emission` Color in its metadata (or put them on the

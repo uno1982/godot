@@ -87,8 +87,9 @@ public:
 	// One collision shape the off-screen rays are traced against: world-to-local rows, the shape (x: 0 box, 1 sphere,
 	// 2 capsule, 3 cylinder along local y, 4 convex hull, 5 triangle mesh; yzw: half extents; the radius; the radius
 	// and half the height; for a hull its first plane and plane count, for a mesh its first tree node and first
-	// triangle, in the geometry buffer, as int bits), its body's albedo, the light it emits.
-	static constexpr int PRIMITIVE_FLOATS = 24;
+	// triangle, in the geometry buffer, as int bits), its body's albedo, the light it emits, and where on it that light
+	// is (a box in its local frame, min with w 1 when set, then max; unset: all of it).
+	static constexpr int PRIMITIVE_FLOATS = 32;
 
 	// A bounding volume tree over the primitives, two vec4 per node: min (w: the right child for an inner node, the
 	// first primitive for a leaf), max (w: 0 for an inner node, the leaf's primitive count); ints stored as float bits.
@@ -130,7 +131,7 @@ public:
 		float world_distance = 30.0f; // how far a GI ray goes against the collision shapes
 		int rays_per_texel = 4;
 		int emissive_candidates = 6; // weighed by a texel for its one emissive shadow ray
-		// Emissive shapes sampled directly by every texel (the nearest to the camera): an oriented box each (centre and
+		// Emissive shapes sampled directly by every texel (the nearest to the camera): an oriented box each (center and
 		// three half axes, world space) and the light its surface gives off.
 		static constexpr int MAX_EMISSIVES = 64;
 		int emissive_count = 0;

@@ -262,8 +262,27 @@ void PXTGIEmissionDialog::_apply() {
 	EditorUndoRedoManager *ur = EditorUndoRedoManager::get_singleton();
 	const StringName meta_emission = "pxtgi_emission";
 	const StringName meta_albedo = "pxtgi_albedo";
-	int count = 0;
 	TreeItem *root = tree->get_root();
+	// One action holds them all, in one history: a material saved in the scene belongs to the scene's, one in a file of
+	// its own to the global one, and an action can't span both (Godot reports a history mismatch for each call). The
+	// scene's is used when any tagged material is in it (tagging it changes the scene, to be saved), else the global.
+	int history = EditorUndoRedoManager::INVALID_HISTORY;
+	for (TreeItem *item = root ? root->get_first_child() : nullptr; item; item = item->get_next()) {
+		const bool tagged = (item->get_cell_mode(COLUMN_TAG_GLOW) == TreeItem::CELL_MODE_CHECK && item->is_checked(COLUMN_TAG_GLOW)) || (item->get_cell_mode(COLUMN_TAG_ALBEDO) == TreeItem::CELL_MODE_CHECK && item->is_checked(COLUMN_TAG_ALBEDO));
+		const Ref<Material> material = item->get_metadata(COLUMN_MATERIAL);
+		if (!tagged || material.is_null()) {
+			continue;
+		}
+		const int id = ur->get_history_id_for_object(material.ptr());
+		if (history == EditorUndoRedoManager::INVALID_HISTORY || history == EditorUndoRedoManager::GLOBAL_HISTORY) {
+			history = id;
+		}
+	}
+	if (history == EditorUndoRedoManager::INVALID_HISTORY) {
+		return;
+	}
+	ur->create_action_for_history("Tag Materials for PXTGI", history);
+	ur->force_fixed_history();
 	for (TreeItem *item = root ? root->get_first_child() : nullptr; item; item = item->get_next()) {
 		const bool tag_glow = item->get_cell_mode(COLUMN_TAG_GLOW) == TreeItem::CELL_MODE_CHECK && item->is_checked(COLUMN_TAG_GLOW);
 		const bool tag_albedo = item->get_cell_mode(COLUMN_TAG_ALBEDO) == TreeItem::CELL_MODE_CHECK && item->is_checked(COLUMN_TAG_ALBEDO);
@@ -274,10 +293,6 @@ void PXTGIEmissionDialog::_apply() {
 		if (material.is_null()) {
 			continue;
 		}
-		if (count == 0) {
-			ur->create_action("Tag Materials for PXTGI");
-		}
-		count++;
 		if (tag_glow) {
 			// The measured color, scaled to the brightness in the list (edited or not).
 			const Color measured = item->get_metadata(COLUMN_GLOW);
@@ -302,9 +317,7 @@ void PXTGIEmissionDialog::_apply() {
 		ur->add_do_method(this, "save_material", material);
 		ur->add_undo_method(this, "save_material", material);
 	}
-	if (count > 0) {
-		ur->commit_action();
-	}
+	ur->commit_action();
 }
 
 void PXTGIEmissionDialog::save_material(const Ref<Material> &p_material) {

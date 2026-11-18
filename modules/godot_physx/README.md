@@ -378,9 +378,11 @@ multiple bounces.
   mesh, and `ShaderMaterial`s or textured `StandardMaterial3D`s with no
   `pxtgi_albedo`), each measured by drawing it (`PXTGIEmissionMeter`): with
   no light, so the glow shown is what the shader really draws, hidden
-  multipliers included; then under an even white light, so the albedo shown
-  is the share it reflects, textures and tints averaged over the surface (a
-  metal comes out dark, as it bounces little diffuse light). The ones that
+  multipliers included; then under an even white light and in a white sky's
+  reflections, so the albedo shown is the share of light it bounces,
+  textures and tints averaged over the surface: a dielectric's diffuse color,
+  a metal's reflection (about its color when glossy, dimmer when rough, as
+  Godot draws it). The ones that
   glow come ticked for a glow tag, and every one for an albedo tag; edit a
   glow to override it, untick what you don't want, and Tag Selected writes
   the tags (undoable) and saves materials kept in their own files.

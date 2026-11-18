@@ -118,7 +118,7 @@ PXTGIEmissionDialog::PXTGIEmissionDialog() {
 	tree->set_column_title(COLUMN_GLOW, physical_units() ? "Glow (nits)" : "Glow (energy)");
 	tree->set_column_title(COLUMN_TAG_GLOW, "Tag Glow");
 	tree->set_column_title(COLUMN_ALBEDO, "Albedo");
-	tree->set_column_title_tooltip_text(COLUMN_ALBEDO, "The share of light the material reflects (its diffuse color, textures included, averaged over the surface), as PXTGI bounces it off screen. A metal comes out dark: it bounces little diffuse light.");
+	tree->set_column_title_tooltip_text(COLUMN_ALBEDO, "The share of light the material bounces (textures included, averaged over the surface), as PXTGI bounces it off screen: a dielectric's diffuse color, a metal's reflection (about its color when glossy, dimmer when rough).");
 	tree->set_column_title(COLUMN_TAG_ALBEDO, "Tag Albedo");
 	tree->set_column_title(COLUMN_MESHES, "Meshes");
 	tree->set_column_title(COLUMN_NOTES, "Notes");

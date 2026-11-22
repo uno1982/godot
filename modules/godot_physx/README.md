@@ -1500,7 +1500,6 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   running motor keeps its bodies awake. SLERP and acceleration drives, spring
   force limits and drive targets are on the `PhysX` singleton, see
   [Active ragdolls](#active-ragdolls--joint-drives).)
-  Unsupported shapes are treated as having no collision and log a warning once.
 - **Bounce between two bouncy bodies.** Godot Physics and Jolt combine two
   bodies' `bounce` as their sum, clamped to 0..1. PhysX can only pick one
   side's value, so this backend uses the larger one: exact whenever one side's
@@ -1519,7 +1518,7 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   see it. On the Mobile renderer with MSAA the effects that read depth (the
   hair's own test against the scene, Flow, the light shafts) get none, and
   draw over what's in front of them. Unreal's groom attributes (per-strand
-  colour, root UVs, guide strands) aren't read.
+  color, root UVs, guide strands) aren't read.
 - **`SeparationRayShape3D`** has no PhysX geometry: it's cast as a ray. In
   `move_and_slide` it lifts a character until its tip sits on what it hits
   (stairs), as on Godot Physics and Jolt. On a rigid body it's applied before
@@ -1529,13 +1528,14 @@ For deterministic lockstep multiplayer, use the Jolt backend.
 - **Area-to-area detection** (`Area3D` monitoring another `Area3D`) works, but
   unlike every other collision pair in this module it costs real per-step
   work: PhysX never reports trigger-trigger pairs (only trigger-vs-rigid), so
-  `GodotPhysXSpace3D` polls it manually every step with a naive O(n²) pass
-  over every `(monitoring, monitorable)` area pair, each a real shape-vs-shape
-  `PxGeometryQuery::overlap()` test. Both `monitoring` and `monitorable`
-  default to `true` on every `Area3D`, so this runs for every area pair by
-  default unless a scene explicitly opts areas out with `monitorable = false`.
-  Fine for the handful of areas a scene typically wants this on; revisit with
-  a broad-phase pre-filter if a scene ever has many mutually-monitoring areas.
+  it's polled every step. Each monitoring area is checked against every
+  monitorable area whose collision layer and mask can meet it, and only pairs
+  whose world bounds overlap get an exact shape test, but the pair loop itself
+  grows with monitoring × monitorable areas: 930 monitoring areas among 9,300
+  cost about 52 ms a step ([#38](https://github.com/uno1982/godot/issues/38)).
+  `monitoring` defaults to `true`, so turn it off on areas that don't need
+  `area_entered` / `body_entered`: a passive area (monitoring off, no override)
+  costs the step nothing (see [Area3D overrides](#area3d-overrides)).
 - **`HeightMapShape3D`** works — a `PxHeightField` quantized to 16 bits over the
   map's height range (so vertical resolution is `(max_height − min_height) /
   65535`). Like concave (trimesh) shapes, it is static/kinematic only. The GPU
@@ -1585,7 +1585,15 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   - it draws after transparent geometry, so an additive mesh inside the gas
     is painted over — use an opaque glowing mesh for a flame core;
   - NanoVDB (volume) emitters aren't supported;
+  - creating a grid (a flow entering the scene) holds up the main thread for
+    one frame, 65–91 ms measured ([#33](https://github.com/uno1982/godot/issues/33));
   - Flow doesn't build on macOS.
+- **XR (stereo):** these are worked out once with the combined camera, not per
+  eye, so they're wrong in a headset: `PXTGI3D`
+  ([#30](https://github.com/uno1982/godot/issues/30)), the screen-space fluid
+  surface ([#29](https://github.com/uno1982/godot/issues/29)), and Screen Space
+  hair ([#28](https://github.com/uno1982/godot/issues/28); use Mesh mode in
+  VR). The light shafts and lens effects are per eye.
 - Windows and Linux x86-64 are the only platforms built and tested.
 
 ## Layout

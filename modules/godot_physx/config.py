@@ -55,6 +55,7 @@ def get_doc_classes():
         "PhysXLensFlare3D",
         "PhysXLensFlareSettings",
         "PhysXLightShafts3D",
+        "PhysXMirror3D",
         "PXTGI3D",
         "PXTGIEmissionMeter",
         "PhysXShaderOptimizer",

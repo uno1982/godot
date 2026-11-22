@@ -232,6 +232,8 @@ public:
 	static void remove_settings(const ObjectID &p_node);
 
 	static void attach_world(World3D *p_world);
+	// Whether a PXTGI3D delivers GI in this world (a scene capture of it can be lit by PXTGI too).
+	static bool has_world(const ObjectID &p_world) { return worlds.has(p_world); }
 	static void detach_world(const ObjectID &p_world);
 	static void install(World3D *p_world, Camera3D *p_camera);
 

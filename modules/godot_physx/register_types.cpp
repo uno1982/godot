@@ -60,6 +60,7 @@
 #include "nodes/physx_lens_flare_settings.h"
 #include "nodes/physx_light_shafts_3d.h"
 #include "nodes/physx_light_shafts_effect.h"
+#include "nodes/physx_mirror_3d.h"
 #include "nodes/physx_particle_fluid_3d.h"
 #include "nodes/physx_shader_optimizer.h"
 #include "nodes/pxtgi_3d.h"
@@ -150,6 +151,7 @@ void initialize_godot_physx_module(ModuleInitializationLevel p_level) {
 		GDREGISTER_CLASS(PhysXLensFlareSettings);
 		GDREGISTER_CLASS(PhysXLensFlare3D);
 		GDREGISTER_INTERNAL_CLASS(PhysXLensFlareEffect);
+		GDREGISTER_CLASS(PhysXMirror3D);
 		// Runtime-bridge MVP probe, not public API yet -- see water/water_ripple_probe.h.
 		GDREGISTER_CLASS(WaterRippleProbe);
 		GDREGISTER_CLASS(PhysXWaterSurface3D);

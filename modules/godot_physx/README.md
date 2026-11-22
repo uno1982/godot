@@ -470,7 +470,58 @@ multiple bounces.
   in a scene with many of them. More is steadier and costs a little more of the
   trace pass; a scene with no emissives pays nothing.
 - Demos: `demo/editor/rendering/gi_courtyard.tscn`, `gi_courtyard_night.tscn`,
-  `gi_cornell_box.tscn`, `demo/cpu/physx_playground_gi.tscn` (key `G`).
+  `gi_cornell_box.tscn`, `demo/cpu/physx_playground_gi.tscn` (key `G`),
+  `gi_mirror_character.tscn` (a traced character in a mirror, first person).
+
+## Mirrors — `PhysXMirror3D`
+
+A flat mirror drawn by a scene capture, as Unreal's `SceneCaptureComponent2D`
+draws one: a second camera renders the world into a texture, and the mirror's
+glass shows it. It shows the real render (textures, normal maps, Godot's
+lights and shadows, characters as drawn), at the cost of rendering what the
+mirror sees again.
+
+- Add a `PhysXMirror3D` on the mirror's surface: the glass is a rectangle of
+  `size` in the node's XY plane, facing its +Z, and the node draws it. Each
+  frame the capture camera sits at the viewing camera's eye mirrored through
+  the glass, its near plane on the glass, so nothing behind the mirror is
+  drawn into it. It renders in linear HDR and the glass shows it unshaded:
+  the viewing camera tone maps it with the rest of the frame.
+- It renders only while the glass is seen (in the camera's frustum, from its
+  front), at `resolution_scale` of the camera's height (at most
+  `max_resolution`), every `update_interval` frames. `cull_mask`, `far` and
+  `lod_threshold` keep what it draws down.
+- `gi`: with a `PXTGI3D` in the scene, PXTGI lights the capture as it lights
+  the room, which costs PXTGI again at the capture's resolution. Off, the
+  capture has direct light only and PXTGI doesn't run for it. The lens
+  effects (flare, dirt, shafts) aren't drawn in the capture.
+- `material`: a `ShaderMaterial` for the glass gets the capture as its
+  `mirror_texture` uniform (sample it at `vec2(1.0 - UV.x, UV.y)`), to tint
+  it, dim it or add dirt.
+- The glass is on its own render layer (`glass_layers`) that the capture
+  leaves out. In the editor the glass is a plain mirror-like surface: the
+  capture follows the game's camera. One camera, not one per eye (XR shows
+  both eyes the same view).
+
+**Which to use** for a character in a mirror:
+
+| | PXTGI traced (`pxtgi_traced`) | `PhysXMirror3D` |
+| --- | --- | --- |
+| Looks | The character's LOD, one color per triangle, lit by PXTGI | The real render |
+| Surfaces | Any smooth surface, any number (curved metal, glossy floors) | One flat rectangle |
+| Costs | Rays that reach the character | Drawing what the mirror sees again |
+| Also | The character shadows and bounces PXTGI's light | Shows things without collision shapes |
+
+In the demo's mirror room (`demo/editor/rendering/gi_mirror_character.tscn`,
+P switches between them) on an RTX 5070 at 1280×720, the mannequin dancing
+1.4 m from a 2.4 × 2.2 m mirror, GPU time for the frame including the capture:
+PXTGI traced 1.3–1.4 ms; `PhysXMirror3D` lit by PXTGI 2.2–2.4 ms at the view's
+full height, 1.7 ms at half, 1.55 ms at a quarter; without PXTGI in the capture
+1.2 ms at full height (but what only bounce light lights reads dark). A
+larger scene costs the capture more (it draws what the mirror sees), not
+PXTGI's traced reflection. Both can be in one scene: a `PhysXMirror3D` for a
+mirror to look into, `pxtgi_traced` for the character in glossy floors and
+for its shadows.
 
 ## Optimize Shaders (editor tool)
 

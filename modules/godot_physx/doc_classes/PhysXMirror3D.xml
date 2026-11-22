@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="PhysXMirror3D" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		A flat mirror drawn by a scene capture, provided by the PhysX module.
+	</brief_description>
+	<description>
+		A mirror as Unreal's SceneCaptureComponent2D draws one: a second camera renders the world into a texture, and the mirror's glass shows it. It shows the real render, textures, normal maps, Godot's lights and shadows and everything drawn, characters included, at the cost of rendering what the mirror sees again. For reflections on curved or many smooth surfaces, or a cheaper view of a character in a mirror, see [PXTGI3D]'s traced reflections and its [code]pxtgi_traced[/code] tag.
+		The glass is a rectangle of [member size] in the node's local XY plane, facing its +Z; the node draws it. Place the node on the mirror's surface (or a little in front of the mesh it replaces). Every frame, just before drawing, the capture camera sits at the viewing camera's eye mirrored through the glass, looking back through it, with its near plane exactly on the glass: what the glass shows is the exact mirror view, and nothing behind the glass is drawn into it. The capture renders in linear HDR and the glass shows it unshaded, so the viewing camera tone maps it with the rest of its frame (the capture uses the viewer's environment with tone mapping and glow off, and the viewer's camera attributes).
+		The capture renders only while the glass can be seen: in the viewing camera's frustum (with [member update_mode] When Visible) and seen from its front. [member update_interval] renders it every few frames instead. Its resolution is a share of the viewing camera's height ([member resolution_scale], at most [member max_resolution]), shaped as the glass.
+		The glass is on a render layer of its own ([member glass_layers]) that the capture leaves out, so it doesn't see itself. Two mirrors on the same layers don't show each other; on different layers, each shows the other's glass with its last capture (a reflection of a reflection, a frame behind), at the cost of both rendering whenever either is seen.
+		With [member gi] and a [PXTGI3D] in the scene, PXTGI lights the capture as it lights the room, which costs what PXTGI costs again at the capture's resolution. Without it, the capture has direct light only, and PXTGI doesn't run for it. The lens effects ([PhysXLensFlare3D], [PhysXLensDirt3D], [PhysXLightShafts3D]) aren't drawn in the capture: they belong to the viewer's lens.
+		The camera is the viewport's current camera. In the editor the glass is a plain mirror-like surface, as the capture follows the game's camera. Works with the Forward+ and Mobile renderers. One camera, not one per eye: in XR the mirror shows the same view to both eyes.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_mirror_texture" qualifiers="const">
+			<return type="ViewportTexture" />
+			<description>
+				The capture's texture (linear HDR), as the glass shows it: the mirror view seen from behind the glass, so flipped left to right relative to the glass's UV ([code]vec2(1.0 - UV.x, UV.y)[/code]). [code]null[/code] in the editor.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="cull_mask" type="int" setter="set_cull_mask" getter="get_cull_mask" default="1048575">
+			The render layers the mirror shows (the glass's own layers are always left out). Leave a layer out to keep what's on it out of the mirror.
+		</member>
+		<member name="far" type="float" setter="set_far" getter="get_far" default="0.0">
+			How far the mirror shows, in meters from the mirrored eye. [code]0[/code] takes the viewing camera's [member Camera3D.far]. A shorter distance draws less.
+		</member>
+		<member name="gi" type="bool" setter="set_gi" getter="get_gi" default="true">
+			With a [PXTGI3D] in the scene, the capture is lit by PXTGI as the room is (bounce light, emissive light). Off, it has direct light only and PXTGI doesn't run for it: much cheaper, but what the room's bounce light lights reads dark in the mirror. PXTGI works with Forward+ only: with the Mobile renderer the capture has direct light only either way.
+		</member>
+		<member name="glass_layers" type="int" setter="set_glass_layers" getter="get_glass_layers" default="524288">
+			The render layers the glass is drawn on. The capture leaves them out (it would see itself), so keep other things off them.
+		</member>
+		<member name="lod_threshold" type="float" setter="set_lod_threshold" getter="get_lod_threshold" default="1.0">
+			The capture's [member Viewport.mesh_lod_threshold]: higher draws coarser mesh LODs in the mirror, for less cost.
+		</member>
+		<member name="material" type="Material" setter="set_material" getter="get_material">
+			The glass's material, instead of the default (the capture, unshaded). A [ShaderMaterial] is given the capture as its [code]mirror_texture[/code] sampler uniform: sample it at [code]vec2(1.0 - UV.x, UV.y)[/code] (see [method get_mirror_texture]). Use it to tint the glass, dim it, or add dirt or a frame.
+		</member>
+		<member name="max_resolution" type="int" setter="set_max_resolution" getter="get_max_resolution" default="1024">
+			The most pixels high the capture is, whatever [member resolution_scale] gives.
+		</member>
+		<member name="resolution_scale" type="float" setter="set_resolution_scale" getter="get_resolution_scale" default="0.5">
+			The capture's height as a share of the viewing camera's viewport height (its width follows the glass's shape). [code]1[/code] is about as sharp as the screen for a mirror that fills the view; smaller ones look the same at lower values.
+		</member>
+		<member name="size" type="Vector2" setter="set_size" getter="get_size" default="Vector2(2, 2)">
+			The glass's width and height, in the node's local units.
+		</member>
+		<member name="update_interval" type="int" setter="set_update_interval" getter="get_update_interval" default="1">
+			Render the capture every this many frames (between them the glass keeps the last one): cheaper, but what moves in the mirror lags. [code]1[/code]: every frame.
+		</member>
+		<member name="update_mode" type="int" setter="set_update_mode" getter="get_update_mode" enum="PhysXMirror3D.UpdateMode" default="0">
+			When the capture renders.
+		</member>
+	</members>
+	<constants>
+		<constant name="UPDATE_WHEN_VISIBLE" value="0" enum="UpdateMode">
+			Only while the glass is in the viewing camera's frustum and seen from its front.
+		</constant>
+		<constant name="UPDATE_ALWAYS" value="1" enum="UpdateMode">
+			Whenever the glass is seen from its front, in the frustum or not (for a texture used elsewhere too, see [method get_mirror_texture]).
+		</constant>
+	</constants>
+</class>

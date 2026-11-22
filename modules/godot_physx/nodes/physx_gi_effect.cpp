@@ -261,6 +261,9 @@ geo;
 // it hit something else, or a triangle without one (its shape's albedo).
 vec3 traced_albedo = vec3(0.0);
 
+// While set, traces see only static bodies' shapes (what a reflection probe's capture can be trusted to hold).
+bool trace_static_only = false;
+
 vec3 triangle_albedo(int tris, int k) {
 	return vec3(geo.v[tris + k * 3].w, geo.v[tris + k * 3 + 1].w, geo.v[tris + k * 3 + 2].w);
 }
@@ -631,6 +634,9 @@ int walk_world(vec3 o, vec3 d, inout float t, out vec3 normal, bool any_hit) {
 		} else {
 			int first = floatBitsToInt(nlo.w);
 			for (int i = first; i < first + count; i++) {
+				if (trace_static_only && prims.p[i].emission.w < 0.5) {
+					continue;
+				}
 				vec4 shape = prims.p[i].shape;
 				if (int(shape.x + 0.5) == 5) {
 					// Into a mesh: the ray in its space, its own tree from its root (a leaf holds one shape).
@@ -736,6 +742,9 @@ int walk_world(vec3 o, vec3 d, inout float t, out vec3 normal, bool any_hit) {
 		} else {
 			int first = floatBitsToInt(nd.lo.w);
 			for (int i = first; i < first + count; i++) {
+				if (trace_static_only && prims.p[i].emission.w < 0.5) {
+					continue;
+				}
 				vec3 n;
 				if (hit_primitive(prims.p[i], o, d, t, n)) {
 					hit = i;
@@ -1639,7 +1648,9 @@ bool mirror_hit = false;
 
 // The light a reflection probe's capture shows at world point x (facing n) on shape hit: from the first probe whose
 // box holds x, when the shape doesn't move (the capture may be older than the frame), x faces the capture point and
-// no collision shape stands between them (the capture holds only the nearest thing in each direction).
+// no static body's shape stands between them (the capture holds only the nearest thing in each direction). What moves
+// doesn't count: the capture may not have it where it is now (or at all, left out by the probe's cull mask), and a
+// character walking between a wall and the probe would shade its outline onto the wall.
 bool probe_source(vec3 x, vec3 n, int hit, out vec3 seen) {
 	seen = vec3(0.0);
 	if (prims.p[hit].emission.w < 0.5) {
@@ -1652,7 +1663,13 @@ bool probe_source(vec3 x, vec3 n, int hit, out vec3 seen) {
 		}
 		vec3 to = f.src_capture[i].xyz - x;
 		float dist = length(to);
-		if (dist < 0.05 || dot(n, to) <= 0.0 || blocked(x + n * 0.02, to / dist, dist - 0.05)) {
+		if (dist < 0.05 || dot(n, to) <= 0.0) {
+			continue;
+		}
+		trace_static_only = true;
+		bool hidden = blocked(x + n * 0.02, to / dist, dist - 0.05);
+		trace_static_only = false;
+		if (hidden) {
 			continue;
 		}
 		// Godot's octahedral map of the capture, in the probe's own axes, inside the atlas border.

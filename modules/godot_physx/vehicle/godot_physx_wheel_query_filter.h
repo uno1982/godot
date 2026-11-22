@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "../objects/godot_physx_area_3d.h"
 #include "../objects/godot_physx_body_3d.h"
 
 #include <PxPhysicsAPI.h>
@@ -48,13 +49,13 @@ public:
 	const GodotPhysXBody3D *self_body = nullptr; // the vehicle's identity (exceptions), once the node binds it
 
 	virtual physx::PxQueryHitType::Enum preFilter(const physx::PxFilterData &, const physx::PxShape *p_shape, const physx::PxRigidActor *p_actor, physx::PxHitFlags &) override {
-		if (p_shape == nullptr || p_actor == self_actor || (p_shape->getFlags() & physx::PxShapeFlag::eTRIGGER_SHAPE)) {
+		if (p_shape == nullptr || p_actor == self_actor || GodotPhysXArea3D::is_area_actor(p_actor)) {
 			return physx::PxQueryHitType::eNONE;
 		}
 		if (!(p_shape->getQueryFilterData().word0 & collision_mask)) {
 			return physx::PxQueryHitType::eNONE;
 		}
-		// Non-trigger shapes belong to bodies (or vehicles' stand-ins), which userData points at.
+		// Every other shape belongs to a body (or a vehicle's stand-in), which userData points at.
 		const GodotPhysXBody3D *other = p_actor ? static_cast<const GodotPhysXBody3D *>(p_actor->userData) : nullptr;
 		if (self_body && other && (self_body->has_collision_exception(other->get_self()) || other->has_collision_exception(self_body->get_self()))) {
 			return physx::PxQueryHitType::eNONE;

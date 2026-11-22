@@ -589,6 +589,14 @@ Areas detect rigid, kinematic and static bodies (`body_entered`,
 `get_overlapping_bodies()`), as Godot Physics and Jolt do, moving areas
 included.
 
+A passive area (`monitoring` off and no gravity, damping or wind override:
+interaction volumes, hurtboxes) costs the physics step nothing. Its shapes are
+PhysX triggers only while something uses them; otherwise they're query-only.
+Raycasts and shape queries with `collide_with_areas` still find it, and
+monitoring areas still see it. Turning `monitoring` on reports the bodies
+already inside, as usual. An override switched on at runtime on such an area
+acts from the step after (its overlaps are found during that step).
+
 `Area3D` gravity, damping and wind overrides are applied to the rigid bodies
 that overlap the area, each physics step, folded across overlapping areas in
 `priority` order (`COMBINE` adds, `REPLACE` replaces):

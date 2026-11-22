@@ -69,6 +69,10 @@ public:
 	// An area's actor is kinematic (a PxRigidDynamic), named with this pointer so the scene's active-actor pass can
 	// tell it from a body's (both carry their object in userData).
 	static constexpr const char *ACTOR_NAME = "GodotPhysXArea3D";
+	// Whether a PhysX actor is an area's. (An area's shapes are triggers only while something uses its trigger
+	// events -- see shapes_are_triggers -- so the trigger flag doesn't tell.)
+	template <typename A>
+	static bool is_area_actor(const A *p_actor) { return p_actor && p_actor->getName() == ACTOR_NAME; }
 	struct ShapeRef {
 		GodotPhysXShape3D *shape = nullptr;
 		Transform3D xform;
@@ -171,7 +175,14 @@ private:
 	LocalVector<physx::PxShape *> poll_shapes;
 	LocalVector<AABB> poll_shape_aabbs;
 	HashMap<AreaOverlapKey, AreaOverlapState, AreaOverlapKeyHasher> pending_areas;
+	// The shapes are PhysX triggers only while something uses the trigger events: a body monitor callback or a
+	// gravity / damping / wind override. Otherwise they're scene-query shapes only, out of the simulation's broad
+	// phase: a passive area (monitorable, monitoring off: an interaction volume, a hurtbox) costs the step nothing.
+	// Other areas see it all the same (area-area overlaps are polled, not triggers), and so do queries.
+	bool shapes_are_triggers = false;
 
+	bool _wants_triggers() const { return !monitor_callback.is_null() || has_force_override(); }
+	void _refresh_role();
 	void _destroy_actor();
 	void _build_actor();
 	void _apply_filter_data();
@@ -212,9 +223,10 @@ public:
 	void set_ray_pickable(bool p_enable) { ray_pickable = p_enable; }
 	bool is_ray_pickable() const { return ray_pickable; }
 
-	void set_monitor_callback(const Callable &p_callback) { monitor_callback = p_callback; }
-
-	void set_area_monitor_callback(const Callable &p_callback) { area_monitor_callback = p_callback; }
+	void set_monitor_callback(const Callable &p_callback);
+	void set_area_monitor_callback(const Callable &p_callback);
+	bool has_monitor_callbacks() const { return !monitor_callback.is_null() || !area_monitor_callback.is_null(); }
+	bool has_trigger_shapes() const { return shapes_are_triggers; }
 	// True once Area3D::set_monitoring(true) has wired a real callback -- Godot
 	// clears it back to a null Callable on set_monitoring(false), so this is the
 	// only "does this area actively look for other areas" signal that exists.

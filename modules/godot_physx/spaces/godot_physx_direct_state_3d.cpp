@@ -302,10 +302,10 @@ _FORCE_INLINE_ int shape_index_of(const PxShape *p_shape) {
 	return p_shape ? (int)reinterpret_cast<uintptr_t>(p_shape->userData) : 0;
 }
 
-// Area3D shapes are the only trigger shapes, and an area's actor carries the
-// GodotPhysXArea3D in userData (a body's carries the GodotPhysXBody3D).
+// An area's actor carries the GodotPhysXArea3D in userData (a body's carries the GodotPhysXBody3D); its name tells
+// them apart (not the trigger flag: a passive area's shapes aren't triggers).
 _FORCE_INLINE_ bool is_area_shape(const PxShape *p_shape) {
-	return p_shape && (p_shape->getFlags() & PxShapeFlag::eTRIGGER_SHAPE);
+	return p_shape && GodotPhysXArea3D::is_area_actor(p_shape->getActor());
 }
 
 _FORCE_INLINE_ GodotPhysXArea3D *area_of(const PxActor *p_actor) {

@@ -78,6 +78,10 @@ class GodotPhysXSpace3D {
 	HashSet<GodotPhysXBody3D *> awake_bodies; // active as of the last step()
 	HashSet<GodotPhysXBody3D *> contact_reporters; // bodies with contact monitoring on
 	HashSet<GodotPhysXArea3D *> areas;
+	// The areas each step has to look at -- usually few of many (most areas are passive: monitorable, monitoring
+	// off): with a monitor callback (their events, area-area polls) and with a gravity / damping / wind override.
+	HashSet<GodotPhysXArea3D *> monitoring_areas;
+	HashSet<GodotPhysXArea3D *> override_areas;
 	HashSet<GodotPhysXParticleFluid3D *> fluids;
 	HashSet<GodotPhysXCloth3D *> cloths;
 	HashSet<GodotPhysXSoftBody3D *> soft_bodies;
@@ -226,7 +230,13 @@ public:
 		}
 	}
 
-	void register_area(GodotPhysXArea3D *p_area) { areas.insert(p_area); }
+	void register_area(GodotPhysXArea3D *p_area) {
+		areas.insert(p_area);
+		update_area_role(p_area);
+	}
+	// After an area's callbacks or overrides changed.
+	void update_area_role(GodotPhysXArea3D *p_area);
+	bool is_override_area(GodotPhysXArea3D *p_area) const { return override_areas.has(p_area); }
 	void unregister_area(GodotPhysXArea3D *p_area);
 
 	void register_fluid(GodotPhysXParticleFluid3D *p_fluid) { fluids.insert(p_fluid); }

@@ -451,7 +451,7 @@ void GodotPhysXSpace3D::step(real_t p_step) {
 		if (!active[i]->is<PxRigidDynamic>()) {
 			continue;
 		}
-		if (active[i]->getName() == GodotPhysXArea3D::ACTOR_NAME) {
+		if (GodotPhysXArea3D::is_area_actor(active[i])) {
 			continue; // an area (kinematic): its userData is the area
 		}
 		GodotPhysXBody3D *body = static_cast<GodotPhysXBody3D *>(active[i]->userData);
@@ -528,8 +528,26 @@ void GodotPhysXSpace3D::body_removed_from_areas(GodotPhysXBody3D *p_body) {
 	}
 }
 
+void GodotPhysXSpace3D::update_area_role(GodotPhysXArea3D *p_area) {
+	if (!areas.has(p_area)) {
+		return;
+	}
+	if (p_area->has_monitor_callbacks()) {
+		monitoring_areas.insert(p_area);
+	} else {
+		monitoring_areas.erase(p_area);
+	}
+	if (p_area->has_force_override()) {
+		override_areas.insert(p_area);
+	} else {
+		override_areas.erase(p_area);
+	}
+}
+
 void GodotPhysXSpace3D::unregister_area(GodotPhysXArea3D *p_area) {
 	areas.erase(p_area);
+	monitoring_areas.erase(p_area);
+	override_areas.erase(p_area);
 	for (GodotPhysXArea3D *area : areas) {
 		area->area_removed(p_area);
 	}
@@ -545,7 +563,7 @@ void GodotPhysXSpace3D::_detect_area_overlaps() {
 	LocalVector<GodotPhysXArea3D *> monitoring;
 	uint32_t monitoring_layers = 0;
 	uint32_t monitoring_masks = 0;
-	for (GodotPhysXArea3D *area : areas) {
+	for (GodotPhysXArea3D *area : monitoring_areas) {
 		if (area->wants_area_monitoring()) {
 			monitoring.push_back(area);
 			monitoring_layers |= area->get_collision_layer();
@@ -587,7 +605,7 @@ void GodotPhysXSpace3D::set_default_damping(real_t p_linear, real_t p_angular) {
 void GodotPhysXSpace3D::_apply_area_overrides() {
 	// Gather, per body, the areas that impose a gravity/damp/wind override.
 	HashMap<GodotPhysXBody3D *, LocalVector<GodotPhysXArea3D *>> affected;
-	for (GodotPhysXArea3D *area : areas) {
+	for (GodotPhysXArea3D *area : override_areas) {
 		if (!area->has_force_override()) {
 			continue;
 		}
@@ -693,7 +711,7 @@ void GodotPhysXSpace3D::call_queries() {
 	for (GodotPhysXBody3D *body : sync_bodies) {
 		body->call_queries();
 	}
-	for (GodotPhysXArea3D *area : areas) {
+	for (GodotPhysXArea3D *area : monitoring_areas) {
 		area->call_queries();
 	}
 	step_stats.callbacks_usec = OS::get_singleton()->get_ticks_usec() - t_start;
@@ -776,7 +794,7 @@ public:
 		if (p_actor == self_actor) {
 			return PxQueryHitType::eNONE;
 		}
-		if (p_shape && (p_shape->getFlags() & PxShapeFlag::eTRIGGER_SHAPE)) {
+		if (GodotPhysXArea3D::is_area_actor(p_actor)) {
 			return PxQueryHitType::eNONE;
 		}
 		GodotPhysXBody3D *b = p_actor ? static_cast<GodotPhysXBody3D *>(p_actor->userData) : nullptr;

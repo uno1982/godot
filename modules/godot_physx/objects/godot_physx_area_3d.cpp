@@ -75,8 +75,11 @@ PxShape *GodotPhysXArea3D::_create_px_shape(uint32_t p_idx) {
 		return nullptr;
 	}
 	const GodotPhysXShape3D::ScaledGeometry sg = sr.shape->scaled_geometry(built_scale * sr.xform.basis.get_scale());
-	PxShape *px_shape = space->get_px_physics()->createShape(sg.geom.any(), *space->get_default_material(), true,
-			PxShapeFlag::eTRIGGER_SHAPE | PxShapeFlag::eSCENE_QUERY_SHAPE);
+	PxShapeFlags flags = PxShapeFlag::eSCENE_QUERY_SHAPE;
+	if (shapes_are_triggers) {
+		flags |= PxShapeFlag::eTRIGGER_SHAPE;
+	}
+	PxShape *px_shape = space->get_px_physics()->createShape(sg.geom.any(), *space->get_default_material(), true, flags);
 	if (!px_shape) {
 		return nullptr;
 	}
@@ -189,6 +192,7 @@ void GodotPhysXArea3D::_build_actor() {
 	dyn->setActorFlag(PxActorFlag::eDISABLE_GRAVITY, true);
 	dyn->setName(ACTOR_NAME);
 	px_actor = dyn;
+	shapes_are_triggers = _wants_triggers();
 	px_actor->userData = this;
 	built_scale = area_transform.basis.get_scale();
 
@@ -239,6 +243,45 @@ void GodotPhysXArea3D::set_space(GodotPhysXSpace3D *p_space) {
 	if (space) {
 		space->register_area(this);
 		_build_actor();
+	}
+}
+
+void GodotPhysXArea3D::set_monitor_callback(const Callable &p_callback) {
+	monitor_callback = p_callback;
+	if (monitor_callback.is_null()) {
+		pending.clear(); // (Area3D forgets its bodies itself when monitoring goes off)
+	}
+	_refresh_role();
+}
+
+void GodotPhysXArea3D::set_area_monitor_callback(const Callable &p_callback) {
+	area_monitor_callback = p_callback;
+	if (area_monitor_callback.is_null()) {
+		pending_areas.clear();
+	}
+	_refresh_role();
+}
+
+// After a callback or an override changed: the space's lists of areas to call back / to apply, and whether the
+// shapes are triggers. Turning triggers off forgets the overlapping bodies (nothing reports them any more); turning
+// them on lets PhysX find the bodies already inside as new pairs on the next step, so a monitor sees them enter.
+void GodotPhysXArea3D::_refresh_role() {
+	if (space) {
+		space->update_area_role(this);
+	}
+	const bool want = _wants_triggers();
+	if (want == shapes_are_triggers || !px_actor) {
+		shapes_are_triggers = want; // (no actor: the shapes are made with it)
+		return;
+	}
+	shapes_are_triggers = want;
+	if (!want) {
+		_release_all_pairs();
+	}
+	for (PxShape *s : px_shapes) {
+		if (s) {
+			s->setFlag(PxShapeFlag::eTRIGGER_SHAPE, want);
+		}
 	}
 }
 
@@ -607,6 +650,9 @@ void GodotPhysXArea3D::set_param(PhysicsServer3D::AreaParameter p_param, const V
 			break;
 		default:
 			break;
+	}
+	if (has_force_override() != (space && space->is_override_area(this))) {
+		_refresh_role();
 	}
 }
 

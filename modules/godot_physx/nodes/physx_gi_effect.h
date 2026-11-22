@@ -153,6 +153,11 @@ public:
 		// world-to-local, the inner half extents where the override is whole, what they override (1 ambient, 2
 		// reflections).
 		static constexpr int MAX_PROBES = 8;
+		// Traced skinned meshes' world bounds (grown a little): reflections don't take the screen's view inside them.
+		static constexpr int MAX_TRACED = 8;
+		int traced_count = 0;
+		Vector3 traced_lo[MAX_TRACED];
+		Vector3 traced_hi[MAX_TRACED];
 		int probe_count = 0;
 		Transform3D probe_to_local[MAX_PROBES];
 		Vector3 probe_core[MAX_PROBES];

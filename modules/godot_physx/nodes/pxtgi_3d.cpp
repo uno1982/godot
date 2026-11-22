@@ -1795,7 +1795,7 @@ void PXTGI3D::_pack_entry(int p_index, const Transform3D &p_to_world, float p_ty
 	p[28] = hi.x;
 	p[29] = hi.y;
 	p[30] = hi.z;
-	p[31] = 0.0f;
+	p[31] = entry.traced >= 0 ? 1.0f : 0.0f; // a traced mesh: its hits never take the screen's light
 }
 
 // Shape p_index's GPU record and world bounds, from its node; false when it can't be traced.
@@ -2124,6 +2124,16 @@ void PXTGI3D::_publish() {
 	s.geometry_version = geometry_version;
 	s.dynamic_geometry = dynamic_geometry;
 	s.dynamic_version = dynamic_version;
+	// The traced meshes' bounds, grown so a screen pixel on their skin counts as inside.
+	s.traced_count = 0;
+	for (uint32_t i = 0; i < shapes.size() && s.traced_count < PhysXGIEffect::Snapshot::MAX_TRACED; i++) {
+		if (shapes[i].traced >= 0 && i < entry_valid.size() && entry_valid[i]) {
+			const AABB box = shapes[i].local_bounds.grow(0.05f);
+			s.traced_lo[s.traced_count] = box.position;
+			s.traced_hi[s.traced_count] = box.get_end();
+			s.traced_count++;
+		}
+	}
 
 	// The sun: the brightest directional light Godot draws on surfaces (a hidden one, or a sky-only moon, isn't).
 	s.sun_color = Color(0, 0, 0);

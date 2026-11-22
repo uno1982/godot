@@ -118,8 +118,23 @@ layout(set = 0, binding = 9, std140) uniform Frame {
 	vec4 src_capture[8];
 	ivec4 srcs; // x: count
 	vec4 src_border; // x: the atlas maps' border, y: the scale inside it, z: the roughest level
+	// The traced skinned meshes' world bounds (a little grown): a reflection doesn't take what the screen shows inside
+	// them (the side of a character the camera sees), but traces the mesh.
+	vec4 traced_lo[8];
+	vec4 traced_hi[8];
+	ivec4 traced; // x: count
 }
 f;
+
+// Whether world point w is inside a traced mesh's bounds.
+bool in_traced(vec3 w) {
+	for (int i = 0; i < f.traced.x; i++) {
+		if (all(greaterThanEqual(w, f.traced_lo[i].xyz)) && all(lessThanEqual(w, f.traced_hi[i].xyz))) {
+			return true;
+		}
+	}
+	return false;
+}
 
 // Whether a reflection probe replaces this kind of light (1 bounce, 2 reflections) at world point w anyway: then
 // there's no point tracing it.
@@ -224,7 +239,7 @@ struct Primitive {
 	vec4 albedo;
 	vec4 emission;
 	vec4 glow_lo; // where on the shape the glow is, in its local frame (w 1: set; unset: all of it)
-	vec4 glow_hi;
+	vec4 glow_hi; // w: 1 for a traced skinned mesh
 };
 layout(std430, set = 0, binding = 4) restrict readonly buffer Primitives {
 	Primitive p[];
@@ -999,7 +1014,8 @@ vec3 world_light(vec3 x, vec3 n, int hit, sampler2D depth_tex, sampler2D color_t
 	bool glowing_here = prims.p[hit].emission.rgb != vec3(0.0) && in_glow(hit, x);
 	bool glows = with_glow || !sampled_emissive(hit);
 	vec3 v = (f.world_to_view * vec4(x, 1.0)).xyz;
-	if (v.z < -f.clip.x) {
+	// A traced mesh's hit doesn't take the screen's light either: what's there may be its other side.
+	if (prims.p[hit].glow_hi.w < 0.5 && v.z < -f.clip.x) {
 		vec2 sp = pixel_from_view(v, f.proj_info);
 		if (on_screen(sp)) {
 			float sd = texelFetch(depth_tex, ivec2(sp), 0).r;
@@ -1690,8 +1706,14 @@ void main() {
 		if (behind > 0.0 && behind < max(0.1 + 0.02 * surface, 1.5 * stride)) {
 			vec2 hp = clamp(pixel_from_view(origin + dir * refine_hit(depth_tex, origin, dir, in_front, along), f.proj_info), vec2(0.0), vec2(f.sizes.xy) - 1.0);
 			float hd = texelFetch(depth_tex, ivec2(hp), 0).r;
+			vec3 hv = view_from_pixel(floor(hp), hd > 0.0 ? hd : sd, f.proj_info, f.clip.x, f.clip.y);
+			// Inside a traced mesh's bounds the screen shows only the side of it the camera sees (a character's back,
+			// seen in a mirror in front of it): its triangles are traced instead.
+			if (int(f.reflect.x) >= 2 && in_traced((f.view_to_world * vec4(hv, 1.0)).xyz)) {
+				break;
+			}
 			float pd;
-			vec2 pp = prev_pixel(view_from_pixel(floor(hp), hd > 0.0 ? hd : sd, f.proj_info, f.clip.x, f.clip.y), pd);
+			vec2 pp = prev_pixel(hv, pd);
 			if (on_screen(pp)) {
 				light = texture(color_tex, (pp + 0.5) / vec2(f.sizes.xy)).rgb;
 				found = true;
@@ -2161,6 +2183,9 @@ struct FrameData {
 	float src_capture[8][4];
 	int32_t srcs[4];
 	float src_border[4];
+	float traced_lo[8][4];
+	float traced_hi[8][4];
+	int32_t traced[4];
 };
 
 void projection_info(const Projection &p_projection, const Size2i &p_size, float *r_info) {
@@ -2641,6 +2666,13 @@ void PhysXGIEffect::_render(int p_callback_type, const RenderData *p_render_data
 	data.cache[1] = CACHE_SLOTS - 1;
 	data.cache[2] = s.multi_bounce ? 1 : 0;
 	data.cache[3] = s.rays_per_texel;
+	data.traced[0] = s.traced_count;
+	for (int i = 0; i < s.traced_count; i++) {
+		for (int a = 0; a < 3; a++) {
+			data.traced_lo[i][a] = s.traced_lo[i][a];
+			data.traced_hi[i][a] = s.traced_hi[i][a];
+		}
+	}
 	data.probes[0] = s.probe_count;
 	data.probes[1] = s.emissive_candidates;
 	for (int i = 0; i < s.probe_count; i++) {

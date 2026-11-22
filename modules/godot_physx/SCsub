@@ -185,7 +185,9 @@ if alembic_sdk:
     # The Alembic library throws: the one file that calls it is built with exceptions on, and keeps them inside.
     env_alembic = env_physx.Clone()
     env_alembic["CPPDEFINES"] = [
-        d for d in env_alembic["CPPDEFINES"] if not (isinstance(d, (tuple, list)) and len(d) > 0 and d[0] == "_HAS_EXCEPTIONS")
+        d
+        for d in env_alembic["CPPDEFINES"]
+        if not (isinstance(d, (tuple, list)) and len(d) > 0 and d[0] == "_HAS_EXCEPTIONS")
     ]
     if env.msvc:
         env_alembic.Append(CXXFLAGS=["/EHsc"])
@@ -199,7 +201,9 @@ if alembic_sdk:
     else:
         env.Append(LIBS=alembic_libs)
     # Their BSD-3-Clause notice goes with the editor binary they're linked into.
-    env.Command(env.File("#bin/ALEMBIC-LICENSE.md"), env_physx.File("ALEMBIC-LICENSE.md").srcnode(), Copy("$TARGET", "$SOURCE"))
+    env.Command(
+        env.File("#bin/ALEMBIC-LICENSE.md"), env_physx.File("ALEMBIC-LICENSE.md").srcnode(), Copy("$TARGET", "$SOURCE")
+    )
 
 # --- NVIDIA Flow location (optional) ----------------------------------------------
 # Flow (sparse-grid smoke / fire / dust) lives in the same NVIDIA-Omniverse/PhysX

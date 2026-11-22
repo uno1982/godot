@@ -28,7 +28,6 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-
 #include "flow_scatter_rd.h"
 
 #include "servers/rendering/renderer_rd/storage_rd/texture_storage.h"

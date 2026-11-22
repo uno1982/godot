@@ -77,7 +77,7 @@
 			The hull's length (m) along its [code]+Z[/code]. [code]0[/code] takes it from the sibling [PhysXBuoyancy3D]'s sample points.
 		</member>
 		<member name="hull_offset" type="float" setter="set_hull_offset" getter="get_hull_offset" default="0.0">
-			Where the hull's centre sits along the body's [code]+Z[/code] (m), for a hull not centred on the body. Used only with a [member hull_length]; the sibling [PhysXBuoyancy3D]'s sample points already say where the hull is. Read when the wake is built, on its first physics tick.
+			Where the hull's center sits along the body's [code]+Z[/code] (m), for a hull not centered on the body. Used only with a [member hull_length]; the sibling [PhysXBuoyancy3D]'s sample points already say where the hull is. Read when the wake is built, on its first physics tick.
 		</member>
 		<member name="hull_profile" type="PackedFloat32Array" setter="set_hull_profile" getter="get_hull_profile" default="PackedFloat32Array()">
 			The hull's shape seen from above: 8 half-beam fractions (0 to 1, of [member hull_beam]'s half) from bow to stern. The hull foam and the keel's dip follow it, so a pointed bow doesn't churn foam where there's no hull. Empty (the default) treats the hull as a box. Any other size than 8 is ignored.

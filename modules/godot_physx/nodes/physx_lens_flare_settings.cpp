@@ -33,7 +33,7 @@
 #include "core/object/class_db.h"
 
 PhysXLensFlareSettings::PhysXLensFlareSettings() {
-	// Eight ghosts of the bright image, scaled about the screen's centre (negative: mirrored through it), each tinted.
+	// Eight ghosts of the bright image, scaled about the screen's center (negative: mirrored through it), each tinted.
 	const Color colors[MAX_GHOSTS] = {
 		Color(1.0, 0.8, 0.4),
 		Color(1.0, 1.0, 0.6),

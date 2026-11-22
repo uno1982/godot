@@ -35,21 +35,21 @@
 #include "physx_groom_render_effect.h"
 
 #include "core/config/engine.h"
+#include "core/config/project_settings.h"
+#include "core/math/geometry_3d.h"
 #include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
-#include "core/config/project_settings.h"
 #include "scene/3d/camera_3d.h"
-#include "core/math/geometry_3d.h"
 #include "scene/3d/physics/area_3d.h"
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/3d/physics/physical_bone_3d.h"
 #include "scene/3d/physics/physical_bone_simulator_3d.h"
 #include "scene/3d/skeleton_3d.h"
+#include "scene/main/viewport.h"
 #include "scene/resources/3d/capsule_shape_3d.h"
 #include "scene/resources/3d/sphere_shape_3d.h"
-#include "scene/resources/texture_rd.h"
 #include "scene/resources/3d/world_3d.h"
-#include "scene/main/viewport.h"
+#include "scene/resources/texture_rd.h"
 #include "servers/rendering/rendering_server.h"
 
 RID PhysXGroom3D::shared_shader;
@@ -73,7 +73,7 @@ vec3 sim_point(int i) {
 	return texelFetch(sim_points, ivec2(i % sim_width, i / sim_width), 0).xyz;
 }
 
-// Interleaved gradient noise (as PXTGI's): neighbouring pixels get evenly spread values, so a strand drawing a share of
+// Interleaved gradient noise (as PXTGI's): neighboring pixels get evenly spread values, so a strand drawing a share of
 // its pixels draws an even, fine pattern rather than the grit of white noise (Godot's alpha hash). Each strand shifts
 // the pattern by its own amount: on one pattern, strands crossing a pixel would all draw it or all skip it, and
 // overlapping hair would cover no more than one strand.

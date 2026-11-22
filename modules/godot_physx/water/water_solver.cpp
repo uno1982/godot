@@ -1299,7 +1299,7 @@ void WaterSolver::reinit_spectrum(float p_wind_speed, Vector2 p_wind_direction, 
 }
 
 void WaterSolver::recenter(Vector2 p_grid_center) {
-	flush_ticks(); // ticks recorded so far ran on the old centre (their bodies are relative to it)
+	flush_ticks(); // ticks recorded so far ran on the old center (their bodies are relative to it)
 	settings.grid_center = p_grid_center;
 	for (SphereSlot &s : sphere_slots) {
 		s = SphereSlot();

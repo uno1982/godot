@@ -43,14 +43,14 @@
 #include "core/templates/hash_set.h"
 #include "scene/3d/camera_3d.h"
 #include "scene/3d/light_3d.h"
-#include "scene/main/window.h"
-#include "servers/rendering/renderer_rd/renderer_scene_render_rd.h"
-#include "servers/rendering/renderer_rd/storage_rd/light_storage.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
+#include "scene/main/window.h"
 #include "scene/resources/3d/world_3d.h"
 #include "scene/resources/environment.h"
 #include "servers/physics_3d/physics_server_3d.h"
+#include "servers/rendering/renderer_rd/renderer_scene_render_rd.h"
+#include "servers/rendering/renderer_rd/storage_rd/light_storage.h"
 #include "servers/rendering/rendering_device.h"
 #include "servers/rendering/rendering_server.h"
 #include "servers/rendering/rendering_server_default.h"
@@ -425,7 +425,7 @@ void PhysXFlow3D::_gather_colliders(const AABB &p_region, LocalVector<FlowBacken
 		const Transform3D xform = body_xform * ps->body_get_shape_transform(body, index);
 		// The body's velocity where this shape is, spin included: a shape on a
 		// spinning or swinging body (a rotor, a door, a walker on a turntable)
-		// moves although the body's centre may not.
+		// moves although the body's center may not.
 		Vector3 velocity = ps->body_get_state(body, PhysicsServer3D::BODY_STATE_LINEAR_VELOCITY);
 		if (PhysicsDirectBodyState3D *state = ps->body_get_direct_state(body)) {
 			velocity = state->get_velocity_at_local_position(xform.origin - body_xform.origin);

@@ -397,10 +397,10 @@ void main() {
 		z /= coverage;
 		T /= coverage;
 		// Normal from the depth around the nearest surface texel: per axis, the
-		// neighbour on the flatter side, so silhouettes don't smear -- but where
+		// neighbor on the flatter side, so silhouettes don't smear -- but where
 		// one side is empty, the side with fluid. (Treating the empty side as
 		// level tilted a sheet's rim toward the camera, and rims that tilt onto
-		// the sun's mirror angle flashed white.) A texel with neither neighbour
+		// the sun's mirror angle flashed white.) A texel with neither neighbor
 		// on an axis keeps a level slope there.
 		float zc = imageLoad(zimg, px).r;
 		vec3 P = view_pos(vec2(px), zc);
@@ -436,7 +436,7 @@ void main() {
 			float rl = rzat(px - ivec2(1, 0));
 			float ru = rzat(px + ivec2(0, 1));
 			float rd = rzat(px - ivec2(0, 1));
-			// Per axis the nearer-in-depth neighbour, skipping empty ones (a
+			// Per axis the nearer-in-depth neighbor, skipping empty ones (a
 			// sphere's rim): a jump to another particle isn't this one's slope.
 			bool rur = rr < 1e30 && (rl >= 1e30 || abs(rr - rc) < abs(rc - rl));
 			bool ruu = ru < 1e30 && (rd >= 1e30 || abs(ru - rc) < abs(rc - rd));

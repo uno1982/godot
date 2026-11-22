@@ -53,7 +53,7 @@ public:
 
 	static constexpr int MAX_CAPSULES = 64;
 	// Boxes follow the capsules in the same buffer, at a fixed offset (the
-	// shader's BOX_BASE): 32 floats each -- previous frame (centre, then the
+	// shader's BOX_BASE): 32 floats each -- previous frame (center, then the
 	// three half-axes, each scaled to its half extent), then this frame's.
 	static constexpr int MAX_BOXES = 32;
 
@@ -126,7 +126,7 @@ public:
 	// p_bones: 16 floats (column-major mat4) per skin bind, world space.
 	// p_capsules: 16 floats per capsule -- previous frame (a.xyz, ra, b.xyz,
 	// rb) then this frame's -- world space, blended across the substeps.
-	// p_boxes: 32 floats per box -- previous frame (centre.xyz, active (1 / 0),
+	// p_boxes: 32 floats per box -- previous frame (center.xyz, active (1 / 0),
 	// then the half-axes x, y, z, each a vec4 with w unused), then this frame's.
 	void step(const PackedFloat32Array &p_bones, const PackedFloat32Array &p_capsules, const PackedFloat32Array &p_boxes, double p_delta, int p_substeps, const Settings &p_settings);
 	void reset();

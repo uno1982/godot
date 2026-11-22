@@ -28,14 +28,12 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-
 #pragma once
 
 #include "flow_backend.h"
 
 #include "core/math/projection.h"
 #include "core/math/vector2i.h"
-#include "core/templates/rid.h"
 #include "core/math/vector3.h"
 #include "core/templates/rid.h"
 

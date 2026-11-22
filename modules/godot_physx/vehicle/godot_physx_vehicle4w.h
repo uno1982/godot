@@ -32,16 +32,15 @@
 
 #include "../godot_physx_conversions.h"
 #include "../objects/godot_physx_material.h"
-#include "godot_physx_wheel_query_filter.h"
 #include "../spaces/godot_physx_space_3d.h"
+#include "godot_physx_vehicle_engine.h"
+#include "godot_physx_wheel_query_filter.h"
 
 #include "core/error/error_macros.h"
 #include "core/math/basis.h"
 #include "core/math/vector3.h"
 #include "core/templates/vector.h"
 #include "core/typedefs.h"
-
-#include "godot_physx_vehicle_engine.h"
 
 #include <PxPhysicsAPI.h>
 #include <vehicle/PxVehicleAPI.h>

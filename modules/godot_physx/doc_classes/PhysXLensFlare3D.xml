@@ -4,7 +4,7 @@
 		A camera lens flare from the frame's bright light, provided by the PhysX module.
 	</brief_description>
 	<description>
-		The light a real lens reflects between its glass elements: every bright part of the frame (the sun, fire, headlights, [PhysXFlow3D] flames) is copied back over the screen as a row of soft, tinted ghosts along the line through the screen's centre, plus a faint halo ring. The flare follows the light as it moves on screen and fades as the light leaves the frame or is covered. It is image-based: no light needs to be tagged, and it works the same for every bright light.
+		The light a real lens reflects between its glass elements: every bright part of the frame (the sun, fire, headlights, [PhysXFlow3D] flames) is copied back over the screen as a row of soft, tinted ghosts along the line through the screen's center, plus a faint halo ring. The flare follows the light as it moves on screen and fades as the light leaves the frame or is covered. It is image-based: no light needs to be tagged, and it works the same for every bright light.
 		How it looks is a [PhysXLensFlareSettings] resource in [member settings]: save one with the Inspector to reuse a look across scenes. Without one the node draws [PhysXLensFlareSettings]'s defaults (a warm eight-ghost flare).
 		The flare is drawn after [PhysXLightShafts3D] and before [PhysXLensDirt3D], so a lens with dirt on it lights up under the flare too.
 		Works with the Forward+ and Mobile renderers, not Compatibility (which has no compositor effects). Only one [PhysXLensFlare3D] is drawn per frame; with several, which one is unspecified.

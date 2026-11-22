@@ -177,7 +177,7 @@ private:
 	Transform3D skeleton_xform; // where the skeleton is drawn, as last placed
 	PackedFloat32Array captured_bones; // per skin bind: skeleton_xform * global pose * bind pose (mat4)
 	PackedFloat32Array captured_capsules; // per capsule: a.xyz ra, b.xyz rb (world)
-	PackedFloat32Array captured_boxes; // per box: centre.xyz active, half-axes x, y, z (world)
+	PackedFloat32Array captured_boxes; // per box: center.xyz active, half-axes x, y, z (world)
 	bool has_capture = false;
 	uint64_t last_step_frame = 0;
 	// Game time (the process delta, so Engine.time_scale and pausing apply) not yet simulated; a step consumes it.

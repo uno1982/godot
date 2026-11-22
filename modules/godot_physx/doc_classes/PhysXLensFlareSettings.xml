@@ -5,13 +5,13 @@
 	</brief_description>
 	<description>
 		A [PhysXLensFlare3D]'s look, as a resource, so it can be saved as a preset and shared between scenes. The defaults are a warm, eight-ghost camera flare.
-		Each ghost is a copy of the frame's bright light reflected about the screen's centre, given by a color in [member ghost_colors] and a scale at the same index in [member ghost_scales]. A light at some distance from the centre shows up at that distance divided by the scale, drawn [code]1 / |scale|[/code] times its size: [code]-1[/code] mirrors it through the centre at its own size, [code]2[/code] draws it half as large, halfway to the centre on the same side, [code]-0.5[/code] twice as large and twice as far out on the opposite side (a ghost drawn larger spreads the same light thinner, so it's dimmer). Up to 8 ghosts.
+		Each ghost is a copy of the frame's bright light reflected about the screen's center, given by a color in [member ghost_colors] and a scale at the same index in [member ghost_scales]. A light at some distance from the center shows up at that distance divided by the scale, drawn [code]1 / |scale|[/code] times its size: [code]-1[/code] mirrors it through the center at its own size, [code]2[/code] draws it half as large, halfway to the center on the same side, [code]-0.5[/code] twice as large and twice as far out on the opposite side (a ghost drawn larger spreads the same light thinner, so it's dimmer). Up to 8 ghosts.
 	</description>
 	<tutorials>
 	</tutorials>
 	<members>
 		<member name="ghost_chroma_shift" type="float" setter="set_ghost_chroma_shift" getter="get_ghost_chroma_shift" default="0.015">
-			The colored fringe on each ghost: its red, green and blue are drawn slightly apart, by this fraction of the ghost's distance from the screen's centre. Around [code]0.01[/code]-[code]0.03[/code] gives the thin fringe of a real lens; much larger pulls the ghosts apart into separate red, green and blue copies. [code]0[/code] for none; negative swaps red and blue.
+			The colored fringe on each ghost: its red, green and blue are drawn slightly apart, by this fraction of the ghost's distance from the screen's center. Around [code]0.01[/code]-[code]0.03[/code] gives the thin fringe of a real lens; much larger pulls the ghosts apart into separate red, green and blue copies. [code]0[/code] for none; negative swaps red and blue.
 		</member>
 		<member name="ghost_colors" type="PackedColorArray" setter="set_ghost_colors" getter="get_ghost_colors" default="PackedColorArray(1, 0.8, 0.4, 1, 1, 1, 0.6, 1, 0.8, 0.8, 1, 1, 0.5, 1, 0.4, 1, 0.5, 0.8, 1, 1, 0.9, 1, 0.8, 1, 1, 0.8, 0.4, 1, 0.9, 0.7, 0.7, 1)">
 			Each ghost's color; its alpha scales that ghost's brightness (alpha [code]0[/code] hides it). Entry [i]n[/i] here and entry [i]n[/i] of [member ghost_scales] make ghost [i]n[/i]: only as many ghosts are drawn as both arrays have entries, 8 at most. Add or remove an entry in both to add or remove a ghost.
@@ -20,12 +20,12 @@
 			How bright all the ghosts are. Set it to [code]0[/code] to tune the halo on its own.
 		</member>
 		<member name="ghost_scales" type="PackedFloat32Array" setter="set_ghost_scales" getter="get_ghost_scales" default="PackedFloat32Array(-1.5, 2.5, -5, 10, 0.7, -0.4, -0.2, -0.1)">
-			Where each ghost sits and how big it is; entry [i]n[/i] pairs with entry [i]n[/i] of [member ghost_colors]. Ghosts line up along the line from the light through the screen's centre:
-			- [b]Negative[/b]: on the opposite side of the centre from the light ([code]-1[/code] is the exact mirror point, at the light's own size).
-			- [b]Positive[/b]: on the light's own side, between it and the centre.
-			- [b]Large[/b] ([code]5[/code], [code]10[/code]): small and close to the centre.
+			Where each ghost sits and how big it is; entry [i]n[/i] pairs with entry [i]n[/i] of [member ghost_colors]. Ghosts line up along the line from the light through the screen's center:
+			- [b]Negative[/b]: on the opposite side of the center from the light ([code]-1[/code] is the exact mirror point, at the light's own size).
+			- [b]Positive[/b]: on the light's own side, between it and the center.
+			- [b]Large[/b] ([code]5[/code], [code]10[/code]): small and close to the center.
 			- [b]Near 0[/b] ([code]-0.2[/code], [code]0.7[/code]): large, soft and faint, far out along the line (a ghost drawn larger spreads the same light thinner).
-			A ghost is drawn [code]1 / |scale|[/code] times the light's size, at its distance from the centre divided by the scale.
+			A ghost is drawn [code]1 / |scale|[/code] times the light's size, at its distance from the center divided by the scale.
 		</member>
 		<member name="halo_chroma_shift" type="float" setter="set_halo_chroma_shift" getter="get_halo_chroma_shift" default="0.015">
 			The halo's rainbow edge: how far apart its red, green and blue rings are drawn. Small values give a thin colored rim; larger ones a broad rainbow band. Negative reverses the order of the colors.
@@ -34,10 +34,10 @@
 			Bends the screen like a fisheye before the ring is drawn, so the ring stays round and closer to the light near the screen's edges. [code]0[/code] for a plain ring.
 		</member>
 		<member name="halo_intensity" type="float" setter="set_halo_intensity" getter="get_halo_intensity" default="1.0">
-			How bright the halo is. The halo is a ring around the screen's centre that a bright light lights up as an arc on the far side of the ring; it moves as the light moves. Set [member ghost_intensity] to [code]0[/code] to see it on its own.
+			How bright the halo is. The halo is a ring around the screen's center that a bright light lights up as an arc on the far side of the ring; it moves as the light moves. Set [member ghost_intensity] to [code]0[/code] to see it on its own.
 		</member>
 		<member name="halo_mask" type="float" setter="set_halo_mask" getter="get_halo_mask" default="0.5">
-			How much of the ring toward the screen's centre is faded out: at [code]0.5[/code] it fades in from the centre to the screen's edge; nearer [code]1[/code] only the outermost part shows.
+			How much of the ring toward the screen's center is faded out: at [code]0.5[/code] it fades in from the center to the screen's edge; nearer [code]1[/code] only the outermost part shows.
 		</member>
 		<member name="halo_width" type="float" setter="set_halo_width" getter="get_halo_width" default="0.6">
 			The ring's diameter, as a fraction of the screen's height.

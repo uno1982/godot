@@ -10,7 +10,7 @@
 // Per substep:
 //   MODE_AERO       (only with wind) each particle's share of the air force,
 //                   from its normal and the wind. A pass
-//                   of its own: the normal reads neighbours, which MODE_INTEGRATE
+//                   of its own: the normal reads neighbors, which MODE_INTEGRATE
 //                   is moving.
 //   MODE_INTEGRATE  pinned particles snap to their (interpolated) target, the
 //                   rest take a Verlet step under gravity with damping, then
@@ -116,7 +116,7 @@ layout(set = 0, binding = 10, std430) restrict readonly buffer Tethers {
 };
 layout(set = 0, binding = 11, std430) restrict readonly buffer Capsules {
 	vec4 capsules[]; // per capsule: previous frame (a.xyz, ra), (b.xyz, rb), then this frame's;
-	// boxes from BOX_BASE: previous frame (centre.xyz, active), half-axes x, y, z, then this frame's
+	// boxes from BOX_BASE: previous frame (center.xyz, active), half-axes x, y, z, then this frame's
 };
 layout(set = 0, binding = 12, std430) restrict readonly buffer AdjOffsets {
 	uint adj_offsets[]; // particle -> start in adj_pairs, count = next - this

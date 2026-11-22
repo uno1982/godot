@@ -115,7 +115,7 @@ void main() {
 	// passed), which leaves the water between the two side bands clear; the
 	// propeller's band runs down the middle on its own.
 	float beside = smoothstep(-0.1, 0.05, tl) * (1.0 - smoothstep(0.85, 1.0, tl));
-	float hb = half_beam_at(tl);   // (a tapered hull: the bands follow its sides, meeting at the stem)
+	float hb = half_beam_at(tl); // (a tapered hull: the bands follow its sides, meeting at the stem)
 	float band = exp(-pow((dist - 1.15 * hb) / max(0.3 * spread.z, 0.05), 2.0));
 	float hull_foam = spread.w * mix(1.0, 0.3, clamp(tl, 0.0, 1.0)) * beside * band * smoothstep(0.8 * hb, hb, dist);
 	// Foam is pushed out sideways from the hull's line, strongest near it:
@@ -158,7 +158,7 @@ void main() {
 
 	// Breaking: a wave can't stand more than a few hull dips high -- past that it
 	// breaks, its height going into foam. The sim is otherwise linear, and a hull
-	// circling at speed focuses its wake onto the circle's centre lap after lap
+	// circling at speed focuses its wake onto the circle's center lap after lap
 	// (a jetski piled a +2 m spike there).
 	float crest_limit = max(dip * 4.0, 0.3);
 	float over = abs(hn) - crest_limit;

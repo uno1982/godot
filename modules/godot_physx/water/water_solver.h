@@ -357,8 +357,8 @@ public:
 	void configure(const Settings &p_settings);
 	// The ocean's sea state in place (h0 only — no rebuild; see WaterSolverGPU::rt_reinit_spectrum).
 	void reinit_spectrum(float p_wind_speed, Vector2 p_wind_direction, float p_wave_amplitude, float p_fetch);
-	// The ripple grid's centre moved (a constant-depth square only): no rebuild -- the ripples are cleared, the ocean
-	// (world-anchored) carries on; bodies' spheres / pending impulses are dropped (they were relative to the old centre).
+	// The ripple grid's center moved (a constant-depth square only): no rebuild -- the ripples are cleared, the ocean
+	// (world-anchored) carries on; bodies' spheres / pending impulses are dropped (they were relative to the old center).
 	void recenter(Vector2 p_grid_center);
 	// The seabed was measured again: new per-cell depths for the same grid, no rebuild.
 	void update_seabed(const PackedFloat32Array &p_cell_depth);

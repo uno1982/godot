@@ -35,7 +35,7 @@
 #include "scene/3d/node_3d.h"
 
 // A camera lens flare: the frame's bright light -- the sun, fire, headlights -- reflected back over the screen as a
-// row of tinted ghosts through the screen's centre and a halo ring, the way light bounces between a real lens's
+// row of tinted ghosts through the screen's center and a halo ring, the way light bounces between a real lens's
 // elements. How it looks is a PhysXLensFlareSettings resource, so a look can be saved as a preset and shared; without
 // one the node draws the default look. Put a PhysXLensDirt3D in the scene too and the flare lights the dirt.
 class PhysXLensFlare3D : public Node3D {

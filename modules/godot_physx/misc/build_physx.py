@@ -101,7 +101,9 @@ def build_alembic(base, jobs):
     for name, options in projects:
         build = os.path.join(base, "build", name)
         run(["cmake", "-S", os.path.join(base, name), "-B", build] + common + options, cwd=base)
-        run(["cmake", "--build", build, "--config", "Release", "--target", "install", "--parallel", str(jobs)], cwd=base)
+        run(
+            ["cmake", "--build", build, "--config", "Release", "--target", "install", "--parallel", str(jobs)], cwd=base
+        )
     if not os.path.isdir(os.path.join(install, "include", "Alembic")):
         sys.exit("Alembic build finished but no SDK at " + install)
     return install

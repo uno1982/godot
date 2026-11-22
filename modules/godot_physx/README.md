@@ -419,7 +419,12 @@ multiple bounces.
   don't take the screen's view inside its bounds (the side of the character
   the camera sees, its back from a camera behind it): they trace the mesh
   there, so a mirror in front of a third-person character shows its front.
-  Its glow, if it has one, isn't traced.
+  Its glow, if it has one, isn't traced. With reflections set to traced +
+  probes, what a mirror shows of static surfaces takes its color from the
+  probes' captures, which don't have a moving character where it is now:
+  there a character's shadow doesn't show on the floor in the mirror (leave
+  moving characters out of a probe's `cull_mask`, or the capture keeps them
+  where they stood when it was made).
 - Which triangles a traced mesh uses: its own **LODs**, the ones Godot's
   importer generates (the Import dock's *Generate LODs*, on by default for
   meshes in glTF, FBX and other scenes). PXTGI doesn't simplify meshes

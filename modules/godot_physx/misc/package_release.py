@@ -109,7 +109,9 @@ class Archive:
 
     def add(self, src, name, executable=False):
         info = zipfile.ZipInfo.from_file(src, name)
-        # Unix permissions, so the Linux binaries unzip executable.
+        # Unix permissions, so the Linux binaries unzip executable. unzip only reads them from an entry made on
+        # Unix, and zipfile marks entries written on Windows as MS-DOS ones.
+        info.create_system = 3
         info.external_attr = (0o100755 if executable else 0o100644) << 16
         info.compress_type = zipfile.ZIP_DEFLATED
         with open(src, "rb") as f, self.zip.open(info, "w") as out:
@@ -119,6 +121,7 @@ class Archive:
 
     def add_text(self, name, text):
         info = zipfile.ZipInfo(name)
+        info.create_system = 3
         info.external_attr = 0o100644 << 16
         info.compress_type = zipfile.ZIP_DEFLATED
         self.zip.writestr(info, text)

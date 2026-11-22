@@ -91,7 +91,33 @@ class PXTGI3D : public Node3D {
 		Transform3D in_body;
 		float type = 0.0f;
 		Vector3 extents;
+		int traced = -1; // a skinned mesh traced as its triangles (its index in traced_meshes), not a collision shape
 	};
+	// A skinned mesh that asked to be traced (a "pxtgi_traced" true in its metadata: a character seen in a mirror): its
+	// coarsest LOD with enough triangles, skinned every frame on the CPU into world space, its tree built once at rest
+	// and refit to the pose. Each triangle carries its color (its surface's albedo, by its texture where the material has
+	// one), so a mirror shows the character's own shape and colors.
+	struct TracedMesh {
+		ObjectID mesh;
+		ObjectID mesh_resource;
+		LocalVector<Vector3> rest; // the vertices the triangles use, in the mesh's space
+		LocalVector<int> bones; // influences per vertex, as many as weights: skin bind indices
+		LocalVector<float> weights;
+		int influences = 4;
+		LocalVector<int> corners; // three per triangle, in the tree's leaf order: indices into rest
+		Vector<float> nodes; // the tree (8 floats a node), refit every frame
+		Vector<float> triangles; // 12 floats a triangle: three corners, each w its color channel plus 1 (0: none)
+		AABB bounds; // world space, this frame's
+		int at = 0; // where its tree starts in dynamic_geometry (floats)
+		int budget = 0; // the triangles it was built for
+	};
+	LocalVector<TracedMesh> traced_meshes;
+	HashMap<ObjectID, TracedMesh> traced_built; // by mesh instance: kept across rescans (building one reads the mesh)
+	HashSet<ObjectID> traced_nodes; // the meshes traced since the last rescan: their flag changing means finding them again
+	Vector<float> dynamic_geometry; // the traced meshes' trees and triangles, after the static geometry
+	uint64_t dynamic_version = 0;
+	bool _build_traced(MeshInstance3D *p_mesh, TracedMesh &r_traced);
+	bool _skin_traced(TracedMesh &r_traced, float *r_nodes, float *r_triangles);
 	// Hull planes, or a mesh's tree and triangles, built once per shape resource.
 	struct GeometryBlock {
 		int type = 0;

@@ -398,6 +398,23 @@ multiple bounces.
   cost nothing in a game.
 - A material's `AO` output above 1 multiplies all of its indirect light
   (PXTGI's included) instead of darkening it; keep it within 0–1.
+- **Characters** off screen (a character seen in a mirror, its shadow from a
+  light behind the camera): a character's collision shapes are its physical
+  bones' capsules, which follow the animation while it isn't limp, so PXTGI
+  sees a figure of capsules (give each bone a `pxtgi_albedo`: a bone isn't
+  next to the character's mesh, so it would bounce as gray). To trace the
+  character as itself, give its skinned `MeshInstance3D` a `pxtgi_traced`
+  of `true` in its metadata: PXTGI then traces that mesh's own triangles,
+  the coarsest of its LODs with about 3000 (or give `pxtgi_traced` the
+  number of triangles to use), skinned to its pose every frame. Each
+  triangle has its surface's color, by its albedo texture at that triangle,
+  so a mirror shows the character's shape and colors (not its texture's
+  detail or normal maps). It also shadows and blocks bounce light by its
+  shape. The mesh is read once (its LODs, vertices, bone weights, textures),
+  then each frame its vertices are skinned on the CPU and only its part of
+  the geometry is uploaded; tracing it costs GPU time where rays reach it
+  (about 0.2 ms with a character filling a large mirror on an RTX 5070).
+  Its glow, if it has one, isn't traced.
   Converted materials can carry intensities far above 1 that their source
   engine clamps.
 - Lights: the sun is the brightest visible `DirectionalLight3D` that lights

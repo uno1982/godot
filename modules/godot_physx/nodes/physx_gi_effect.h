@@ -106,6 +106,10 @@ public:
 		// the version changes.
 		Vector<float> geometry;
 		uint64_t geometry_version = 0;
+		// The traced skinned meshes' trees and triangles, placed right after the geometry and rewritten every frame (only
+		// this part is uploaded when only this version changes).
+		Vector<float> dynamic_geometry;
+		uint64_t dynamic_version = 0;
 		Vector3 sun_direction; // toward the sun, world space
 		Color sun_color; // linear, times energy; black for none
 		// Omni lights: position and 1 / range; linear colour times energy, and the attenuation exponent.
@@ -193,6 +197,9 @@ private:
 	int node_capacity = 0;
 	RID geometry_buffer;
 	uint64_t geometry_uploaded = UINT64_MAX;
+	uint64_t dynamic_uploaded = UINT64_MAX;
+	int geometry_static_floats = 0; // where the dynamic part starts in the buffer
+	int geometry_dynamic_floats = 0;
 	bool failed = false;
 
 	// The radiance cache: surface patches the off-screen rays hit, hashed by position (cells growing with distance from

@@ -50,6 +50,7 @@
 #include "scene/3d/physics/collision_object_3d.h"
 #include "scene/3d/physics/collision_shape_3d.h"
 #include "scene/3d/reflection_probe.h"
+#include "scene/3d/skeleton_3d.h"
 #include "scene/main/scene_tree.h"
 #include "scene/main/viewport.h"
 #include "scene/main/window.h"
@@ -400,6 +401,22 @@ Color texture_average(const Ref<Texture2D> &p_texture) {
 
 // The metadata names, made once: a StringName from a string looks the name up in the global table each time, and the
 // looks are read again a slice every frame.
+const StringName &meta_traced() {
+	static const StringName name = "pxtgi_traced";
+	return name;
+}
+
+// Whether a mesh asked to be traced as its triangles: a skinned one with "pxtgi_traced" in its metadata, true (about
+// 3000 triangles) or the number of triangles to trace it with.
+bool wants_traced(const MeshInstance3D *p_mesh) {
+	return p_mesh->has_meta(meta_traced()) && bool(p_mesh->get_meta(meta_traced())) && p_mesh->get_mesh().is_valid() && p_mesh->get_skin_reference().is_valid();
+}
+
+int traced_budget(const MeshInstance3D *p_mesh) {
+	const Variant value = p_mesh->get_meta(meta_traced(), true);
+	return value.get_type() == Variant::INT && int(value) > 1 ? int(value) : 3000;
+}
+
 const StringName &meta_albedo() {
 	static const StringName name = "pxtgi_albedo";
 	return name;
@@ -999,6 +1016,250 @@ const PXTGI3D::GeometryBlock *PXTGI3D::_geometry_for(const Ref<Shape3D> &p_shape
 	return stored->type ? stored : nullptr;
 }
 
+// A traced skinned mesh, read once: per surface the coarsest of its LODs that keeps its share of the triangle budget
+// (a mirror's view of a character needs its shape, not its detail), the vertices those use with their bone influences,
+// each triangle's color, and a tree over them at rest.
+bool PXTGI3D::_build_traced(MeshInstance3D *p_mesh, TracedMesh &r_traced) {
+	const Ref<Mesh> mesh = p_mesh->get_mesh();
+	const Ref<SkinReference> skin_ref = p_mesh->get_skin_reference();
+	if (mesh.is_null() || skin_ref.is_null() || skin_ref->get_skin().is_null()) {
+		return false;
+	}
+	r_traced.mesh = p_mesh->get_instance_id();
+	r_traced.mesh_resource = mesh->get_instance_id();
+	r_traced.budget = traced_budget(p_mesh);
+	struct SurfaceRead {
+		Array arrays;
+		PackedInt32Array indices;
+		int surface = 0;
+	};
+	LocalVector<SurfaceRead> surfaces;
+	int total = 0;
+	for (int s = 0; s < mesh->get_surface_count(); s++) {
+		if (mesh->surface_get_primitive_type(s) != Mesh::PRIMITIVE_TRIANGLES) {
+			continue;
+		}
+		SurfaceRead read;
+		read.arrays = mesh->surface_get_arrays(s);
+		const PackedVector3Array vertices = read.arrays[Mesh::ARRAY_VERTEX];
+		const PackedInt32Array bones = read.arrays[Mesh::ARRAY_BONES];
+		if (vertices.is_empty() || bones.size() < vertices.size()) {
+			continue;
+		}
+		read.indices = read.arrays[Mesh::ARRAY_INDEX];
+		if (read.indices.is_empty()) {
+			for (int k = 0; k < vertices.size(); k++) {
+				read.indices.push_back(k);
+			}
+		}
+		read.surface = s;
+		total += read.indices.size() / 3;
+		surfaces.push_back(read);
+	}
+	if (total == 0) {
+		return false;
+	}
+	HashMap<ObjectID, Ref<Image>> images;
+	Vector<Vector3> corner_positions;
+	LocalVector<int> corner_vertices;
+	LocalVector<Color> colors; // per triangle, alpha 0: none
+	for (const SurfaceRead &read : surfaces) {
+		const int surface = read.surface;
+		const PackedVector3Array vertices = read.arrays[Mesh::ARRAY_VERTEX];
+		const PackedInt32Array bones = read.arrays[Mesh::ARRAY_BONES];
+		const PackedFloat32Array weights = read.arrays[Mesh::ARRAY_WEIGHTS];
+		const PackedVector2Array uvs = read.arrays[Mesh::ARRAY_TEX_UV];
+		const int influences = bones.size() / vertices.size();
+		r_traced.influences = influences;
+		// The coarsest LOD keeping this surface's share of the budget.
+		PackedInt32Array indices = read.indices;
+		const int wanted = MAX(64, int(int64_t(r_traced.budget) * (read.indices.size() / 3) / total));
+		const Dictionary lods = mesh->surface_get_lods(surface);
+		for (const Variant &key : lods.keys()) {
+			const PackedInt32Array lod = lods[key];
+			if (lod.size() / 3 >= wanted && lod.size() < indices.size()) {
+				indices = lod;
+			}
+		}
+		// The surface's color: a "pxtgi_albedo" tag, else a BaseMaterial3D's albedo, by its texture at each triangle.
+		const Ref<Material> material = surface_material(p_mesh, surface);
+		const Ref<BaseMaterial3D> base = material;
+		bool has_color = false;
+		Color tint;
+		Ref<Image> image;
+		Vector2 uv_scale(1, 1);
+		Vector2 uv_offset;
+		if (material.is_valid() && material->has_meta(meta_albedo())) {
+			tint = Color(material->get_meta(meta_albedo())).srgb_to_linear();
+			has_color = true;
+		} else if (base.is_valid()) {
+			tint = base->get_albedo().srgb_to_linear();
+			has_color = true;
+			const Ref<Texture2D> texture = base->get_texture(BaseMaterial3D::TEXTURE_ALBEDO);
+			if (texture.is_valid() && uvs.size() == vertices.size()) {
+				if (const Ref<Image> *known = images.getptr(texture->get_instance_id())) {
+					image = *known;
+				} else {
+					image = texture->get_image();
+					if (image.is_valid() && !image->is_empty()) {
+						image = image->duplicate();
+						if (image->is_compressed()) {
+							image->decompress();
+						}
+					}
+					images.insert(texture->get_instance_id(), image);
+				}
+				uv_scale = Vector2(base->get_uv1_scale().x, base->get_uv1_scale().y);
+				uv_offset = Vector2(base->get_uv1_offset().x, base->get_uv1_offset().y);
+			}
+		}
+		HashMap<int, int> remap; // surface vertex -> traced vertex
+		for (int t = 0; t + 2 < indices.size(); t += 3) {
+			for (int c = 0; c < 3; c++) {
+				const int v = indices[t + c];
+				ERR_FAIL_INDEX_V(v, vertices.size(), false);
+				const int *known = remap.getptr(v);
+				int at;
+				if (known) {
+					at = *known;
+				} else {
+					at = r_traced.rest.size();
+					remap.insert(v, at);
+					r_traced.rest.push_back(vertices[v]);
+					for (int k = 0; k < influences; k++) {
+						r_traced.bones.push_back(bones[v * influences + k]);
+						r_traced.weights.push_back(v * influences + k < weights.size() ? weights[v * influences + k] : 0.0f);
+					}
+				}
+				corner_vertices.push_back(at);
+				corner_positions.push_back(vertices[v]);
+			}
+			Color color = tint;
+			if (image.is_valid() && !image->is_empty()) {
+				const Vector2 uv = ((uvs[indices[t]] + uvs[indices[t + 1]] + uvs[indices[t + 2]]) / 3.0f) * uv_scale + uv_offset;
+				const int w = image->get_width();
+				const int h = image->get_height();
+				const int x = CLAMP(int(Math::fposmod(uv.x, 1.0f) * w), 0, w - 1);
+				const int y = CLAMP(int(Math::fposmod(uv.y, 1.0f) * h), 0, h - 1);
+				color = color * image->get_pixel(x, y).srgb_to_linear();
+			}
+			color.a = has_color ? 1.0f : 0.0f;
+			colors.push_back(color);
+		}
+	}
+	if (colors.is_empty()) {
+		return false;
+	}
+	LocalVector<TriangleItem> items;
+	items.resize(colors.size());
+	for (uint32_t i = 0; i < items.size(); i++) {
+		AABB b(corner_positions[i * 3], Vector3());
+		b.expand_to(corner_positions[i * 3 + 1]);
+		b.expand_to(corner_positions[i * 3 + 2]);
+		items[i] = { b, b.get_center(), int(i), b.position, b.position + b.size };
+	}
+	build_triangle_tree(items, 0, items.size(), corner_positions, r_traced.nodes, r_traced.triangles);
+	// The leaves take the triangles in the items' final order: their corners and colors follow it.
+	r_traced.corners.resize(items.size() * 3);
+	float *tris = r_traced.triangles.ptrw();
+	for (uint32_t k = 0; k < items.size(); k++) {
+		const int t = items[k].index;
+		for (int c = 0; c < 3; c++) {
+			r_traced.corners[k * 3 + c] = corner_vertices[t * 3 + c];
+		}
+		const Color &color = colors[t];
+		const bool has = color.a > 0.5f;
+		tris[k * 12 + 3] = has ? color.r + 1.0f : 0.0f;
+		tris[k * 12 + 7] = has ? color.g + 1.0f : 0.0f;
+		tris[k * 12 + 11] = has ? color.b + 1.0f : 0.0f;
+	}
+	return true;
+}
+
+// A traced mesh in this frame's pose: its triangles skinned into world space (as Godot skins it: each vertex by its
+// bones' global poses times their bind poses, then the mesh's transform), its tree refit around them. False when it
+// isn't drawn (gone, hidden, no skeleton).
+bool PXTGI3D::_skin_traced(TracedMesh &r_traced, float *r_nodes, float *r_triangles) {
+	MeshInstance3D *mesh = ObjectDB::get_instance<MeshInstance3D>(r_traced.mesh);
+	if (mesh == nullptr || !mesh->is_inside_tree() || !mesh->is_visible_in_tree() || mesh->get_skin_reference().is_null()) {
+		return false;
+	}
+	Skeleton3D *skeleton = Object::cast_to<Skeleton3D>(mesh->get_node_or_null(mesh->get_skeleton_path()));
+	const Ref<Skin> skin = mesh->get_skin_reference()->get_skin();
+	if (skeleton == nullptr || skin.is_null()) {
+		return false;
+	}
+	const Transform3D to_world = mesh->get_global_transform();
+	LocalVector<Transform3D> binds;
+	binds.resize(skin->get_bind_count());
+	for (int i = 0; i < skin->get_bind_count(); i++) {
+		int bone = skin->get_bind_bone(i);
+		if (bone < 0) {
+			bone = skeleton->find_bone(skin->get_bind_name(i));
+		}
+		binds[i] = to_world * (bone >= 0 && bone < skeleton->get_bone_count() ? skeleton->get_bone_global_pose(bone) * skin->get_bind_pose(i) : Transform3D());
+	}
+	LocalVector<Vector3> posed;
+	posed.resize(r_traced.rest.size());
+	const int influences = r_traced.influences;
+	for (uint32_t v = 0; v < r_traced.rest.size(); v++) {
+		Vector3 p;
+		float total = 0.0f;
+		for (int k = 0; k < influences; k++) {
+			const float w = r_traced.weights[v * influences + k];
+			const int b = r_traced.bones[v * influences + k];
+			if (w > 0.0f && b >= 0 && b < int(binds.size())) {
+				p += binds[b].xform(r_traced.rest[v]) * w;
+				total += w;
+			}
+		}
+		posed[v] = total > 0.0f ? p / total : to_world.xform(r_traced.rest[v]);
+	}
+	const int triangle_count = r_traced.corners.size() / 3;
+	for (int k = 0; k < triangle_count; k++) {
+		for (int c = 0; c < 3; c++) {
+			const Vector3 &p = posed[r_traced.corners[k * 3 + c]];
+			float *out = r_triangles + k * 12 + c * 4;
+			out[0] = p.x;
+			out[1] = p.y;
+			out[2] = p.z;
+		}
+	}
+	// Refit: a leaf's box from its triangles, an inner node's from its children (they come after it).
+	const int node_count = r_traced.nodes.size() / 8;
+	for (int node = node_count - 1; node >= 0; node--) {
+		float *o = r_nodes + node * 8;
+		int a;
+		int count;
+		memcpy(&a, &o[3], sizeof(int));
+		memcpy(&count, &o[7], sizeof(int));
+		Vector3 lo(1e30, 1e30, 1e30);
+		Vector3 hi(-1e30, -1e30, -1e30);
+		if (count > 0) {
+			for (int k = a; k < a + count; k++) {
+				for (int c = 0; c < 3; c++) {
+					const float *p = r_triangles + k * 12 + c * 4;
+					lo = lo.min(Vector3(p[0], p[1], p[2]));
+					hi = hi.max(Vector3(p[0], p[1], p[2]));
+				}
+			}
+		} else {
+			const float *l = r_nodes + (node + 1) * 8;
+			const float *r = r_nodes + a * 8;
+			lo = Vector3(MIN(l[0], r[0]), MIN(l[1], r[1]), MIN(l[2], r[2]));
+			hi = Vector3(MAX(l[4], r[4]), MAX(l[5], r[5]), MAX(l[6], r[6]));
+		}
+		o[0] = lo.x;
+		o[1] = lo.y;
+		o[2] = lo.z;
+		o[4] = hi.x;
+		o[5] = hi.y;
+		o[6] = hi.z;
+	}
+	r_traced.bounds = AABB(Vector3(r_nodes[0], r_nodes[1], r_nodes[2]), Vector3(r_nodes[4] - r_nodes[0], r_nodes[5] - r_nodes[1], r_nodes[6] - r_nodes[2]));
+	return true;
+}
+
 // What the GI looks at: the scene (in the editor, the scene being edited, not the editor's own nodes).
 Node *PXTGI3D::_scan_root() const {
 	if (Engine::get_singleton()->is_editor_hint() && get_tree()->get_edited_scene_root()) {
@@ -1059,6 +1320,12 @@ void PXTGI3D::_restyle_slice(LocalVector<int> &r_changed) {
 		if (node == nullptr || known == nullptr) {
 			continue;
 		}
+		// A mesh asking to be traced, or no longer: find the shapes again.
+		if (const MeshInstance3D *mesh = Object::cast_to<MeshInstance3D>(node)) {
+			if (wants_traced(mesh) != traced_nodes.has(id)) {
+				tracked_changed = true;
+			}
+		}
 		const Pair<Color, Color> look = _look_of(node);
 		const int *index = entry_of.getptr(id);
 		if (index) {
@@ -1076,7 +1343,7 @@ void PXTGI3D::_restyle_slice(LocalVector<int> &r_changed) {
 		*known = look;
 		if (index) {
 			shapes[*index].albedo = look.first;
-			shapes[*index].emission = look.second;
+			shapes[*index].emission = shapes[*index].traced >= 0 ? Color(0, 0, 0) : look.second;
 			r_changed.push_back(*index);
 		}
 	}
@@ -1220,6 +1487,8 @@ void PXTGI3D::_rescan() {
 	probes.clear();
 	look_order.clear();
 	entry_of.clear();
+	traced_meshes.clear();
+	traced_nodes.clear();
 	for (const ObjectID &id : tracked) {
 		Node *n = ObjectDB::get_instance<Node>(id);
 		if (n == nullptr) {
@@ -1250,6 +1519,25 @@ void PXTGI3D::_rescan() {
 		entry.albedo = look->first;
 		entry.emission = look->second;
 		if (MeshInstance3D *mesh = Object::cast_to<MeshInstance3D>(n)) {
+			if (wants_traced(mesh)) {
+				// A skinned mesh traced as its triangles (its glow, if any, isn't: it lights nothing).
+				TracedMesh *built = traced_built.getptr(id);
+				if (built == nullptr || built->mesh_resource != mesh->get_mesh()->get_instance_id() || built->budget != traced_budget(mesh)) {
+					TracedMesh fresh;
+					if (!_build_traced(mesh, fresh)) {
+						continue;
+					}
+					built = &traced_built.insert(id, fresh)->value;
+				}
+				traced_nodes.insert(id);
+				entry.traced = traced_meshes.size();
+				traced_meshes.push_back(*built);
+				entry.geometry_type = 5;
+				entry.emission = Color(0, 0, 0);
+				entry_of.insert(id, shapes.size());
+				shapes.push_back(entry);
+				continue;
+			}
 			// A mesh outside any body only counts while it gives off light (and not when it's kept out of GI, as
 			// Godot's own GI leaves it out).
 			if (mesh->get_mesh().is_null() || entry.emission.get_luminance() <= 0.0f || mesh->get_gi_mode() == GeometryInstance3D::GI_MODE_DISABLED || mesh_has_collision(mesh)) {
@@ -1310,7 +1598,7 @@ void PXTGI3D::_rescan() {
 	for (uint32_t i = 0; i < shapes.size(); i++) {
 		Object *node = ObjectDB::get_instance(shapes[i].shape_node);
 		shape_signature = hash_murmur3_one_64(uint64_t(shapes[i].shape_node), shape_signature);
-		if (shapes[i].mesh_proxy) {
+		if (shapes[i].mesh_proxy || shapes[i].traced >= 0) {
 			proxy_entries.push_back(i);
 		} else if (CollisionShape3D *cs = Object::cast_to<CollisionShape3D>(node)) {
 			body_entries[cs->get_parent()->get_instance_id()].push_back(i);
@@ -1325,7 +1613,7 @@ void PXTGI3D::_rescan() {
 	// when the set of shapes with geometry changes.
 	uint32_t signature = 0;
 	for (const ShapeEntry &entry : shapes) {
-		if (entry.geometry_type) {
+		if (entry.geometry_type && entry.traced < 0) {
 			CollisionShape3D *cs = ObjectDB::get_instance<CollisionShape3D>(entry.shape_node);
 			signature = hash_murmur3_one_64(cs ? uint64_t(cs->get_shape()->get_instance_id()) : 0, signature);
 		}
@@ -1338,7 +1626,7 @@ void PXTGI3D::_rescan() {
 	HashMap<ObjectID, Vector2i> placed;
 	int cursor = 0; // in vec4s: where the next block goes (the same places as when it was built)
 	for (ShapeEntry &entry : shapes) {
-		if (!entry.geometry_type) {
+		if (!entry.geometry_type || entry.traced >= 0) {
 			continue;
 		}
 		CollisionShape3D *cs = ObjectDB::get_instance<CollisionShape3D>(entry.shape_node);
@@ -1372,6 +1660,21 @@ void PXTGI3D::_rescan() {
 	if (rebuild) {
 		geometry_version = ++versions;
 	}
+	// The traced meshes' trees and triangles, after the static geometry (rewritten in place every frame).
+	dynamic_geometry.clear();
+	for (ShapeEntry &entry : shapes) {
+		if (entry.traced < 0) {
+			continue;
+		}
+		TracedMesh &traced = traced_meshes[entry.traced];
+		traced.at = dynamic_geometry.size();
+		const int base = (geometry.size() + traced.at) / 4;
+		entry.geometry_a = base;
+		entry.geometry_b = base + traced.nodes.size() / 4;
+		dynamic_geometry.append_array(traced.nodes);
+		dynamic_geometry.append_array(traced.triangles);
+	}
+	dynamic_version = ++versions;
 }
 
 // Where shape p_index is and its local bounds (an emissive's box); false when it can't be traced.
@@ -1407,7 +1710,14 @@ bool PXTGI3D::_shape_frame(int p_index, Transform3D &r_to_world, float &r_type, 
 	float type = 0.0f;
 	Vector3 extents;
 	Transform3D to_world;
-	if (entry.mesh_proxy) {
+	if (entry.traced >= 0) {
+		// Its triangles are skinned into world space: its frame is the world's.
+		MeshInstance3D *mesh = ObjectDB::get_instance<MeshInstance3D>(entry.shape_node);
+		if (mesh == nullptr || !mesh->is_inside_tree() || !mesh->is_visible_in_tree()) {
+			return false;
+		}
+		type = 5.0f;
+	} else if (entry.mesh_proxy) {
 		MeshInstance3D *mesh = ObjectDB::get_instance<MeshInstance3D>(entry.shape_node);
 		if (mesh == nullptr || !mesh->is_inside_tree() || !mesh->is_visible_in_tree() || mesh->get_mesh().is_null()) {
 			return false;
@@ -1509,7 +1819,7 @@ bool PXTGI3D::_refresh_entry(int p_index, float *r_out, AABB &r_bounds) {
 	}
 	const Transform3D to_world = entry.in_body;
 	_pack_entry(p_index, to_world, entry.type, entry.extents, r_out, r_bounds);
-	if (!entry.mesh_proxy) {
+	if (!entry.mesh_proxy && entry.traced < 0) {
 		const Node3D *body = ObjectDB::get_instance<CollisionShape3D>(entry.shape_node)->get_parent_node_3d();
 		if (body) {
 			entry.in_body = body->get_global_transform().affine_inverse() * to_world;
@@ -1542,6 +1852,23 @@ void PXTGI3D::_update_primitives(PhysXGIEffect::Snapshot &r_snapshot) {
 		const uint32_t before = shape_signature;
 		_rescan();
 		rebuild = shape_signature != before;
+	}
+	// The traced meshes in this frame's pose, in place in their part of the geometry (its own upload); a mesh not drawn
+	// keeps its last pose, and its shape goes untraced.
+	bool skinned = false;
+	for (ShapeEntry &entry : shapes) {
+		if (entry.traced < 0) {
+			continue;
+		}
+		TracedMesh &traced = traced_meshes[entry.traced];
+		float *nodes = dynamic_geometry.ptrw() + traced.at;
+		if (_skin_traced(traced, nodes, nodes + traced.nodes.size())) {
+			entry.local_bounds = traced.bounds;
+			skinned = true;
+		}
+	}
+	if (skinned) {
+		dynamic_version = ++versions;
 	}
 	const int n = shapes.size();
 	LocalVector<int> changed;
@@ -1610,6 +1937,13 @@ void PXTGI3D::_update_primitives(PhysXGIEffect::Snapshot &r_snapshot) {
 			for (int i = 0; i < n; i++) {
 				entry_valid[i] = _refresh_entry(i, &entry_floats[i * PF], entry_bounds[i]);
 			}
+		}
+	}
+	// A traced mesh's record stays the same as it moves (its triangles are in world space): only its bounds change.
+	for (int i = 0; i < n; i++) {
+		if (shapes[i].traced >= 0 && entry_valid[i] && entry_bounds[i] != shapes[i].local_bounds) {
+			entry_bounds[i] = shapes[i].local_bounds;
+			changed.push_back(i);
 		}
 	}
 	// A refit keeps the grouping of the last build: as a pile tumbles, its boxes loosen and overlap and every ray walks
@@ -1788,6 +2122,8 @@ void PXTGI3D::_publish() {
 	}
 	s.geometry = geometry;
 	s.geometry_version = geometry_version;
+	s.dynamic_geometry = dynamic_geometry;
+	s.dynamic_version = dynamic_version;
 
 	// The sun: the brightest directional light Godot draws on surfaces (a hidden one, or a sky-only moon, isn't).
 	s.sun_color = Color(0, 0, 0);

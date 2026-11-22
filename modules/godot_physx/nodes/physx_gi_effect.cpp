@@ -242,6 +242,14 @@ layout(std430, set = 0, binding = 10) restrict readonly buffer Geometry {
 }
 geo;
 
+// The color of the triangle the last trace hit, plus 1 (a traced skinned mesh's triangles carry their own); zero when
+// it hit something else, or a triangle without one (its shape's albedo).
+vec3 traced_albedo = vec3(0.0);
+
+vec3 triangle_albedo(int tris, int k) {
+	return vec3(geo.v[tris + k * 3].w, geo.v[tris + k * 3 + 1].w, geo.v[tris + k * 3 + 2].w);
+}
+
 // Where a local ray enters a mesh tree node's box (1e30: it misses it, or only beyond best).
 float mesh_box_entry(vec3 o, vec3 inv, int at, float best) {
 	vec3 t0 = (geo.v[at].xyz - o) * inv;
@@ -315,6 +323,7 @@ bool hit_mesh(int nodes, int tris, vec3 o, vec3 d, inout float t, out vec3 n) {
 					t = th;
 					n = cross(e1, e2);
 					found = true;
+					traced_albedo = triangle_albedo(tris, k);
 				}
 			}
 			}
@@ -469,6 +478,9 @@ bool hit_primitive(Primitive q, vec3 o, vec3 d, inout float best, out vec3 norma
 		n = lo + ld * t;
 	}
 	best = t;
+	if (type != 5) {
+		traced_albedo = vec3(0.0);
+	}
 	// Local to world for a normal: the transpose of the world-to-local rows.
 	normal = normalize(n.x * q.r0.xyz + n.y * q.r1.xyz + n.z * q.r2.xyz);
 	return true;
@@ -595,6 +607,7 @@ int walk_world(vec3 o, vec3 d, inout float t, out vec3 normal, bool any_hit) {
 					Primitive q = prims.p[mesh];
 					normal = normalize(n.x * q.r0.xyz + n.y * q.r1.xyz + n.z * q.r2.xyz);
 					hit = mesh;
+					traced_albedo = triangle_albedo(mesh_tris, k);
 					if (any_hit) {
 						return hit;
 					}
@@ -626,6 +639,7 @@ int walk_world(vec3 o, vec3 d, inout float t, out vec3 normal, bool any_hit) {
 					if (hit_primitive(prims.p[i], o, d, t, n)) {
 						hit = i;
 						normal = n;
+						traced_albedo = vec3(0.0);
 						if (any_hit) {
 							return hit;
 						}
@@ -978,6 +992,8 @@ bool in_glow(int hit, vec3 x) {
 }
 
 vec3 world_light(vec3 x, vec3 n, int hit, sampler2D depth_tex, sampler2D color_tex, bool from_pixels, bool with_glow, bool sharp) {
+	// The hit triangle's own color, if it has one (read before any shadow ray traces again).
+	vec3 triangle = traced_albedo;
 	// Without with_glow only the emissives sampled directly go without their glow here (it would count them twice);
 	// every other one glows as it is hit. Only where on the shape its glow is: a pot's light strip, not the pot.
 	bool glowing_here = prims.p[hit].emission.rgb != vec3(0.0) && in_glow(hit, x);
@@ -1007,7 +1023,7 @@ vec3 world_light(vec3 x, vec3 n, int hit, sampler2D depth_tex, sampler2D color_t
 		}
 	}
 #endif
-	vec3 albedo = prims.p[hit].albedo.rgb;
+	vec3 albedo = triangle.x > 0.5 ? triangle - 1.0 : prims.p[hit].albedo.rgb;
 	vec3 glow = glows && glowing_here ? prims.p[hit].emission.rgb * f.sun_color.w : vec3(0.0);
 	if (f.cache.z != 0u) {
 		bool claimed;
@@ -2681,18 +2697,29 @@ void PhysXGIEffect::_render(int p_callback_type, const RenderData *p_render_data
 	if (primitives_uploaded == UINT64_MAX) {
 		primitives_uploaded = s.primitives_version;
 	}
-	if (s.geometry_version != geometry_uploaded || geometry_buffer.is_null()) {
+	// The geometry, and after it the traced meshes' part: the whole buffer made again when the geometry changes (or
+	// the traced part's size does), else only the traced part rewritten when it changes (every frame they move).
+	if (s.geometry_version != geometry_uploaded || geometry_buffer.is_null() || s.geometry.size() != geometry_static_floats || s.dynamic_geometry.size() != geometry_dynamic_floats) {
 		if (geometry_buffer.is_valid()) {
 			rd->free_rid(geometry_buffer);
 		}
 		Vector<uint8_t> bytes;
-		bytes.resize(MAX(s.geometry.size(), 4) * sizeof(float));
+		bytes.resize(MAX(s.geometry.size() + s.dynamic_geometry.size(), 4) * sizeof(float));
 		bytes.fill(0);
 		if (s.geometry.size() > 0) {
 			memcpy(bytes.ptrw(), s.geometry.ptr(), s.geometry.size() * sizeof(float));
 		}
+		if (s.dynamic_geometry.size() > 0) {
+			memcpy(bytes.ptrw() + s.geometry.size() * sizeof(float), s.dynamic_geometry.ptr(), s.dynamic_geometry.size() * sizeof(float));
+		}
 		geometry_buffer = rd->storage_buffer_create(bytes.size(), bytes);
 		geometry_uploaded = s.geometry_version;
+		dynamic_uploaded = s.dynamic_version;
+		geometry_static_floats = s.geometry.size();
+		geometry_dynamic_floats = s.dynamic_geometry.size();
+	} else if (s.dynamic_version != dynamic_uploaded && s.dynamic_geometry.size() > 0) {
+		rd->buffer_update(geometry_buffer, s.geometry.size() * sizeof(float), s.dynamic_geometry.size() * sizeof(float), s.dynamic_geometry.ptr());
+		dynamic_uploaded = s.dynamic_version;
 	}
 
 	auto sampled = [&](int p_binding, const RID &p_sampler, const RID &p_texture) {

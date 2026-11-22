@@ -1041,6 +1041,36 @@ vec3 world_light(vec3 x, vec3 n, int hit, sampler2D depth_tex, sampler2D color_t
 #endif
 	vec3 albedo = triangle.x > 0.5 ? triangle - 1.0 : prims.p[hit].albedo.rgb;
 	vec3 glow = glows && glowing_here ? prims.p[hit].emission.rgb * f.sun_color.w : vec3(0.0);
+	if (prims.p[hit].glow_hi.w > 0.5 && f.cache.z != 0u) {
+		// A traced skinned mesh moves through the cache's cells: one at its surface is fresh (no bounce light yet)
+		// where it has just moved to, and inside it once it moves on, a dark patch crossing it as it walks. Its bounce
+		// light comes from cells out in the open in front of it (more than a cell's blend away), holding the light
+		// arriving there (claimed white): true whatever passes by.
+		vec3 xc = x + n * 0.4;
+		bool claimed;
+		int slot = cache_slot(xc, n, from_pixels, claimed);
+		if (slot >= 0) {
+			if (claimed) {
+				cells.c[slot].pos = vec4(xc, uintBitsToFloat(f.cache.x));
+				cells.c[slot].normal = vec4(n, 0.0);
+				cells.c[slot].albedo = vec4(1.0, 1.0, 1.0, 0.0);
+				cells.c[slot].incoming = vec4(0.0);
+			} else if (from_pixels) {
+				cells.c[slot].pos.w = uintBitsToFloat(f.cache.x);
+			}
+		}
+#ifdef PROBE_SOURCES
+		bool lit_here = sharp && mirror_hit;
+#else
+		bool lit_here = sharp;
+#endif
+		if (lit_here) {
+			return glow + albedo * (direct_light(x, n) + smooth_cache(xc, n, false));
+		}
+		// Elsewhere the cells' light leaving (white: the light arriving there, direct light included).
+		vec3 arriving = smooth_cache(xc, n, true);
+		return glow + albedo * (arriving != vec3(0.0) ? arriving : direct_light(x, n));
+	}
 	if (f.cache.z != 0u) {
 		bool claimed;
 		int slot = cache_slot(x, n, from_pixels, claimed);

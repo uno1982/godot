@@ -62,6 +62,7 @@ void PhysXChunkEmitter3D::_apply_chunk_mesh() {
 		m = default_chunk_mesh;
 	}
 	RenderingServer::get_singleton()->multimesh_set_mesh(multimesh, m->get_rid());
+	multimesh_has_mesh = true;
 }
 
 void PhysXChunkEmitter3D::set_chunk_mesh(const Ref<Mesh> &p_v) {
@@ -70,8 +71,10 @@ void PhysXChunkEmitter3D::set_chunk_mesh(const Ref<Mesh> &p_v) {
 }
 
 void PhysXChunkEmitter3D::_ensure_multimesh() {
+	// Called on every burst and every emitting tick: only setters here, no RenderingServer getters (a getter makes the
+	// main thread wait for the render thread when rendering runs on its own thread).
 	RenderingServer *rs = RenderingServer::get_singleton();
-	if (rs->multimesh_get_mesh(multimesh).is_null()) {
+	if (!multimesh_has_mesh) {
 		_apply_chunk_mesh();
 	}
 	if (multimesh_capacity != max_active) {

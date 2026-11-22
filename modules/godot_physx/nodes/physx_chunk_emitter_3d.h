@@ -108,6 +108,9 @@ private:
 	AABB cached_aabb = AABB(Vector3(-0.5, -0.5, -0.5), Vector3(1, 1, 1));
 	bool inside_world = false;
 	int multimesh_capacity = 0;
+	// Set once _apply_chunk_mesh() has given the multimesh a mesh. Checked instead of asking the RenderingServer
+	// (multimesh_get_mesh waits for the render thread when rendering runs on its own thread).
+	bool multimesh_has_mesh = false;
 
 	Ref<Mesh> chunk_mesh; // if unset, a unit BoxMesh (or sphere, matching chunk_shape) is used
 	Ref<Mesh> default_chunk_mesh;

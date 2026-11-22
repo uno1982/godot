@@ -133,5 +133,22 @@
 				Returns the RID of the joint between [param bone] and its parent bone, for the [code]joint_*[/code] drive calls. Empty for a bone without one: the root bone, or [constant PhysicalBone3D.JOINT_TYPE_NONE]. The joint exists once the bone is in the tree; the RID stays the same, and keeps its drive settings, when the bone's joint properties change.
 			</description>
 		</method>
+		<method name="space_get_step_stats" qualifiers="static">
+			<return type="Dictionary" />
+			<param index="0" name="space" type="RID" />
+			<description>
+				Returns what the last physics step of [param space] (for example [code]get_world_3d().space[/code]) cost and did, to find which stage of a slow step takes the time. Reading it from [method Node._physics_process] sees every step: it runs before each one, so it reads the step before.
+				Times, in microseconds, by stage of the step: [code]step_usec[/code] (the whole step, the next six together), [code]pre_solve_usec[/code] (force integration callbacks, constant forces, separation rays), [code]area_overrides_usec[/code] (area gravity, damping and wind), [code]area_overlaps_usec[/code] (area-to-area overlaps), [code]simulate_usec[/code] (PhysX applying the scene changes made since the last step, such as added bodies, and starting the solve), [code]fetch_results_usec[/code] (waiting for the solve and its contact reports), [code]sync_back_usec[/code] (moved bodies, fluids, cloth and soft bodies read back), and [code]callbacks_usec[/code] (body state and area signals sent after the step, the nodes' and scripts' handlers included).
+				Counts from the module: [code]actors_added[/code] and [code]actors_removed[/code] (body and area actors that entered or left the scene before the step; a body whose shapes or mode change is removed and added again), [code]synced_bodies[/code] (bodies whose new state went to their node), [code]bodies[/code] and [code]areas[/code] (all in the space).
+				PhysX's own statistics of the step: [code]active_dynamic_bodies[/code], [code]active_kinematic_bodies[/code], [code]dynamic_bodies[/code], [code]kinematic_bodies[/code], [code]static_bodies[/code], [code]active_constraints[/code] (joints and the like), [code]aggregates[/code], [code]broadphase_adds[/code] and [code]broadphase_removes[/code] (bounds that entered or left the broad phase), [code]contact_pairs[/code] (shape pairs the narrow phase processed), [code]contact_pairs_cache_hits[/code], [code]contact_pairs_touching[/code], [code]new_pairs[/code] and [code]lost_pairs[/code] (broad-phase pairs found and lost), [code]new_touches[/code] and [code]lost_touches[/code], [code]trigger_pairs[/code], [code]solver_partitions[/code], [code]axis_solver_constraints[/code]. [code]gpu_dynamics[/code] is [code]true[/code] when the space simulates on the GPU ([code]physics/physx_3d/simulation/gpu_dynamics[/code]): the narrow phase then runs on the device, and the [code]contact_pairs*[/code] counts only cover the pairs it leaves to the CPU.
+				[codeblock]
+				func _physics_process(_delta):
+				    var stats = PhysX.space_get_step_stats(get_world_3d().space)
+				    if stats.step_usec > 5000:
+				        print(stats)
+				[/codeblock]
+				Gathering these costs the step nothing measurable: PhysX keeps its statistics in every build, and the module only reads the clock between stages. The stages are also profiler zones named [code]PhysX: ...[/code] in an engine built with a profiler (Tracy or Perfetto). PhysX's own internal zones (broad phase, narrow phase, solver) are left out of the release PhysX libraries the module links.
+			</description>
+		</method>
 	</methods>
 </class>

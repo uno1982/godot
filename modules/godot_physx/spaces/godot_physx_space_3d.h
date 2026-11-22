@@ -35,6 +35,7 @@
 #include "core/templates/hash_set.h"
 #include "core/templates/local_vector.h"
 #include "core/templates/rid.h"
+#include "core/variant/dictionary.h"
 #include "servers/physics_3d/physics_server_3d.h"
 
 namespace physx {
@@ -94,6 +95,34 @@ class GodotPhysXSpace3D {
 	HashSet<GodotPhysXBody3D *> area_damped_bodies;
 
 public:
+	// What the last step cost, by stage, for PhysX.space_get_step_stats(). Timed with a handful of clock reads per step;
+	// the actor counts are bumped where a body or area actor enters or leaves the scene.
+	struct StepStats {
+		uint64_t step_usec = 0; // the whole of step(), the stages below together
+		uint64_t pre_solve_usec = 0; // force integration callbacks, constant forces, separation rays, motor wakes
+		uint64_t area_overrides_usec = 0; // area gravity / damping / wind onto bodies
+		uint64_t area_overlaps_usec = 0; // area-vs-area overlap polls
+		uint64_t simulate_usec = 0; // PxScene::simulate(): flushing scene changes, starting the step's tasks
+		uint64_t fetch_results_usec = 0; // waiting for the solve, contact reports
+		uint64_t sync_back_usec = 0; // moved bodies, fluids, cloth, soft bodies pulled back
+		uint64_t callbacks_usec = 0; // call_queries() after the step: body state and area events (nodes and scripts)
+		uint32_t actors_added = 0; // body / area actors that entered the scene for this step
+		uint32_t actors_removed = 0; // ... and left it
+		uint32_t synced_bodies = 0; // bodies whose new state went to their node
+	};
+
+private:
+	StepStats step_stats;
+	uint32_t pending_actors_added = 0;
+	uint32_t pending_actors_removed = 0;
+
+public:
+	void count_actor_added() { pending_actors_added++; }
+	void count_actor_removed() { pending_actors_removed++; }
+	const StepStats &get_step_stats() const { return step_stats; }
+	// The last step's stats plus PhysX's own simulation statistics; call on the physics thread, between steps.
+	Dictionary get_step_stats_dictionary() const;
+
 	// The bodies PhysX reported moving in the last step (eENABLE_ACTIVE_ACTORS): what the module's GI refreshes.
 	const HashSet<GodotPhysXBody3D *> &get_awake_bodies() const { return awake_bodies; }
 

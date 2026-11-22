@@ -30,14 +30,13 @@
 
 #include "godot_physx_body_3d.h"
 
-#include "godot_physx_material.h"
-
 #include "../godot_physx_conversions.h"
 #include "../godot_physx_project_settings.h"
 #include "../joints/godot_physx_joint_3d.h"
 #include "../shapes/godot_physx_shape_3d.h"
 #include "../spaces/godot_physx_direct_state_3d.h"
 #include "../spaces/godot_physx_space_3d.h"
+#include "godot_physx_material.h"
 
 #include <PxPhysicsAPI.h>
 
@@ -97,6 +96,7 @@ void GodotPhysXBody3D::_destroy_actor() {
 	}
 	if (space && space->get_px_scene()) {
 		space->get_px_scene()->removeActor(*px_actor);
+		space->count_actor_removed();
 	}
 	px_actor->release();
 	px_actor = nullptr;
@@ -282,6 +282,7 @@ void GodotPhysXBody3D::_build_actor() {
 	_apply_solver_iterations();
 
 	scene->addActor(*px_actor);
+	space->count_actor_added();
 	_gravity_scale_changed();
 
 	// The actor pointer changed; any joints referencing this body must be
@@ -1252,7 +1253,7 @@ Vector3 GodotPhysXBody3D::get_velocity_at_position(const Vector3 &p_position) co
 	// Kinematic bodies included: PhysX derives their velocity from the last
 	// kinematic target, which is what a CharacterBody3D standing on a moving
 	// platform needs.
-	// The centre of mass from the actor's own pose: during a contact report body_transform is still last step's.
+	// The center of mass from the actor's own pose: during a contact report body_transform is still last step's.
 	const PxRigidActor *actor = _state_actor();
 	const PxRigidBody *rb = actor ? actor->is<PxRigidBody>() : nullptr;
 	const Vector3 com = rb ? to_godot(actor->getGlobalPose().transform(rb->getCMassLocalPose().p)) : body_transform.origin + get_center_of_mass_relative();

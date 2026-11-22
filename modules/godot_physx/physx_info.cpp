@@ -33,6 +33,7 @@
 #include "godot_physx_server_3d.h"
 #include "joints/godot_physx_joint_3d.h"
 #include "objects/godot_physx_body_3d.h"
+#include "spaces/godot_physx_space_3d.h"
 
 #include "core/object/class_db.h"
 #include "scene/3d/physics/physical_bone_3d.h"
@@ -45,6 +46,19 @@ bool PhysX::is_gpu_available() {
 String PhysX::get_gpu_device_name() {
 	const GodotPhysXServer3D *server = GodotPhysXServer3D::get_singleton();
 	return server != nullptr ? server->get_gpu_device_name() : String();
+}
+
+Dictionary PhysX::space_get_step_stats(const RID &p_space) {
+	ERR_FAIL_NULL_V_MSG(GodotPhysXServer3D::get_singleton(), Dictionary(), "PhysX: PhysX is not the active physics engine.");
+	// Read on the physics thread, between steps: the scene's statistics are only valid there.
+	Dictionary stats;
+	GodotPhysXServer3D::run_on_physics_thread([&]() {
+		const GodotPhysXSpace3D *space = GodotPhysXServer3D::get_singleton()->get_space(p_space);
+		ERR_FAIL_NULL_MSG(space, "PhysX: not a space RID.");
+		stats = space->get_step_stats_dictionary();
+	},
+			true);
+	return stats;
 }
 
 // The joint a drive call acts on, looked up where the server may touch it (the calls run through
@@ -153,6 +167,7 @@ RID PhysX::physical_bone_get_joint(PhysicalBone3D *p_bone) {
 void PhysX::_bind_methods() {
 	ClassDB::bind_static_method("PhysX", D_METHOD("is_gpu_available"), &PhysX::is_gpu_available);
 	ClassDB::bind_static_method("PhysX", D_METHOD("get_gpu_device_name"), &PhysX::get_gpu_device_name);
+	ClassDB::bind_static_method("PhysX", D_METHOD("space_get_step_stats", "space"), &PhysX::space_get_step_stats);
 
 	ClassDB::bind_static_method("PhysX", D_METHOD("joint_set_slerp_drive", "joint", "enabled", "stiffness", "damping", "torque_limit"), &PhysX::joint_set_slerp_drive, DEFVAL(0.0), DEFVAL(0.0), DEFVAL(Math::INF));
 	ClassDB::bind_static_method("PhysX", D_METHOD("joint_is_slerp_drive_enabled", "joint"), &PhysX::joint_is_slerp_drive_enabled);

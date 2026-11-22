@@ -60,6 +60,7 @@ void GodotPhysXArea3D::_destroy_actor() {
 	_release_all_pairs();
 	if (space && space->get_px_scene()) {
 		space->get_px_scene()->removeActor(*px_actor);
+		space->count_actor_removed();
 	}
 	px_actor->release();
 	px_actor = nullptr;
@@ -178,7 +179,7 @@ void GodotPhysXArea3D::_build_actor() {
 	ERR_FAIL_NULL(scene);
 	ERR_FAIL_NULL(space->get_default_material());
 
-	// Kinematic, not static: PhysX never pairs two statics, so a static area could never see a StaticBody3D (Godot
+	// Kinematic, not static: PhysX never pairs two static actors, so a static area could never see a StaticBody3D (Godot
 	// Physics and Jolt do), and an area that moves every step (a hitbox) is a static the static pruner keeps
 	// rebuilding. The scene keeps kinematic-static / kinematic-kinematic pairs for the filter shader, which lets only
 	// an area's triggers through.
@@ -203,6 +204,7 @@ void GodotPhysXArea3D::_build_actor() {
 
 	_apply_filter_data();
 	scene->addActor(*px_actor);
+	space->count_actor_added();
 }
 
 void GodotPhysXArea3D::_apply_filter_data() {

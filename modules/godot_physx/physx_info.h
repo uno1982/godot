@@ -33,11 +33,12 @@
 #include "core/math/transform_3d.h"
 #include "core/object/object.h"
 #include "core/templates/rid.h"
+#include "core/variant/dictionary.h"
 
 class PhysicalBone3D;
 
 // Script-side access to the PhysX backend itself (not tied to any node): PhysX.is_gpu_available(),
-// PhysX.get_gpu_device_name(), and the joint drives Godot's API has no room for (active ragdolls).
+// PhysX.get_gpu_device_name(), a space's step stats, and the joint drives Godot's API has no room for (active ragdolls).
 class PhysX : public Object {
 	GDCLASS(PhysX, Object);
 
@@ -47,6 +48,7 @@ protected:
 public:
 	static bool is_gpu_available();
 	static String get_gpu_device_name();
+	static Dictionary space_get_step_stats(const RID &p_space);
 
 	static void joint_set_slerp_drive(const RID &p_joint, bool p_enabled, real_t p_stiffness, real_t p_damping, real_t p_torque_limit);
 	static bool joint_is_slerp_drive_enabled(const RID &p_joint);

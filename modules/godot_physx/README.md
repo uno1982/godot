@@ -401,14 +401,17 @@ multiple bounces.
   Converted materials can carry intensities far above 1 that their source
   engine clamps.
 - **Characters** off screen (a character seen in a mirror, its shadow from a
-  light behind the camera): a character's collision shapes are its physical
-  bones' capsules, which follow the animation while it isn't limp, so PXTGI
-  sees a figure of capsules (give each bone a `pxtgi_albedo`: a bone isn't
-  next to the character's mesh, so it would bounce as gray). To trace the
-  character as itself, give its skinned `MeshInstance3D` a `pxtgi_traced`
-  of `true` in its metadata (Inspector > Metadata; on a mesh inside an
-  imported model, turn on Editable Children first): PXTGI then traces that
-  mesh's own triangles, skinned to its pose every frame. Each triangle has
+  light behind the camera): by default PXTGI sees a character only through
+  its collision shapes, which for a character with physical bones (a ragdoll)
+  are the bones' capsules, following the animation while it isn't limp, in
+  neutral gray (a bone isn't next to the character's mesh, so it takes no
+  color from it). They shadow and block bounce light roughly; a character
+  without physical bones isn't seen at all. To trace the character as
+  itself, give its skinned `MeshInstance3D` a `pxtgi_traced` of `true` in
+  its metadata (Inspector > Metadata; on a mesh inside an imported model,
+  turn on Editable Children first): PXTGI then traces that mesh's own
+  triangles, skinned to its pose every frame, and leaves out the capsules of
+  that mesh's skeleton (the physics still uses them). Each triangle has
   its surface's color (its albedo color times its albedo texture at the
   triangle's middle, or a `pxtgi_albedo` tag), so a mirror shows the
   character's shape and colors, not its texture's fine detail or normal

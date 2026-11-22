@@ -49,6 +49,7 @@
 #include "scene/3d/physics/area_3d.h"
 #include "scene/3d/physics/collision_object_3d.h"
 #include "scene/3d/physics/collision_shape_3d.h"
+#include "scene/3d/physics/physical_bone_3d.h"
 #include "scene/3d/reflection_probe.h"
 #include "scene/3d/skeleton_3d.h"
 #include "scene/main/scene_tree.h"
@@ -1489,6 +1490,17 @@ void PXTGI3D::_rescan() {
 	entry_of.clear();
 	traced_meshes.clear();
 	traced_nodes.clear();
+	// The skeletons of the meshes traced as their triangles: their physical bones' capsules are left out (the mesh
+	// stands for the character; the capsules would poke through it).
+	HashSet<ObjectID> traced_skeletons;
+	for (const ObjectID &id : tracked) {
+		MeshInstance3D *mesh = ObjectDB::get_instance<MeshInstance3D>(id);
+		if (mesh != nullptr && wants_traced(mesh)) {
+			if (Skeleton3D *skeleton = Object::cast_to<Skeleton3D>(mesh->get_node_or_null(mesh->get_skeleton_path()))) {
+				traced_skeletons.insert(skeleton->get_instance_id());
+			}
+		}
+	}
 	for (const ObjectID &id : tracked) {
 		Node *n = ObjectDB::get_instance<Node>(id);
 		if (n == nullptr) {
@@ -1546,6 +1558,12 @@ void PXTGI3D::_rescan() {
 			entry.mesh_proxy = true;
 		} else {
 			CollisionShape3D *cs = Object::cast_to<CollisionShape3D>(n);
+			if (const PhysicalBone3D *bone = Object::cast_to<PhysicalBone3D>(cs->get_parent())) {
+				const Skeleton3D *skeleton = bone->get_skeleton();
+				if (skeleton != nullptr && traced_skeletons.has(skeleton->get_instance_id())) {
+					continue;
+				}
+			}
 			entry.fixed = Object::cast_to<StaticBody3D>(cs->get_parent()) && !Object::cast_to<AnimatableBody3D>(cs->get_parent());
 			if (cs->get_shape().is_valid()) {
 				entry.shape_resource = cs->get_shape()->get_instance_id();

@@ -398,25 +398,45 @@ multiple bounces.
   cost nothing in a game.
 - A material's `AO` output above 1 multiplies all of its indirect light
   (PXTGI's included) instead of darkening it; keep it within 0–1.
+  Converted materials can carry intensities far above 1 that their source
+  engine clamps.
 - **Characters** off screen (a character seen in a mirror, its shadow from a
   light behind the camera): a character's collision shapes are its physical
   bones' capsules, which follow the animation while it isn't limp, so PXTGI
   sees a figure of capsules (give each bone a `pxtgi_albedo`: a bone isn't
   next to the character's mesh, so it would bounce as gray). To trace the
   character as itself, give its skinned `MeshInstance3D` a `pxtgi_traced`
-  of `true` in its metadata: PXTGI then traces that mesh's own triangles,
-  the coarsest of its LODs with about 3000 (or give `pxtgi_traced` the
-  number of triangles to use), skinned to its pose every frame. Each
-  triangle has its surface's color, by its albedo texture at that triangle,
-  so a mirror shows the character's shape and colors (not its texture's
-  detail or normal maps). It also shadows and blocks bounce light by its
-  shape. The mesh is read once (its LODs, vertices, bone weights, textures),
-  then each frame its vertices are skinned on the CPU and only its part of
-  the geometry is uploaded; tracing it costs GPU time where rays reach it
-  (about 0.2 ms with a character filling a large mirror on an RTX 5070).
+  of `true` in its metadata (Inspector > Metadata; on a mesh inside an
+  imported model, turn on Editable Children first): PXTGI then traces that
+  mesh's own triangles, skinned to its pose every frame. Each triangle has
+  its surface's color (its albedo color times its albedo texture at the
+  triangle's middle, or a `pxtgi_albedo` tag), so a mirror shows the
+  character's shape and colors, not its texture's fine detail or normal
+  maps. It also shadows and blocks bounce light by its shape. Reflections
+  don't take the screen's view inside its bounds (the side of the character
+  the camera sees, its back from a camera behind it): they trace the mesh
+  there, so a mirror in front of a third-person character shows its front.
   Its glow, if it has one, isn't traced.
-  Converted materials can carry intensities far above 1 that their source
-  engine clamps.
+- Which triangles a traced mesh uses: its own **LODs**, the ones Godot's
+  importer generates (the Import dock's *Generate LODs*, on by default for
+  meshes in glTF, FBX and other scenes). PXTGI doesn't simplify meshes
+  itself. For each surface it takes the coarsest LOD that still has that
+  surface's share of a triangle budget: about 3000 for `true`, or the number
+  given as `pxtgi_traced` (an int, e.g. `1500`); if every LOD has fewer, it
+  uses the full surface. A LOD only drops triangles, so the vertices, bone
+  weights and UVs stay the mesh's own and the skinning is exact. A mesh
+  with no LODs (imported with Generate LODs off, or built in code) is traced
+  at full detail: correct, but more triangles to trace and more vertices to
+  skin each frame. The demo's mannequin has 13744 triangles; a budget of
+  1000 lands on a 1716-triangle LOD, about the same shape in a mirror.
+- Cost: the mesh is read once (its LODs, vertices, bone weights,
+  textures; a GPU readback, so a brief hitch when it is first tagged), then
+  each frame its vertices are skinned on the CPU and only its part of the
+  geometry is uploaded. Tracing it costs GPU time where rays reach it (on
+  an RTX 5070, about 0.3 ms more than its capsules with the character
+  filling a large mirror, of which about 0.08 ms is tracing triangle meshes
+  at all, which a scene with trimesh colliders pays already); the triangle
+  budget changes that little.
 - Lights: the sun is the brightest visible `DirectionalLight3D` that lights
   surfaces; of omni and spot lights, the 8 of each Godot draws that come
   nearest the camera, chosen every frame. Nodes added or removed are picked

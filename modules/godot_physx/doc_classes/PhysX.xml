@@ -121,9 +121,9 @@
 			<param index="1" name="enabled" type="bool" />
 			<param index="2" name="stiffness" type="float" default="0.0" />
 			<param index="3" name="damping" type="float" default="0.0" />
-			<param index="4" name="torque_limit" type="float" default="inf" />
+			<param index="4" name="torque_limit" type="float" default="-1.0" />
 			<description>
-				Turns the joint's SLERP drive on or off: one spring that turns body B toward the drive target's rotation (see [method joint_set_drive_target]) along the shortest path, all three angles at once, with [param stiffness] (N m per radian), [param damping] (N m s per radian) and at most [param torque_limit] (N m). It replaces a Generic6DOF joint's per-axis angular springs and motors while on, and works within the joint's angular limits; a 6DOF axis without a valid limit range is freed, as for its springs. On a hinge it drives the hinge angle: the hinge is rebuilt as a PhysX D6 joint the first time, with the same limits and motor.
+				Turns the joint's SLERP drive on or off: one spring that turns body B toward the drive target's rotation (see [method joint_set_drive_target]) along the shortest path, all three angles at once, with [param stiffness] (N m per radian), [param damping] (N m s per radian) and at most [param torque_limit] (N m); a negative [param torque_limit] (the default) or [code]INF[/code] is no limit. It replaces a Generic6DOF joint's per-axis angular springs and motors while on, and works within the joint's angular limits; a 6DOF axis without a valid limit range is freed, as for its springs. On a hinge it drives the hinge angle: the hinge is rebuilt as a PhysX D6 joint the first time, with the same limits and motor.
 			</description>
 		</method>
 		<method name="physical_bone_get_joint" qualifiers="static">

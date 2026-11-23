@@ -169,7 +169,7 @@ void PhysX::_bind_methods() {
 	ClassDB::bind_static_method("PhysX", D_METHOD("get_gpu_device_name"), &PhysX::get_gpu_device_name);
 	ClassDB::bind_static_method("PhysX", D_METHOD("space_get_step_stats", "space"), &PhysX::space_get_step_stats);
 
-	ClassDB::bind_static_method("PhysX", D_METHOD("joint_set_slerp_drive", "joint", "enabled", "stiffness", "damping", "torque_limit"), &PhysX::joint_set_slerp_drive, DEFVAL(0.0), DEFVAL(0.0), DEFVAL(Math::INF));
+	ClassDB::bind_static_method("PhysX", D_METHOD("joint_set_slerp_drive", "joint", "enabled", "stiffness", "damping", "torque_limit"), &PhysX::joint_set_slerp_drive, DEFVAL(0.0), DEFVAL(0.0), DEFVAL(-1.0)); // -1: no limit (C# can't take an INF default)
 	ClassDB::bind_static_method("PhysX", D_METHOD("joint_is_slerp_drive_enabled", "joint"), &PhysX::joint_is_slerp_drive_enabled);
 	ClassDB::bind_static_method("PhysX", D_METHOD("joint_set_drive_acceleration", "joint", "enabled"), &PhysX::joint_set_drive_acceleration);
 	ClassDB::bind_static_method("PhysX", D_METHOD("joint_is_drive_acceleration", "joint"), &PhysX::joint_is_drive_acceleration);

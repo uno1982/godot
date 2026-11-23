@@ -25,6 +25,13 @@ that folder next to the exported game.
 Every binary must carry the commit being released (--commit, default HEAD): Godot embeds its build's
 commit hash, so a stale binary left in bin/ by an earlier build stops the packaging instead of being
 shipped. Leave out --windows-bin or --linux-bin to package one platform only.
+
+--mono packages the .NET build instead (module_mono_enabled=yes, then the C# glue and
+modules/mono/build_scripts/build_assemblies.py): the same archives with "-dotnet" in their names, the
+editor zips with the GodotSharp/ folder beside the editor (its C# assemblies and the NuGet packages a C#
+project restores from; Godot doesn't register them as a package source by itself, so users add one), and
+the templates for the "<engine>.<status>.mono" folder. Run the script once without and once with --mono
+into the same folder: SHA256SUMS.txt lists every archive there.
 """
 
 import argparse
@@ -107,7 +114,7 @@ class Archive:
         self.path = path
         self.zip = zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED, compresslevel=6)
 
-    def add(self, src, name, executable=False):
+    def add(self, src, name, executable=False, quiet=False):
         info = zipfile.ZipInfo.from_file(src, name)
         # Unix permissions, so the Linux binaries unzip executable. unzip only reads them from an entry made on
         # Unix, and zipfile marks entries written on Windows as MS-DOS ones.
@@ -117,7 +124,8 @@ class Archive:
         with open(src, "rb") as f, self.zip.open(info, "w") as out:
             while chunk := f.read(1 << 24):
                 out.write(chunk)
-        print(f"  {name}")
+        if not quiet:
+            print(f"  {name}")
 
     def add_text(self, name, text):
         info = zipfile.ZipInfo(name)
@@ -130,6 +138,16 @@ class Archive:
     def add_licenses(self, prefix=""):
         for name, src in LICENSES:
             self.add(require(os.path.join(ENGINE_DIR, src)), prefix + name)
+
+    def add_tree(self, src_dir, name):
+        """A folder and everything in it (the .NET editor's GodotSharp/), files in a stable order."""
+        for root, dirs, files in os.walk(src_dir):
+            dirs.sort()
+            for file in sorted(files):
+                src = os.path.join(root, file)
+                rel = os.path.relpath(src, src_dir).replace(os.sep, "/")
+                self.add(src, f"{name}/{rel}", quiet=True)
+        print(f"  {name}/ ({sum(len(f) for _, _, f in os.walk(src_dir))} files)")
 
     def close(self):
         self.zip.close()
@@ -150,32 +168,41 @@ def main():
     parser.add_argument("--linux-bin", help="bin/ of the Linux build")
     parser.add_argument("--commit", default="HEAD", help="the commit every binary must be built from (default HEAD)")
     parser.add_argument("--out", help="output folder (default bin/release/<version>)")
+    parser.add_argument(
+        "--mono",
+        action="store_true",
+        help="package the .NET build (module_mono_enabled=yes) instead of the standard one",
+    )
     args = parser.parse_args()
     if not args.windows_bin and not args.linux_bin:
         fail("give --windows-bin and/or --linux-bin")
 
     major, minor, patch, status = engine_version()
     engine = f"{major}.{minor}.{patch}" if patch else f"{major}.{minor}"
-    templates_version = f"{engine}.{status}"  # the export templates folder the editor looks in, e.g. 4.7.3.rc
+    # The export templates folder the editor looks in, e.g. 4.7.3.rc (a .NET editor: 4.7.3.rc.mono).
+    templates_version = f"{engine}.{status}" + (".mono" if args.mono else "")
     commit = resolve_commit(args.commit)
     prefix = f"godot-{engine}-physx-{args.version}"
+    variant = "-dotnet" if args.mono else ""
+    m = ".mono" if args.mono else ""  # in the binaries' names, e.g. godot.windows.editor.x86_64.mono.exe
     out = args.out or os.path.join(ENGINE_DIR, "bin", "release", args.version)
     os.makedirs(out, exist_ok=True)
     print(f"engine {templates_version}, commit {commit[:10]}, into {out}")
 
     win = args.windows_bin
     lin = args.linux_bin
-    win_editor = ["godot.windows.editor.x86_64.exe", "godot.windows.editor.x86_64.console.exe"]
+    win_editor = [f"godot.windows.editor.x86_64{m}.exe", f"godot.windows.editor.x86_64{m}.console.exe"]
+    lin_editor = f"godot.linuxbsd.editor.x86_64{m}"
     # (source in bin/, name in the templates folder)
     win_templates = [
-        ("godot.windows.template_release.x86_64.exe", "windows_release_x86_64.exe"),
-        ("godot.windows.template_release.x86_64.console.exe", "windows_release_x86_64_console.exe"),
-        ("godot.windows.template_debug.x86_64.exe", "windows_debug_x86_64.exe"),
-        ("godot.windows.template_debug.x86_64.console.exe", "windows_debug_x86_64_console.exe"),
+        (f"godot.windows.template_release.x86_64{m}.exe", "windows_release_x86_64.exe"),
+        (f"godot.windows.template_release.x86_64{m}.console.exe", "windows_release_x86_64_console.exe"),
+        (f"godot.windows.template_debug.x86_64{m}.exe", "windows_debug_x86_64.exe"),
+        (f"godot.windows.template_debug.x86_64{m}.console.exe", "windows_debug_x86_64_console.exe"),
     ]
     lin_templates = [
-        ("godot.linuxbsd.template_release.x86_64", "linux_release.x86_64"),
-        ("godot.linuxbsd.template_debug.x86_64", "linux_debug.x86_64"),
+        (f"godot.linuxbsd.template_release.x86_64{m}", "linux_release.x86_64"),
+        (f"godot.linuxbsd.template_debug.x86_64{m}", "linux_debug.x86_64"),
     ]
 
     # Check everything before writing anything.
@@ -185,36 +212,44 @@ def main():
         for name in [win_editor[0]] + [src for src, _ in win_templates if not src.endswith(".console.exe")]:
             check_commit(os.path.join(win, name), commit)
     if lin:
-        for name in ["godot.linuxbsd.editor.x86_64"] + LINUX_LIBS + [src for src, _ in lin_templates]:
+        for name in [lin_editor] + LINUX_LIBS + [src for src, _ in lin_templates]:
             require(os.path.join(lin, name))
-        for name in ["godot.linuxbsd.editor.x86_64"] + [src for src, _ in lin_templates]:
+        for name in [lin_editor] + [src for src, _ in lin_templates]:
             check_commit(os.path.join(lin, name), commit)
+    for b in [d for d in (win, lin) if d and args.mono]:
+        # The C# assemblies and NuGet packages the .NET editor needs beside it (build_assemblies.py's output).
+        if not os.path.isdir(os.path.join(b, "GodotSharp", "Api")):
+            fail(f"{b}: no GodotSharp/Api (run modules/mono/build_scripts/build_assemblies.py)")
     d3d12 = [name for name in D3D12_LIBS if win and os.path.isfile(os.path.join(win, name))]
 
     written = []
     if win:
-        path = os.path.join(out, f"{prefix}-windows-x86_64-editor.zip")
+        path = os.path.join(out, f"{prefix}-windows-x86_64{variant}-editor.zip")
         print(path)
         a = Archive(path)
         for name in win_editor + WINDOWS_LIBS + d3d12:
             a.add(os.path.join(win, name), name)
+        if args.mono:
+            a.add_tree(os.path.join(win, "GodotSharp"), "GodotSharp")
         a.add_licenses()
         a.close()
         written.append(path)
     if lin:
-        path = os.path.join(out, f"{prefix}-linux-x86_64-editor.zip")
+        path = os.path.join(out, f"{prefix}-linux-x86_64{variant}-editor.zip")
         print(path)
         a = Archive(path)
-        a.add(os.path.join(lin, "godot.linuxbsd.editor.x86_64"), "godot.linuxbsd.editor.x86_64", executable=True)
+        a.add(os.path.join(lin, lin_editor), lin_editor, executable=True)
         for name in LINUX_LIBS:
             a.add(os.path.join(lin, name), name, executable=True)
+        if args.mono:
+            a.add_tree(os.path.join(lin, "GodotSharp"), "GodotSharp")
         a.add_licenses()
         a.close()
         written.append(path)
 
     # One .tpz per platform: installing a second one adds to the same version folder (the editor doesn't clear it).
     if win:
-        path = os.path.join(out, f"{prefix}-windows-x86_64-export-templates.tpz")
+        path = os.path.join(out, f"{prefix}-windows-x86_64{variant}-export-templates.tpz")
         print(path)
         a = Archive(path)
         a.add_text("templates/version.txt", templates_version)
@@ -229,7 +264,7 @@ def main():
         a.close()
         written.append(path)
     if lin:
-        path = os.path.join(out, f"{prefix}-linux-x86_64-export-templates.tpz")
+        path = os.path.join(out, f"{prefix}-linux-x86_64{variant}-export-templates.tpz")
         print(path)
         a = Archive(path)
         a.add_text("templates/version.txt", templates_version)
@@ -241,13 +276,16 @@ def main():
         a.close()
         written.append(path)
 
+    # Every archive in the folder, so a standard run and a --mono run into the same folder give one complete list.
     sums = os.path.join(out, "SHA256SUMS.txt")
+    archives = sorted(f for f in os.listdir(out) if f.startswith(prefix) and f.endswith((".zip", ".tpz")))
     with open(sums, "w", encoding="utf-8", newline="\n") as f:
-        for p in written:
-            line = f"{sha256(p)}  {os.path.basename(p)}"
+        for name in archives:
+            p = os.path.join(out, name)
+            line = f"{sha256(p)}  {name}"
             f.write(line + "\n")
-            print(f"{line}  ({os.path.getsize(p) / (1 << 20):.0f} MB)")
-    print(f"done: {len(written)} archives + {os.path.basename(sums)}")
+            print(f"{line}  ({os.path.getsize(p) / (1 << 20):.0f} MB){'' if p in written else '  (earlier run)'}")
+    print(f"done: {len(written)} archives written, {os.path.basename(sums)} lists {len(archives)}")
 
 
 if __name__ == "__main__":

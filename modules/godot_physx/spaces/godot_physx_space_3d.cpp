@@ -544,12 +544,31 @@ void GodotPhysXSpace3D::update_area_role(GodotPhysXArea3D *p_area) {
 	}
 }
 
+void GodotPhysXSpace3D::register_area(GodotPhysXArea3D *p_area) {
+	areas.insert(p_area);
+	if (p_area->has_area_overlaps()) {
+		area_overlap_trackers.insert(p_area); // (records kept from before it left a space)
+	}
+	update_area_role(p_area);
+}
+
 void GodotPhysXSpace3D::unregister_area(GodotPhysXArea3D *p_area) {
 	areas.erase(p_area);
 	monitoring_areas.erase(p_area);
 	override_areas.erase(p_area);
-	for (GodotPhysXArea3D *area : areas) {
+	area_overlap_trackers.erase(p_area);
+	if (area_overlap_trackers.is_empty()) {
+		return;
+	}
+	LocalVector<GodotPhysXArea3D *> emptied;
+	for (GodotPhysXArea3D *area : area_overlap_trackers) {
 		area->area_removed(p_area);
+		if (!area->has_area_overlaps()) {
+			emptied.push_back(area);
+		}
+	}
+	for (GodotPhysXArea3D *area : emptied) {
+		area_overlap_trackers.erase(area);
 	}
 }
 
@@ -588,6 +607,11 @@ void GodotPhysXSpace3D::_detect_area_overlaps() {
 			if (other != area) {
 				area->poll_area_overlap(other);
 			}
+		}
+		if (area->has_area_overlaps()) {
+			area_overlap_trackers.insert(area);
+		} else {
+			area_overlap_trackers.erase(area);
 		}
 	}
 }

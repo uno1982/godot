@@ -282,6 +282,8 @@ public:
 	// Matches body_removed()'s precedent: drops the stale state without
 	// synthesizing an exit event for it.
 	void area_removed(GodotPhysXArea3D *p_other);
+	// Whether this area holds any area-overlap records (only those areas need area_removed()).
+	bool has_area_overlaps() const { return !touching_areas.is_empty(); }
 
 	// Called from flush_queries.
 	void call_queries();

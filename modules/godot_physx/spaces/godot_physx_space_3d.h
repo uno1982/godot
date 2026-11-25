@@ -82,6 +82,10 @@ class GodotPhysXSpace3D {
 	// off): with a monitor callback (their events, area-area polls) and with a gravity / damping / wind override.
 	HashSet<GodotPhysXArea3D *> monitoring_areas;
 	HashSet<GodotPhysXArea3D *> override_areas;
+	// The areas holding area-overlap records (has_area_overlaps()): only these are told when an area leaves (#39:
+	// telling every area made removing n areas O(n^2), 155 ms for 9,300). Kept by _detect_area_overlaps(), the only
+	// place records are added, and by unregister_area().
+	HashSet<GodotPhysXArea3D *> area_overlap_trackers;
 	HashSet<GodotPhysXParticleFluid3D *> fluids;
 	HashSet<GodotPhysXCloth3D *> cloths;
 	HashSet<GodotPhysXSoftBody3D *> soft_bodies;
@@ -230,10 +234,7 @@ public:
 		}
 	}
 
-	void register_area(GodotPhysXArea3D *p_area) {
-		areas.insert(p_area);
-		update_area_role(p_area);
-	}
+	void register_area(GodotPhysXArea3D *p_area);
 	// After an area's callbacks or overrides changed.
 	void update_area_role(GodotPhysXArea3D *p_area);
 	bool is_override_area(GodotPhysXArea3D *p_area) const { return override_areas.has(p_area); }

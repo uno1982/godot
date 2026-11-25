@@ -339,6 +339,14 @@ void GodotPhysXBody3D::set_space(GodotPhysXSpace3D *p_space) {
 	if (space == p_space) {
 		return;
 	}
+	// A body asleep when it leaves a space comes back asleep (as on Godot Physics and Jolt): the actor is rebuilt on
+	// the way back, and a new actor starts awake, so 2,500 resting props put back at once all woke and settled again.
+	// Out of a space, `sleeping` keeps the state (body_set_state can change it meanwhile).
+	if (PxRigidDynamic *dyn = px_actor ? px_actor->is<PxRigidDynamic>() : nullptr) {
+		if (dyn->getScene() && mode != PhysicsServer3D::BODY_MODE_KINEMATIC) {
+			sleeping = dyn->isSleeping();
+		}
+	}
 	_destroy_actor();
 	if (space) {
 		space->body_removed_from_areas(this);
@@ -360,6 +368,9 @@ void GodotPhysXBody3D::set_space(GodotPhysXSpace3D *p_space) {
 		}
 		_build_actor();
 		update_motor_driven();
+		if (sleeping && can_sleep && GodotPhysXProjectSettings::allow_sleep) {
+			set_sleep_state(true);
+		}
 	}
 }
 

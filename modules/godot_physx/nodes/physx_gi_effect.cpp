@@ -1521,6 +1521,30 @@ void main() {
 				vec4 was_light = texture(prev_accum, uv);
 				vec3 was_m = texture(prev_moments, uv).xyz;
 				if (!any(isnan(was_light)) && !any(isnan(was_m))) {
+					// The fraction of rays that hit (alpha) is kept to the range this frame's rays around the texel (on
+					// the same surface) show. Godot lets its own ambient light (the sky's, by default) through where
+					// rays miss: walking slowly from a room open to the sky into a closed tunnel, where every ray hits,
+					// the texels carried the room's fraction along, and the sky's share glowed on the tunnel's floor,
+					// following the camera and staying until the view turned away. Where rays do escape, their range
+					// is wide and the history keeps its average. A texel whose own rays hit as often as its history
+					// leaves its neighbors unread.
+					if (now.a != was_light.a) {
+						float fewest = 1.0;
+						float most = 0.0;
+						for (int y = -1; y <= 1; y++) {
+							for (int x = -1; x <= 1; x++) {
+								ivec2 q = clamp(px + ivec2(x, y), ivec2(0), f.sizes.zw - 1);
+								float qd = texelFetch(depth_tex, frame_pixel(q, f.sizes.zw), 0).r;
+								if (qd <= 0.0 || abs(linear_depth(qd, f.clip.x, f.clip.y) + p.z) > 0.05 * -p.z) {
+									continue;
+								}
+								float qa = texelFetch(trace_tex, q, 0).a;
+								fewest = min(fewest, qa);
+								most = max(most, qa);
+							}
+						}
+						was_light.a = clamp(was_light.a, fewest, most);
+					}
 					// A surface just uncovered takes its first frames at full weight, then settles to a long average.
 					float frames = min(was_m.z + 1.0, 32.0);
 					float alpha = max(1.0 / frames, 0.05);

@@ -1630,6 +1630,9 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   - NanoVDB (volume) emitters aren't supported;
   - creating a grid (a flow entering the scene) holds up the main thread for
     one frame, 65–91 ms measured ([#33](https://github.com/uno1982/godot/issues/33));
+  - it takes at most one step per rendered frame, so below 60 fps the gas
+    falls behind game time (at 8 fps on a low-end tablet, about a third as
+    fast);
   - Flow doesn't build on macOS.
 - **XR (stereo):** these are worked out once with the combined camera, not per
   eye, so they're wrong in a headset: `PXTGI3D`

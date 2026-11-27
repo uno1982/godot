@@ -253,19 +253,21 @@ On Linux the binary looks for the `.so` files next to itself (`SCsub` sets an
 
 ### Android (arm64, CPU only)
 
-Android games use the CPU PhysX SDK, built for Android with the NDK Godot's
-Android build uses: install the Android SDK, the NDK version
+Android games use the CPU PhysX SDK and Blast, built for Android with the NDK
+Godot's Android build uses: install the Android SDK, the NDK version
 `platform/android/detect.py` names and CMake + Ninja (the Android SDK
 manager's `cmake` package has both), set `ANDROID_HOME`, then:
 
 ```
-python modules/godot_physx/misc/build_physx.py --platform android --src <a separate PhysX checkout>
-scons platform=android target=template_debug   arch=arm64 physx_sdk=<printed path>
-scons platform=android target=template_release arch=arm64 physx_sdk=<printed path>
-cd platform/android/java && ./gradlew generateGodotTemplates
+python modules/godot_physx/misc/build_physx.py --platform android --blast --src <a separate PhysX checkout>
+scons platform=android target=template_debug   arch=arm64 physx_sdk=<printed path> blast_sdk=<printed path>
+scons platform=android target=template_release arch=arm64 physx_sdk=<printed path> blast_sdk=<printed path>
+cd platform/android/java && ./gradlew clean generateGodotTemplates
 ```
 
-The last step packs them into `bin/android_debug.apk`, `bin/android_release.apk`
+Blast's own build has no Android target, so `--blast` builds its four
+libraries with `misc/blast_android/CMakeLists.txt` instead (static, linked
+into the game). The last step packs the templates into `bin/android_debug.apk`, `bin/android_release.apk`
 and `bin/android_source.zip`. Point the Android export preset's **Custom
 Template → Debug / Release** at the two `.apk` files (or install them as this
 version's templates), and enable **Project Settings → Rendering → Textures →
@@ -274,15 +276,13 @@ linked into the game's library, so nothing else is shipped.
 
 Tested there (Android 15 emulator): rigid bodies, sleeping, joints, areas, ray
 casts, `PhysXVehicle3D` and `PhysXTank3D` on the Compatibility and Mobile
-renderers, and the MPM fluid on the Mobile renderer (Vulkan compute; it
-matched the desktop step for step). Other CPU-path features (character
-bodies, motorcycles, CPU cloth and soft bodies, the compositor effects) are
-built in but untried there. Not available: GPU dynamics and the PBD fluid
-(CUDA), Flow and the Alembic importer. Blast destruction isn't built for
-Android yet: NVIDIA's Blast build only targets Windows and Linux, though its
-runtime core is plain C++ (Wild Ox's Blast plugin for Unreal ships it for
-Android). Only
-`arm64` is built.
+renderers, the MPM fluid on the Mobile renderer (Vulkan compute; it matched
+the desktop step for step), and Blast: `PhysXBlastAuthoring.fracture_mesh` and
+`fracture_mesh_async` in the game, and a `PhysXDestructible3D` breaking into
+pieces. Other CPU-path features (character bodies, motorcycles, CPU cloth and
+soft bodies, the compositor effects) are built in but untried there. Not
+available: GPU dynamics and the PBD fluid (CUDA), Flow and the Alembic
+importer. Only `arm64` is built.
 
 ## Selecting the backend
 

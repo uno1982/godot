@@ -279,13 +279,17 @@ version's templates), and enable **Project Settings → Rendering → Textures �
 VRAM Compression → Import ETC2 ASTC**, which Android export needs. The module is
 linked into the game's library, so nothing else is shipped.
 
-Tested there (Android 15 emulator): rigid bodies, sleeping, joints, areas, ray
+Tested there (an Android 15 emulator and a Fire HD 8 tablet: Mali-G52, Fire OS 8
+/ Android 11): rigid bodies, sleeping, joints, areas, ray
 casts, `PhysXVehicle3D` and `PhysXTank3D` on the Compatibility and Mobile
 renderers, the MPM fluid on the Mobile renderer (Vulkan compute; it matched
 the desktop step for step), and Blast: `PhysXBlastAuthoring.fracture_mesh` and
 `fracture_mesh_async` in the game, and a `PhysXDestructible3D` breaking into
 pieces; and Flow on the Mobile renderer (simulated on Godot's RenderingDevice,
-read back, and ray marched the same as on the desktop). Other CPU-path
+read back, and ray marched the same as on the desktop). Flow takes at most one
+step per rendered frame, so on a slow device (8 fps on that tablet) the smoke
+runs behind game time; MPM fluid at desktop particle counts is far too heavy
+for a low-end mobile GPU. Other CPU-path
 features (character bodies, motorcycles, CPU cloth and soft bodies, the other
 compositor effects) are built in but untried there. Not available: GPU
 dynamics and the PBD fluid (CUDA) and the Alembic importer. Only `arm64` is
@@ -1634,8 +1638,8 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   hair ([#28](https://github.com/uno1982/godot/issues/28); use Mesh mode in
   VR). The light shafts and lens effects are per eye.
 - Windows and Linux x86-64 are the platforms built and tested. Android arm64
-  builds CPU-only (see [Android](#android-arm64-cpu-only)) and has only been run
-  on an emulator so far.
+  builds CPU-only (see [Android](#android-arm64-cpu-only)) and has been run on an
+  emulator and one low-end tablet so far.
 
 ## Layout
 

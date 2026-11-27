@@ -260,9 +260,10 @@ manager's `cmake` package has both), set `ANDROID_HOME`, then:
 
 ```
 python modules/godot_physx/misc/build_physx.py --platform android --blast --flow --src <a separate PhysX checkout>
+(cd platform/android/java && ./gradlew clean)   # before scons: it empties the folder scons fills
 scons platform=android target=template_debug   arch=arm64 <the printed physx_sdk= blast_sdk= flow_sdk=>
 scons platform=android target=template_release arch=arm64 <the printed physx_sdk= blast_sdk= flow_sdk=>
-cd platform/android/java && ./gradlew clean generateGodotTemplates
+cd platform/android/java && ./gradlew generateGodotTemplates
 ```
 
 Blast's and Flow's own builds have no Android target, so `--blast` and

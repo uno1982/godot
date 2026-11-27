@@ -249,8 +249,40 @@ export warns and says what the game loses:
 | `nvflow.dll`, `nvflowext.dll` (`libnvflow*.so`) | the Flow nodes stay inert |
 
 On Linux the binary looks for the `.so` files next to itself (`SCsub` sets an
-`$ORIGIN` rpath). Other platforms (Android, macOS, web) aren't supported by
-the module yet.
+`$ORIGIN` rpath). macOS and web aren't supported by the module yet.
+
+### Android (arm64, CPU only)
+
+Android games use the CPU PhysX SDK, built for Android with the NDK Godot's
+Android build uses: install the Android SDK, the NDK version
+`platform/android/detect.py` names and CMake + Ninja (the Android SDK
+manager's `cmake` package has both), set `ANDROID_HOME`, then:
+
+```
+python modules/godot_physx/misc/build_physx.py --platform android --src <a separate PhysX checkout>
+scons platform=android target=template_debug   arch=arm64 physx_sdk=<printed path>
+scons platform=android target=template_release arch=arm64 physx_sdk=<printed path>
+cd platform/android/java && ./gradlew generateGodotTemplates
+```
+
+The last step packs them into `bin/android_debug.apk`, `bin/android_release.apk`
+and `bin/android_source.zip`. Point the Android export preset's **Custom
+Template → Debug / Release** at the two `.apk` files (or install them as this
+version's templates), and enable **Project Settings → Rendering → Textures →
+VRAM Compression → Import ETC2 ASTC**, which Android export needs. The module is
+linked into the game's library, so nothing else is shipped.
+
+Tested there (Android 15 emulator): rigid bodies, sleeping, joints, areas, ray
+casts, `PhysXVehicle3D` and `PhysXTank3D` on the Compatibility and Mobile
+renderers, and the MPM fluid on the Mobile renderer (Vulkan compute; it
+matched the desktop step for step). Other CPU-path features (character
+bodies, motorcycles, CPU cloth and soft bodies, the compositor effects) are
+built in but untried there. Not available: GPU dynamics and the PBD fluid
+(CUDA), Flow and the Alembic importer. Blast destruction isn't built for
+Android yet: NVIDIA's Blast build only targets Windows and Linux, though its
+runtime core is plain C++ (Wild Ox's Blast plugin for Unreal ships it for
+Android). Only
+`arm64` is built.
 
 ## Selecting the backend
 
@@ -1594,7 +1626,9 @@ For deterministic lockstep multiplayer, use the Jolt backend.
   surface ([#29](https://github.com/uno1982/godot/issues/29)), and Screen Space
   hair ([#28](https://github.com/uno1982/godot/issues/28); use Mesh mode in
   VR). The light shafts and lens effects are per eye.
-- Windows and Linux x86-64 are the only platforms built and tested.
+- Windows and Linux x86-64 are the platforms built and tested. Android arm64
+  builds CPU-only (see [Android](#android-arm64-cpu-only)) and has only been run
+  on an emulator so far.
 
 ## Layout
 

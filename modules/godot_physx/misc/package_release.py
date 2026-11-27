@@ -15,6 +15,9 @@ bin/release/<version>/ (or --out):
     godot-<engine>-physx-<version>-windows-x86_64-export-templates.tpz  debug/release templates + their DLLs
     godot-<engine>-physx-<version>-linux-x86_64-editor.zip              the editor + its .so files + licenses
     godot-<engine>-physx-<version>-linux-x86_64-export-templates.tpz    debug/release templates + their .so files
+    godot-<engine>-physx-<version>-android-arm64-export-templates.tpz   (--android-bin) the CPU-only Android
+                                                                         templates (scons platform=android, then
+                                                                         gradlew generateGodotTemplates)
     SHA256SUMS.txt
 
 <engine> is the version in version.py (e.g. 4.7.3). A .tpz installs with Editor -> Manage Export
@@ -63,6 +66,9 @@ LINUX_LIBS = [
     "libnvflow.so",
     "libnvflowext.so",
 ]
+# Android: what platform/android/java's `gradlew generateGodotTemplates` writes to bin/, named as the editor's
+# templates folder expects them.
+ANDROID_TEMPLATES = ["android_debug.apk", "android_release.apk", "android_source.zip"]
 # The D3D12 Agility SDK, when the build has one: next to the editor as is, and in the templates folder with the
 # arch in the name, which is what the Windows exporter looks for.
 D3D12_LIBS = ["D3D12Core.dll", "d3d12SDKLayers.dll"]
@@ -107,6 +113,17 @@ def check_commit(path, commit):
         data = f.read()
     if commit.encode("ascii") not in data:
         fail(f"{path} wasn't built from {commit[:10]} (rebuild it at that commit)")
+
+
+def check_apk_commit(path, commit):
+    """The engine library inside an Android template .apk (compressed there, so read through the zip)."""
+    with zipfile.ZipFile(path) as z:
+        libs = [n for n in z.namelist() if n.endswith("/libgodot_android.so")]
+        if not libs:
+            fail(f"{path} has no libgodot_android.so")
+        for lib in libs:
+            if commit.encode("ascii") not in z.read(lib):
+                fail(f"{path} ({lib}) wasn't built from {commit[:10]} (rebuild it at that commit)")
 
 
 class Archive:
@@ -166,6 +183,9 @@ def main():
     parser.add_argument("--version", required=True, help="module release version, e.g. 0.1.0-beta")
     parser.add_argument("--windows-bin", help="bin/ of the Windows build")
     parser.add_argument("--linux-bin", help="bin/ of the Linux build")
+    parser.add_argument(
+        "--android-bin", help="bin/ holding android_debug.apk, android_release.apk and android_source.zip"
+    )
     parser.add_argument("--commit", default="HEAD", help="the commit every binary must be built from (default HEAD)")
     parser.add_argument("--out", help="output folder (default bin/release/<version>)")
     parser.add_argument(
@@ -174,8 +194,10 @@ def main():
         help="package the .NET build (module_mono_enabled=yes) instead of the standard one",
     )
     args = parser.parse_args()
-    if not args.windows_bin and not args.linux_bin:
-        fail("give --windows-bin and/or --linux-bin")
+    if not args.windows_bin and not args.linux_bin and not args.android_bin:
+        fail("give --windows-bin, --linux-bin and/or --android-bin")
+    if args.android_bin and args.mono:
+        fail("--android-bin packages the standard (non-.NET) Android templates only")
 
     major, minor, patch, status = engine_version()
     engine = f"{major}.{minor}.{patch}" if patch else f"{major}.{minor}"
@@ -216,6 +238,12 @@ def main():
             require(os.path.join(lin, name))
         for name in [lin_editor] + [src for src, _ in lin_templates]:
             check_commit(os.path.join(lin, name), commit)
+    android = args.android_bin
+    if android:
+        for name in ANDROID_TEMPLATES:
+            require(os.path.join(android, name))
+        for name in ANDROID_TEMPLATES[:2]:
+            check_apk_commit(os.path.join(android, name), commit)
     for b in [d for d in (win, lin) if d and args.mono]:
         # The C# assemblies and NuGet packages the .NET editor needs beside it (build_assemblies.py's output).
         if not os.path.isdir(os.path.join(b, "GodotSharp", "Api")):
@@ -272,6 +300,17 @@ def main():
             a.add(os.path.join(lin, src), "templates/" + name, executable=True)
         for name in LINUX_LIBS:
             a.add(os.path.join(lin, name), "templates/" + name, executable=True)
+        a.add_licenses("templates/")
+        a.close()
+        written.append(path)
+    if android:
+        # CPU-only arm64; the module is linked into libgodot_android.so inside the .apk, so no libraries ship beside.
+        path = os.path.join(out, f"{prefix}-android-arm64-export-templates.tpz")
+        print(path)
+        a = Archive(path)
+        a.add_text("templates/version.txt", templates_version)
+        for name in ANDROID_TEMPLATES:
+            a.add(os.path.join(android, name), "templates/" + name)
         a.add_licenses("templates/")
         a.close()
         written.append(path)

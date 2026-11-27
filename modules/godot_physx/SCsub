@@ -174,6 +174,10 @@ if blast_sdk:
         for _blast_lib_name in blast_libs:
             _blast_so = "lib" + _blast_lib_name + ".so"
             _godot_physx_copy_runtime_dll(os.path.join(blast_lib_dir, _blast_so), _blast_so)
+    elif env["platform"] == "android":
+        # Static libraries there (misc/blast_android), linked into the game's library: extensions before the core
+        # they use, for the single-pass static link. Nothing ships beside the game.
+        env.Append(LIBS=["NvBlastExtAuthoring", "NvBlastExtShaders", "NvBlastGlobals", "NvBlast"])
 
 # --- Alembic location (optional, editor only) --------------------------------------
 # Hair grooms (PhysXGroom) are imported from Alembic (.abc) files, as Unreal does. Point the

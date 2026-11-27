@@ -1,0 +1,82 @@
+diff --git a/blast/include/shared/NvFoundation/NvPreprocessor.h b/blast/include/shared/NvFoundation/NvPreprocessor.h
+index 45b7447..8c79a57 100644
+--- a/blast/include/shared/NvFoundation/NvPreprocessor.h
++++ b/blast/include/shared/NvFoundation/NvPreprocessor.h
+@@ -270,7 +270,7 @@ Assert macro
+ DLL export macros
+ */
+ #ifndef NV_C_EXPORT
+-#if NV_WINDOWS_FAMILY || NV_LINUX
++#if NV_WINDOWS_FAMILY || NV_LINUX_FAMILY
+ #define NV_C_EXPORT extern "C"
+ #else
+ #define NV_C_EXPORT
+diff --git a/blast/source/sdk/extensions/authoring/NvBlastExtApexSharedParts.cpp b/blast/source/sdk/extensions/authoring/NvBlastExtApexSharedParts.cpp
+index 5b82b76..d40a253 100644
+--- a/blast/source/sdk/extensions/authoring/NvBlastExtApexSharedParts.cpp
++++ b/blast/source/sdk/extensions/authoring/NvBlastExtApexSharedParts.cpp
+@@ -871,6 +871,37 @@ static void _calcSeparation(const ConvexV& convexA, const nvidia::NvTransform& a
+     sep.plane.d = -sep.plane.d;
+ }
+ 
++#if !COMPILE_VECTOR_INTRINSICS
++// Scalar math (ARM: no SIMD path here): Vec3V and Vec4V are different types, so the transposes below don't compile.
++// The same packing, four points into x / y / z rows, element by element.
++static void _arrayVec3ToVec4(const NvVec3* src, const NvVec3& scale, Vec4V* dst, uint32_t num)
++{
++    for (uint32_t i = 0; i < num; i += 4, dst += 3)
++    {
++        NvVec3 p[4];
++        for (uint32_t j = 0; j < 4; j++)
++        {
++            const NvVec3& s = src[i + j < num ? i + j : num - 1];
++            p[j] = NvVec3(s.x * scale.x, s.y * scale.y, s.z * scale.z);
++        }
++        dst[0] = V4LoadXYZW(p[0].x, p[1].x, p[2].x, p[3].x);
++        dst[1] = V4LoadXYZW(p[0].y, p[1].y, p[2].y, p[3].y);
++        dst[2] = V4LoadXYZW(p[0].z, p[1].z, p[2].z, p[3].z);
++    }
++}
++
++static void _arrayVec3ToVec4(const NvVec3* src, Vec4V* dst, uint32_t num)
++{
++    _arrayVec3ToVec4(src, NvVec3(1.0f), dst, num);
++}
++
++static void _arrayVec3ToVec4(const NvVec3* src, const Vec3V& scale, Vec4V* dst, uint32_t num)
++{
++    NvVec3 s;
++    V3StoreU(scale, s);
++    _arrayVec3ToVec4(src, s, dst, num);
++}
++#else
+ static void _arrayVec3ToVec4(const NvVec3* src, Vec4V* dst, uint32_t num)
+ {
+     const uint32_t num4 = num >> 2;
+@@ -937,6 +968,7 @@ static void _arrayVec3ToVec4(const NvVec3* src, const Vec3V& scale, Vec4V* dst,
+         dst[2] = work[2];
+     }
+ }
++#endif
+ 
+ 
+ // TODO: move this to a better long term home
+diff --git a/blast/source/shared/NsFoundation/include/NsArray.h b/blast/source/shared/NsFoundation/include/NsArray.h
+index 39a8b61..04e9735 100644
+--- a/blast/source/shared/NsFoundation/include/NsArray.h
++++ b/blast/source/shared/NsFoundation/include/NsArray.h
+@@ -32,11 +32,11 @@
+ #include "NsBasicTemplates.h"
+ #include "NvIntrinsics.h"
+ 
+-#if NV_LINUX || NV_ANDROID || (NV_IOS && !NV_A64) || NV_OSX || NV_PS3 || NV_PSP2 || NV_WIIU
++#if NV_LINUX || (NV_IOS && !NV_A64) || NV_OSX || NV_PS3 || NV_PSP2 || NV_WIIU
+ #include <tr1/type_traits>
+-#elif NV_WINRT || NV_XBOXONE || (NV_IOS && NV_A64) || NV_WIN64 || NV_X360 || NV_WIN32 || NV_PS4
++#elif NV_WINRT || NV_XBOXONE || (NV_IOS && NV_A64) || NV_ANDROID || NV_WIN64 || NV_X360 || NV_WIN32 || NV_PS4
+ #include <type_traits>
+-#if NV_IOS && NV_A64
++#if (NV_IOS && NV_A64) || NV_ANDROID // (libc++ has no tr1)
+ namespace std { namespace tr1 { using std::is_pod; } }
+ #endif
+ #else

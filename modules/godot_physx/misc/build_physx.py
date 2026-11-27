@@ -37,8 +37,9 @@ defaults to the host OS (windows / linuxbsd).
 
 --platform android cross-builds the CPU SDK for Android arm64 with the NDK
 Godot uses (ANDROID_HOME, or ANDROID_NDK_ROOT for another NDK; needs cmake and
-ninja on PATH). GPU, Blast, Flow and Alembic aren't available there. Use a
-separate checkout (--src) from the desktop SDK's.
+ninja on PATH); with --blast, also Blast as static libraries. GPU, Flow and
+Alembic aren't available there. Use a separate checkout (--src) from the
+desktop SDK's.
 """
 
 import argparse
@@ -180,6 +181,45 @@ def build_android(physx, ndk, config, jobs):
     return install
 
 
+def build_android_blast(src, ndk, jobs):
+    """Blast's NvBlast, NvBlastGlobals, NvBlastExtShaders and NvBlastExtAuthoring for Android arm64, as static
+    libraries, with misc/blast_android/CMakeLists.txt (Blast's premake build has no Android target). Its one
+    dependency, Boost.Multiprecision (header only), comes from Blast's own packman. Returns the installed SDK path."""
+    blast = os.path.join(src, "blast")
+    if not os.path.isdir(os.path.join(blast, "source", "sdk", "lowlevel")):
+        sys.exit("--blast needs a blast/ directory in the checkout at " + src)
+    boost = os.path.join(blast, "_build", "target-deps", "BoostMultiprecision")
+    if not os.path.isdir(os.path.join(boost, "boost")):
+        packman = os.path.join(blast, "tools", "packman", "packman.cmd" if os.name == "nt" else "packman")
+        run([packman, "install", "BoostMultiprecision", "1.64.0.1", "-l", boost], cwd=blast)
+    build = os.path.join(blast, "_build", "android-arm64")
+    install = os.path.join(build, "blast-sdk")
+    run(
+        [
+            "cmake",
+            "-S",
+            os.path.join(HERE, "blast_android"),
+            "-B",
+            build,
+            "-G",
+            "Ninja",
+            "-DCMAKE_TOOLCHAIN_FILE=" + os.path.join(ndk, "build", "cmake", "android.toolchain.cmake"),
+            "-DANDROID_ABI=arm64-v8a",
+            "-DANDROID_PLATFORM=android-24",
+            "-DANDROID_STL=c++_static",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DBLAST_ROOT=" + blast.replace("\\", "/"),
+            "-DBOOST_MULTIPRECISION=" + boost.replace("\\", "/"),
+            "-DCMAKE_INSTALL_PREFIX=" + install.replace("\\", "/"),
+        ],
+        cwd=blast,
+    )
+    run(["cmake", "--build", build, "--target", "install", "--parallel", str(jobs)], cwd=blast)
+    if not os.path.isfile(os.path.join(install, "bin", "libNvBlast.a")):
+        sys.exit("Blast build finished but no libraries under " + install)
+    return install
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--gpu", action="store_true", help="also build the CUDA GPU projects (needs the CUDA Toolkit)")
@@ -216,8 +256,8 @@ def main():
 
     android = args.platform == "android"
     if android:
-        if args.gpu or args.blast or args.flow or args.alembic:
-            sys.exit("--platform android builds the CPU PhysX SDK only (no --gpu / --blast / --flow / --alembic)")
+        if args.gpu or args.flow or args.alembic:
+            sys.exit("--platform android builds the CPU PhysX SDK and Blast only (no --gpu / --flow / --alembic)")
         ndk = android_ndk()
     else:
         preset_base = "vc17win64-godot" if args.platform == "windows" else "linux64-godot"
@@ -264,12 +304,19 @@ def main():
 
     if android:
         sdk = build_android(physx, ndk, args.config, args.jobs)
+        scons_args = ["physx_sdk=" + sdk.replace("\\", "/")]
         print()
         print("PhysX SDK ready:")
         print("    " + sdk)
+        if args.blast:
+            blast_sdk = build_android_blast(src, ndk, args.jobs)
+            scons_args.append("blast_sdk=" + blast_sdk.replace("\\", "/"))
+            print()
+            print("Blast SDK ready (static, linked into the game's library):")
+            print("    " + blast_sdk)
         print()
         print("Build the Android export templates with:")
-        print("    scons platform=android target=template_release arch=arm64 physx_sdk=%s" % sdk.replace("\\", "/"))
+        print("    scons platform=android target=template_release arch=arm64 " + " ".join(scons_args))
         return
 
     # Install the Godot-tuned preset.

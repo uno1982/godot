@@ -93,7 +93,7 @@ public:
 		PASS_BS_SURFACE,
 		PASS_BS_MARCH,
 		PASS_BS_RENDER,
-		PASS_MAX };
+		PASS_COUNT };
 
 	RenderingDevice *rd = nullptr;
 	// Headless (no main RenderingDevice) falls back to a private local device we
@@ -102,9 +102,9 @@ public:
 	bool local = false;
 	SafeFlag built; // the current build job has finished
 
-	RID shader[PASS_MAX];
-	RID pipeline[PASS_MAX];
-	RID uset[PASS_MAX];
+	RID shader[PASS_COUNT];
+	RID pipeline[PASS_COUNT];
+	RID uset[PASS_COUNT];
 	RID uset_mesh; // set 1 for the march pass
 
 	RID buf_params;

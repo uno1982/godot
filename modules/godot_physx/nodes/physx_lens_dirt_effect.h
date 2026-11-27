@@ -65,12 +65,12 @@ private:
 		PASS_DOWN,
 		PASS_UP,
 		PASS_COMPOSITE,
-		PASS_MAX,
+		PASS_COUNT,
 	};
 	// The bloom pyramid: LEVELS levels from a quarter of the frame down, halving each time.
 	static constexpr int LEVELS = 4;
-	RID shaders[PASS_MAX];
-	RID pipelines[PASS_MAX]; // the compute passes'
+	RID shaders[PASS_COUNT];
+	RID pipelines[PASS_COUNT]; // the compute passes'
 	HashMap<int64_t, RID> composite_pipelines; // per framebuffer format
 	RID linear_sampler;
 	bool failed = false;

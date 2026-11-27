@@ -296,7 +296,7 @@ PhysXLensFlareEffect::~PhysXLensFlareEffect() {
 		for (const KeyValue<int64_t, RID> &kv : composite_pipelines) {
 			rd->free_rid(kv.value);
 		}
-		for (int i = 0; i < PASS_MAX; i++) {
+		for (int i = 0; i < PASS_COUNT; i++) {
 			if (pipelines[i].is_valid()) {
 				rd->free_rid(pipelines[i]);
 			}
@@ -320,7 +320,7 @@ bool PhysXLensFlareEffect::_ensure(RenderingDevice *p_rd) {
 		return false;
 	}
 	failed = true;
-	for (int i = 0; i < PASS_MAX; i++) {
+	for (int i = 0; i < PASS_COUNT; i++) {
 		Ref<RDShaderFile> file;
 		file.instantiate();
 		const String source = String(SHADERS[i]).replace("@PARAMS@", PARAMS);

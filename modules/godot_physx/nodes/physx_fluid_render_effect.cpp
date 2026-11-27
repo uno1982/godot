@@ -75,7 +75,7 @@ enum Pass {
 	PASS_RESOLVE,
 	PASS_FILTER,
 	PASS_COMPOSITE,
-	PASS_MAX,
+	PASS_COUNT,
 };
 
 // Shared by every pass (binding 0), spliced in at @PARAMS@.
@@ -107,7 +107,7 @@ vec3 view_pos(vec2 px, float z) {
 }
 )";
 
-const char *SHADERS[PASS_MAX] = {
+const char *SHADERS[PASS_COUNT] = {
 	// PASS_CLEAR
 	R"(
 #[compute]
@@ -483,7 +483,7 @@ void main() {
 )",
 };
 
-const char *PASS_NAMES[PASS_MAX] = { "clear", "splat", "foam", "resolve", "filter", "composite" };
+const char *PASS_NAMES[PASS_COUNT] = { "clear", "splat", "foam", "resolve", "filter", "composite" };
 
 // Writes the liquid's depth into the frame's own depth target (the
 // multisampled one with MSAA) before the transparent pass, where it's solid:
@@ -774,7 +774,7 @@ PhysXFluidRenderEffect::~PhysXFluidRenderEffect() {
 		for (const Retired &r : retired) {
 			rd->free_rid(r.rid);
 		}
-		for (int i = 0; i < PASS_MAX; i++) {
+		for (int i = 0; i < PASS_COUNT; i++) {
 			if (pipelines[i].is_valid()) {
 				rd->free_rid(pipelines[i]);
 			}
@@ -801,7 +801,7 @@ bool PhysXFluidRenderEffect::_ensure(RenderingDevice *p_rd) {
 		return false;
 	}
 	failed = true;
-	for (int i = 0; i < PASS_MAX; i++) {
+	for (int i = 0; i < PASS_COUNT; i++) {
 		Ref<RDShaderFile> file;
 		file.instantiate();
 		const String source = String(SHADERS[i]).replace("@PARAMS@", PARAMS);

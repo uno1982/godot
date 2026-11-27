@@ -116,7 +116,7 @@ private:
 		PASS_CLEAR,
 		PASS_RASTER,
 		PASS_COMPOSITE,
-		PASS_MAX,
+		PASS_COUNT,
 	};
 	struct GpuGroom {
 		uint64_t version = 0;
@@ -124,8 +124,8 @@ private:
 		uint32_t point_count = 0;
 	};
 	bool failed = false;
-	RID shaders[PASS_MAX];
-	RID pipelines[PASS_MAX];
+	RID shaders[PASS_COUNT];
+	RID pipelines[PASS_COUNT];
 	RID point_sampler;
 	RID params_buffer;
 	// Bound for the simulated points when a groom isn't simulated.

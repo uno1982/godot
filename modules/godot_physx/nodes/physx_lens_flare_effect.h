@@ -79,10 +79,10 @@ private:
 		PASS_UP,
 		PASS_GHOSTS,
 		PASS_COMPOSITE,
-		PASS_MAX,
+		PASS_COUNT,
 	};
-	RID shaders[PASS_MAX];
-	RID pipelines[PASS_MAX]; // the compute passes'
+	RID shaders[PASS_COUNT];
+	RID pipelines[PASS_COUNT]; // the compute passes'
 	HashMap<int64_t, RID> composite_pipelines; // per framebuffer format
 	RID linear_sampler;
 	RID border_sampler; // black outside the image: a ghost reaching past the frame adds nothing

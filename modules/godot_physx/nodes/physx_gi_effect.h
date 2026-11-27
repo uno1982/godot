@@ -183,13 +183,13 @@ private:
 		PASS_CACHE,
 		PASS_RESOLVE,
 		PASS_REFLECT_FILTER,
-		PASS_MAX,
+		PASS_COUNT,
 	};
-	RID shaders[PASS_MAX];
-	RID pipelines[PASS_MAX];
+	RID shaders[PASS_COUNT];
+	RID pipelines[PASS_COUNT];
 	// The tracing passes again, built to walk the shapes and the meshes in one loop (Snapshot::mesh_walk).
-	RID mesh_walk_shaders[PASS_MAX];
-	RID mesh_walk_pipelines[PASS_MAX];
+	RID mesh_walk_shaders[PASS_COUNT];
+	RID mesh_walk_pipelines[PASS_COUNT];
 	bool mesh_walk = false; // this frame's
 	RID linear_sampler;
 	RID mip_sampler;

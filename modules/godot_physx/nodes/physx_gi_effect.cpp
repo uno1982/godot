@@ -2322,7 +2322,7 @@ PhysXGIEffect::~PhysXGIEffect() {
 		if (rd == nullptr) {
 			return;
 		}
-		for (int i = 0; i < PASS_MAX; i++) {
+		for (int i = 0; i < PASS_COUNT; i++) {
 			for (RID r : { pipelines[i], shaders[i], mesh_walk_pipelines[i], mesh_walk_shaders[i] }) {
 				if (r.is_valid()) {
 					rd->free_rid(r);
@@ -2345,7 +2345,7 @@ bool PhysXGIEffect::_ensure(RenderingDevice *p_rd) {
 		return false;
 	}
 	failed = true;
-	for (int i = 0; i < PASS_MAX; i++) {
+	for (int i = 0; i < PASS_COUNT; i++) {
 		// The tracing passes twice: walking the shapes alone, and the shapes and the meshes in one loop.
 		const bool traces = i == PASS_TRACE || i == PASS_REFLECT || i == PASS_CACHE;
 		for (int variant = 0; variant < (traces ? 2 : 1); variant++) {

@@ -250,7 +250,7 @@ void MPMFluidSolverGPU::rt_compile(Ref<MPMFluidSolverGPU> p_self) {
 	if (rd == nullptr) {
 		return;
 	}
-	const char *src[PASS_MAX] = {
+	const char *src[PASS_COUNT] = {
 		mpm_clear_shader_glsl,
 		mpm_p2g_mass_shader_glsl,
 		mpm_p2g_mom_shader_glsl,
@@ -273,7 +273,7 @@ void MPMFluidSolverGPU::rt_compile(Ref<MPMFluidSolverGPU> p_self) {
 		mpm_bs_march_shader_glsl,
 		mpm_bs_render_shader_glsl,
 	};
-	for (int i = 0; i < PASS_MAX; i++) {
+	for (int i = 0; i < PASS_COUNT; i++) {
 		// PASS_BS_MARCH is compiled lazily (see _ensure_bs_march_pipeline()), not
 		// here -- a defense-in-depth precaution left in place after root-causing
 		// and fixing a real hang in this shader's own source (see the big comment
@@ -324,7 +324,7 @@ void MPMFluidSolverGPU::_rt_free_buffers() {
 	}
 	// Uniform sets first: RD auto-frees a uniform set when a buffer it references
 	// is freed, so freeing the buffers first leaves these RIDs dangling.
-	for (int i = 0; i < PASS_MAX; i++) {
+	for (int i = 0; i < PASS_COUNT; i++) {
 		if (uset[i].is_valid()) {
 			rd->free_rid(uset[i]);
 			uset[i] = RID();
@@ -344,7 +344,7 @@ void MPMFluidSolverGPU::_rt_rebuild_uniform_sets() {
 		rd->free_rid(uset_mesh);
 		uset_mesh = RID();
 	}
-	for (int p = 0; p < PASS_MAX; p++) {
+	for (int p = 0; p < PASS_COUNT; p++) {
 		if (uset[p].is_valid()) {
 			rd->free_rid(uset[p]);
 			uset[p] = RID();
@@ -356,7 +356,7 @@ void MPMFluidSolverGPU::_rt_rebuild_uniform_sets() {
 	// and PASS_BS_BDISPATCH also the indirect args (see buf_bargs).
 	const RID by_binding[13] = { buf_params, buf_particles, buf_grid_i, buf_grid_v, buf_colliders, buf_cimp, buf_mm, buf_surf, buf_bhash, buf_bhash_val, buf_bkey, buf_bcounts, buf_bargs };
 	const int lo = block_sparse ? (int)PASS_BS_CLEAR : (int)PASS_CLEAR;
-	const int hi = block_sparse ? (int)PASS_MAX : (int)PASS_BS_CLEAR;
+	const int hi = block_sparse ? (int)PASS_COUNT : (int)PASS_BS_CLEAR;
 	for (int p = lo; p < hi; p++) {
 		if (p == PASS_BS_MARCH && !shader[p].is_valid()) {
 			continue; // lazily compiled on first surface_mesh request; see _ensure_bs_march_pipeline()
@@ -497,7 +497,7 @@ void MPMFluidSolverGPU::rt_set_sdf(Ref<MPMFluidSolverGPU> p_self, PackedByteArra
 		_submitted = false;
 	}
 	// The uniform sets first: see _rt_free_buffers.
-	for (int p = 0; p < PASS_MAX; p++) {
+	for (int p = 0; p < PASS_COUNT; p++) {
 		if (uset[p].is_valid()) {
 			rd->free_rid(uset[p]);
 			uset[p] = RID();
@@ -863,7 +863,7 @@ void MPMFluidSolverGPU::rt_free(Ref<MPMFluidSolverGPU> p_self) {
 	}
 	built.set_to(false);
 	_rt_free_buffers();
-	for (int i = 0; i < PASS_MAX; i++) {
+	for (int i = 0; i < PASS_COUNT; i++) {
 		if (pipeline[i].is_valid()) {
 			rd->free_rid(pipeline[i]);
 			pipeline[i] = RID();
@@ -880,7 +880,7 @@ MPMFluidSolverGPU::~MPMFluidSolverGPU() {
 #ifdef DEV_ENABLED
 	// rt_free() should have run first. If a stale async callback kept us alive
 	// past it, everything is already null and there is nothing to do.
-	for (int i = 0; i < PASS_MAX; i++) {
+	for (int i = 0; i < PASS_COUNT; i++) {
 		DEV_ASSERT(shader[i].is_null() && pipeline[i].is_null());
 	}
 #endif

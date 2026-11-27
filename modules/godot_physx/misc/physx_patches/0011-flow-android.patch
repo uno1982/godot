@@ -1,0 +1,29 @@
+diff --git a/flow/source/nvflowext/NvFlowExt.cpp b/flow/source/nvflowext/NvFlowExt.cpp
+index 910fc61..b30bd2b 100644
+--- a/flow/source/nvflowext/NvFlowExt.cpp
++++ b/flow/source/nvflowext/NvFlowExt.cpp
+@@ -74,6 +74,16 @@ NV_FLOW_API NvFlowExtOpList* NvFlowGetExtOpList()
+     return &iface;
+ }
+ 
++#if defined(__ANDROID__)
++// Android: Flow's own Vulkan and CPU devices aren't built (their window and swapchain code needs X11); Flow runs on
++// the host engine's device through NvFlowContextInterface. An empty interface, so loaders that copy it still work.
++NvFlowDeviceInterface* NvFlowGetDeviceInterface(NvFlowContextApi api)
++{
++    static NvFlowDeviceInterface iface = {};
++    iface.interface_NvFlowReflectDataType = &NvFlowDeviceInterface_NvFlowReflectDataType;
++    return &iface;
++}
++#else
+ NvFlowDeviceInterface* NvFlowGetDeviceInterface_vulkan();
+ NvFlowDeviceInterface* NvFlowGetDeviceInterface_cpu();
+ 
+@@ -89,6 +99,7 @@ NvFlowDeviceInterface* NvFlowGetDeviceInterface(NvFlowContextApi api)
+     }
+     return nullptr;
+ }
++#endif
+ 
+ #ifdef NV_FLOW_DEBUG_ALLOC
+ #include <stdio.h>

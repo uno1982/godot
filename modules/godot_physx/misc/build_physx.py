@@ -37,9 +37,10 @@ defaults to the host OS (windows / linuxbsd).
 
 --platform android cross-builds the CPU SDK for Android arm64 with the NDK
 Godot uses (ANDROID_HOME, or ANDROID_NDK_ROOT for another NDK; needs cmake and
-ninja on PATH); with --blast, also Blast as static libraries. GPU, Flow and
-Alembic aren't available there. Use a separate checkout (--src) from the
-desktop SDK's.
+ninja on PATH); with --blast, also Blast as static libraries, and with
+--flow, Flow's two libraries (after Flow's own build for this machine, which
+compiles its shaders). GPU and Alembic aren't available there. Use a separate
+checkout (--src) from the desktop SDK's.
 """
 
 import argparse
@@ -181,6 +182,67 @@ def build_android(physx, ndk, config, jobs):
     return install
 
 
+def build_host_flow(src):
+    """Flow's own build for this machine (it lives in the checkout's flow/ subdirectory, with a premake5 build whose
+    scripts must run from there). Returns (flow dir, its platform folder name). MSVC 14.44 turns warning C4756
+    (overflow in constant arithmetic, in Flow's float-limit constants) into an error under Flow's
+    warnings-as-errors; CL=/wd4756 silences just that one."""
+    is_windows = os.name == "nt"
+    flow_dir = os.path.join(src, "flow")
+    if not os.path.isdir(flow_dir):
+        sys.exit("--flow needs a flow/ directory in the checkout at " + src)
+    if is_windows:
+        flow_script = os.path.join(flow_dir, "build.bat")
+    else:
+        # ARM Linux has its own script.
+        flow_script = os.path.join(flow_dir, "build_aarch64.sh" if platform.machine() == "aarch64" else "build.sh")
+    if not os.path.isfile(flow_script):
+        sys.exit("no Flow build script at " + flow_script)
+    flow_env = os.environ.copy()
+    if is_windows:
+        flow_env["CL"] = (flow_env.get("CL", "") + " /wd4756").strip()
+    print("+ %s  (in %s)" % (flow_script, flow_dir))
+    subprocess.check_call([flow_script] if is_windows else ["bash", flow_script], cwd=flow_dir, env=flow_env)
+    return flow_dir, "windows-x86_64" if is_windows else "linux-" + platform.machine()
+
+
+def build_android_flow(src, ndk, jobs):
+    """libnvflow.so and libnvflowext.so for Android arm64, with misc/flow_android/CMakeLists.txt (Flow's premake
+    build has no Android target). Their shaders come precompiled from Flow's own build for this machine, run first:
+    the module uses only the SPIR-V variants, which don't depend on the platform. Returns the flow/ directory
+    (scons' flow_sdk=); SCsub picks the libraries up from its _build/android-arm64/install/lib."""
+    flow_dir, host_platform = build_host_flow(src)
+    generated = os.path.join(flow_dir, "_generated", host_platform, "release")
+    if not os.path.isdir(os.path.join(generated, "nvflow", "shaders")):
+        sys.exit("Flow's build finished but no generated shaders at " + generated)
+    build = os.path.join(flow_dir, "_build", "android-arm64")
+    run(
+        [
+            "cmake",
+            "-S",
+            os.path.join(HERE, "flow_android"),
+            "-B",
+            build,
+            "-G",
+            "Ninja",
+            "-DCMAKE_TOOLCHAIN_FILE=" + os.path.join(ndk, "build", "cmake", "android.toolchain.cmake"),
+            "-DANDROID_ABI=arm64-v8a",
+            "-DANDROID_PLATFORM=android-24",
+            "-DANDROID_STL=c++_static",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DFLOW_ROOT=" + flow_dir.replace("\\", "/"),
+            "-DFLOW_GENERATED=" + generated.replace("\\", "/"),
+            "-DCMAKE_INSTALL_PREFIX=" + os.path.join(build, "install").replace("\\", "/"),
+        ],
+        cwd=flow_dir,
+    )
+    run(["cmake", "--build", build, "--target", "install", "--parallel", str(jobs)], cwd=flow_dir)
+    for name in ("libnvflow.so", "libnvflowext.so"):
+        if not os.path.isfile(os.path.join(build, "install", "lib", name)):
+            sys.exit("Flow build for Android finished but no " + name)
+    return flow_dir
+
+
 def build_android_blast(src, ndk, jobs):
     """Blast's NvBlast, NvBlastGlobals, NvBlastExtShaders and NvBlastExtAuthoring for Android arm64, as static
     libraries, with misc/blast_android/CMakeLists.txt (Blast's premake build has no Android target). Its one
@@ -256,8 +318,8 @@ def main():
 
     android = args.platform == "android"
     if android:
-        if args.gpu or args.flow or args.alembic:
-            sys.exit("--platform android builds the CPU PhysX SDK and Blast only (no --gpu / --flow / --alembic)")
+        if args.gpu or args.alembic:
+            sys.exit("--platform android builds the CPU PhysX SDK, Blast and Flow (no --gpu / --alembic)")
         ndk = android_ndk()
     else:
         preset_base = "vc17win64-godot" if args.platform == "windows" else "linux64-godot"
@@ -314,6 +376,12 @@ def main():
             print()
             print("Blast SDK ready (static, linked into the game's library):")
             print("    " + blast_sdk)
+        if args.flow:
+            flow_dir = build_android_flow(src, ndk, args.jobs)
+            scons_args.append("flow_sdk=" + flow_dir.replace("\\", "/"))
+            print()
+            print("Flow ready (SCsub packs its libraries into the Android template):")
+            print("    " + flow_dir)
         print()
         print("Build the Android export templates with:")
         print("    scons platform=android target=template_release arch=arm64 " + " ".join(scons_args))
@@ -393,28 +461,7 @@ def main():
         print("SCsub copies Blast's libraries next to the Godot binary.")
 
     if args.flow:
-        # Flow lives in the same checkout too (its flow/ subdirectory), with its
-        # own premake5-based build. Its scripts must run from the flow/
-        # directory. MSVC 14.44 turns warning C4756 (overflow in constant
-        # arithmetic, in Flow's float-limit constants) into an error under
-        # Flow's warnings-as-errors; CL=/wd4756 silences just that one.
-        flow_dir = os.path.join(src, "flow")
-        if not os.path.isdir(flow_dir):
-            sys.exit("--flow needs a flow/ directory in the checkout at " + src)
-        if is_windows:
-            flow_script = os.path.join(flow_dir, "build.bat")
-        else:
-            # ARM Linux has its own script.
-            flow_script = os.path.join(flow_dir, "build_aarch64.sh" if platform.machine() == "aarch64" else "build.sh")
-        if not os.path.isfile(flow_script):
-            sys.exit("no Flow build script at " + flow_script)
-        flow_env = os.environ.copy()
-        if is_windows:
-            flow_env["CL"] = (flow_env.get("CL", "") + " /wd4756").strip()
-        print("+ %s  (in %s)" % (flow_script, flow_dir))
-        subprocess.check_call([flow_script] if is_windows else ["bash", flow_script], cwd=flow_dir, env=flow_env)
-
-        flow_platform = "windows-x86_64" if is_windows else "linux-" + platform.machine()
+        flow_dir, flow_platform = build_host_flow(src)
         flow_bin = os.path.join(flow_dir, "_build", flow_platform, "release")
         flow_libs = ("nvflow.dll", "nvflowext.dll") if is_windows else ("libnvflow.so", "libnvflowext.so")
         missing = [name for name in flow_libs if not os.path.isfile(os.path.join(flow_bin, name))]

@@ -251,6 +251,22 @@ if flow_sdk:
         flow_bin = os.path.join(flow_sdk, "_build", "linux-" + _flow_arch, "release")
         for _flow_so in ("libnvflow.so", "libnvflowext.so"):
             _godot_physx_copy_runtime_dll(os.path.join(flow_bin, _flow_so), _flow_so)
+    elif env["platform"] == "android":
+        # Built by misc/flow_android (build_physx.py --platform android --flow). Into the folder Godot's Android
+        # build moves libgodot_android.so to (platform/android/SCsub), so Gradle packs them into the template's
+        # lib/arm64-v8a, where the loader's dlopen finds them by name.
+        flow_bin = os.path.join(flow_sdk, "_build", "android-arm64", "install", "lib")
+        _flow_type = (
+            ("release" if env.editor_build and env["store_release"] else "debug") if env.debug_features else "release"
+        )
+        _flow_jni = (
+            "#platform/android/java/lib/libs/" + ("tools/" if env.editor_build else "") + _flow_type + "/arm64-v8a/"
+        )
+        for _flow_so in ("libnvflow.so", "libnvflowext.so"):
+            if os.path.isfile(os.path.join(flow_bin, _flow_so)):
+                env.Command(
+                    env.File(_flow_jni + _flow_so), os.path.join(flow_bin, _flow_so), Copy("$TARGET", "$SOURCE")
+                )
 
 # Linux doesn't look next to the binary for libs by default, so tell it to.
 if env["platform"] == "linuxbsd" and (physx_gpu or blast_sdk or flow_sdk):

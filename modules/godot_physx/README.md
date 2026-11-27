@@ -253,21 +253,25 @@ On Linux the binary looks for the `.so` files next to itself (`SCsub` sets an
 
 ### Android (arm64, CPU only)
 
-Android games use the CPU PhysX SDK and Blast, built for Android with the NDK
-Godot's Android build uses: install the Android SDK, the NDK version
+Android games use the CPU PhysX SDK, Blast and Flow, built for Android with
+the NDK Godot's Android build uses: install the Android SDK, the NDK version
 `platform/android/detect.py` names and CMake + Ninja (the Android SDK
 manager's `cmake` package has both), set `ANDROID_HOME`, then:
 
 ```
-python modules/godot_physx/misc/build_physx.py --platform android --blast --src <a separate PhysX checkout>
-scons platform=android target=template_debug   arch=arm64 physx_sdk=<printed path> blast_sdk=<printed path>
-scons platform=android target=template_release arch=arm64 physx_sdk=<printed path> blast_sdk=<printed path>
+python modules/godot_physx/misc/build_physx.py --platform android --blast --flow --src <a separate PhysX checkout>
+scons platform=android target=template_debug   arch=arm64 <the printed physx_sdk= blast_sdk= flow_sdk=>
+scons platform=android target=template_release arch=arm64 <the printed physx_sdk= blast_sdk= flow_sdk=>
 cd platform/android/java && ./gradlew clean generateGodotTemplates
 ```
 
-Blast's own build has no Android target, so `--blast` builds its four
-libraries with `misc/blast_android/CMakeLists.txt` instead (static, linked
-into the game). The last step packs the templates into `bin/android_debug.apk`, `bin/android_release.apk`
+Blast's and Flow's own builds have no Android target, so `--blast` and
+`--flow` build them with `misc/blast_android` and `misc/flow_android` instead:
+Blast as static libraries linked into the game, Flow's `libnvflow.so` and
+`libnvflowext.so` packed into the templates by `SCsub`. Flow's shaders come
+from its own build for the machine you build on, which `--flow` runs first
+(the module only uses their SPIR-V, which is the same everywhere). The last
+step packs the templates into `bin/android_debug.apk`, `bin/android_release.apk`
 and `bin/android_source.zip`. Point the Android export preset's **Custom
 Template → Debug / Release** at the two `.apk` files (or install them as this
 version's templates), and enable **Project Settings → Rendering → Textures →
@@ -279,10 +283,12 @@ casts, `PhysXVehicle3D` and `PhysXTank3D` on the Compatibility and Mobile
 renderers, the MPM fluid on the Mobile renderer (Vulkan compute; it matched
 the desktop step for step), and Blast: `PhysXBlastAuthoring.fracture_mesh` and
 `fracture_mesh_async` in the game, and a `PhysXDestructible3D` breaking into
-pieces. Other CPU-path features (character bodies, motorcycles, CPU cloth and
-soft bodies, the compositor effects) are built in but untried there. Not
-available: GPU dynamics and the PBD fluid (CUDA), Flow and the Alembic
-importer. Only `arm64` is built.
+pieces; and Flow on the Mobile renderer (simulated on Godot's RenderingDevice,
+read back, and ray marched the same as on the desktop). Other CPU-path
+features (character bodies, motorcycles, CPU cloth and soft bodies, the other
+compositor effects) are built in but untried there. Not available: GPU
+dynamics and the PBD fluid (CUDA) and the Alembic importer. Only `arm64` is
+built.
 
 ## Selecting the backend
 

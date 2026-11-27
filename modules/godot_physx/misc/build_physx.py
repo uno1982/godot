@@ -34,11 +34,17 @@ The last thing printed is the scons command for everything built.
 
 Run this script on the machine you're building the module for -- --platform
 defaults to the host OS (windows / linuxbsd).
+
+--platform android cross-builds the CPU SDK for Android arm64 with the NDK
+Godot uses (ANDROID_HOME, or ANDROID_NDK_ROOT for another NDK; needs cmake and
+ninja on PATH). GPU, Blast, Flow and Alembic aren't available there. Use a
+separate checkout (--src) from the desktop SDK's.
 """
 
 import argparse
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -109,6 +115,71 @@ def build_alembic(base, jobs):
     return install
 
 
+def android_ndk():
+    """The NDK Godot's Android build uses (platform/android/detect.py), or ANDROID_NDK_ROOT if set."""
+    ndk = os.environ.get("ANDROID_NDK_ROOT", "")
+    if not ndk:
+        home = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT", "")
+        if not home:
+            sys.exit("--platform android needs ANDROID_HOME (the Android SDK) or ANDROID_NDK_ROOT")
+        # Read, not imported: detect.py needs SCons' build environment.
+        detect = os.path.join(HERE, "..", "..", "..", "platform", "android", "detect.py")
+        with open(detect, encoding="utf-8") as f:
+            m = re.search(r'def get_ndk_version\(\):\s*return "([^"]+)"', f.read())
+        if not m:
+            sys.exit("could not read the NDK version from " + detect)
+        ndk = os.path.join(home, "ndk", m.group(1))
+    toolchain = os.path.join(ndk, "build", "cmake", "android.toolchain.cmake")
+    if not os.path.isfile(toolchain):
+        sys.exit("no Android NDK at %s (install it with the Android SDK manager)" % ndk)
+    return ndk
+
+
+def build_android(physx, ndk, config, jobs):
+    """CPU PhysX for Android arm64, as PhysX's own Linux arm64 target built with the NDK toolchain. PhysX's
+    generate_projects needs NVIDIA's packman tools, so CMake is configured directly with what it would pass (the
+    switches match linux64-godot.xml). Returns the installed SDK path."""
+    if not shutil.which("ninja"):
+        sys.exit("--platform android needs ninja on PATH (the Android SDK's cmake/<version>/bin has one)")
+    root = physx.replace("\\", "/")
+    build = os.path.join(physx, "compiler", "android-arm64-godot-" + config)
+    install = os.path.join(physx, "install", "android-arm64-godot", "PhysX")
+    run(
+        [
+            "cmake",
+            "-S",
+            os.path.join(physx, "compiler", "public"),
+            "-B",
+            build,
+            "-G",
+            "Ninja",
+            "--no-warn-unused-cli",
+            "-DCMAKE_TOOLCHAIN_FILE=" + os.path.join(ndk, "build", "cmake", "android.toolchain.cmake"),
+            "-DANDROID_ABI=arm64-v8a",
+            "-DANDROID_PLATFORM=android-24",  # Godot's minimum (get_min_target_api)
+            "-DANDROID_STL=c++_static",  # as Godot links it
+            "-DTARGET_BUILD_PLATFORM=linux",
+            "-DPX_OUTPUT_ARCH=arm",
+            "-DCMAKE_BUILD_TYPE=" + config,
+            "-DPHYSX_ROOT_DIR=" + root,
+            "-DPX_OUTPUT_LIB_DIR=" + root,
+            "-DPX_OUTPUT_BIN_DIR=" + root,
+            "-DPX_BUILDSNIPPETS=FALSE",
+            "-DPX_BUILDPVDRUNTIME=FALSE",
+            "-DPX_GENERATE_STATIC_LIBRARIES=TRUE",
+            "-DPX_CMAKE_SUPPRESS_REGENERATION=TRUE",
+            "-DPX_GENERATE_GPU_PROJECTS=FALSE",
+            "-DPX_FLOAT_POINT_PRECISE_MATH=FALSE",
+            "-DCMAKE_INSTALL_PREFIX=" + install.replace("\\", "/"),
+        ],
+        cwd=physx,
+    )
+    run(["cmake", "--build", build, "--target", "install", "--parallel", str(jobs)], cwd=physx)
+    if not os.path.isdir(os.path.join(install, "bin", "linux.aarch64", config)):
+        sys.exit("build finished but no Android libraries under " + install)
+    return install
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--gpu", action="store_true", help="also build the CUDA GPU projects (needs the CUDA Toolkit)")
@@ -129,7 +200,7 @@ def main():
     )
     ap.add_argument(
         "--platform",
-        choices=["windows", "linuxbsd"],
+        choices=["windows", "linuxbsd", "android"],
         default="windows" if os.name == "nt" else "linuxbsd",
         help="target platform / scons platform= value (default: autodetected from the host)",
     )
@@ -143,11 +214,17 @@ def main():
     ap.add_argument("--config", default="release", choices=["release", "checked", "profile", "debug"])
     args = ap.parse_args()
 
-    preset_base = "vc17win64-godot" if args.platform == "windows" else "linux64-godot"
-    preset = preset_base + "-gpu" if args.gpu else preset_base
-    preset_file = os.path.join(PRESET_DIR, preset + ".xml")
-    if not os.path.isfile(preset_file):
-        sys.exit("missing preset: " + preset_file)
+    android = args.platform == "android"
+    if android:
+        if args.gpu or args.blast or args.flow or args.alembic:
+            sys.exit("--platform android builds the CPU PhysX SDK only (no --gpu / --blast / --flow / --alembic)")
+        ndk = android_ndk()
+    else:
+        preset_base = "vc17win64-godot" if args.platform == "windows" else "linux64-godot"
+        preset = preset_base + "-gpu" if args.gpu else preset_base
+        preset_file = os.path.join(PRESET_DIR, preset + ".xml")
+        if not os.path.isfile(preset_file):
+            sys.exit("missing preset: " + preset_file)
     if args.gpu and not (os.environ.get("CUDA_PATH") or shutil.which("nvcc")):
         sys.exit("--gpu needs the CUDA Toolkit (set CUDA_PATH or put nvcc on PATH)")
 
@@ -159,7 +236,7 @@ def main():
         src = os.path.join(os.path.dirname(repo_root), "physx-sdk")
     src = os.path.abspath(src)
 
-    if not os.path.isdir(os.path.join(src, ".git")):
+    if not os.path.exists(os.path.join(src, ".git")):  # (a file in a git worktree)
         os.makedirs(os.path.dirname(src), exist_ok=True)
         run(["git", "clone", "--depth", "1", "--branch", args.ref, PHYSX_REPO, src], cwd=os.path.dirname(src) or ".")
     else:
@@ -184,6 +261,16 @@ def main():
                 sys.exit("bundled patch does not apply (wrong PhysX ref?): " + name)
             run(["git", "apply", patch], cwd=src)
             print("applied patch: " + name)
+
+    if android:
+        sdk = build_android(physx, ndk, args.config, args.jobs)
+        print()
+        print("PhysX SDK ready:")
+        print("    " + sdk)
+        print()
+        print("Build the Android export templates with:")
+        print("    scons platform=android target=template_release arch=arm64 physx_sdk=%s" % sdk.replace("\\", "/"))
+        return
 
     # Install the Godot-tuned preset.
     shutil.copy2(preset_file, os.path.join(physx, "buildtools", "presets", "public", preset + ".xml"))

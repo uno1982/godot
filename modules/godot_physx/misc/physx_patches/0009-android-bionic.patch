@@ -1,0 +1,48 @@
+diff --git a/physx/source/foundation/unix/FdUnixMutex.cpp b/physx/source/foundation/unix/FdUnixMutex.cpp
+index 564e610..d5c7a9e 100644
+--- a/physx/source/foundation/unix/FdUnixMutex.cpp
++++ b/physx/source/foundation/unix/FdUnixMutex.cpp
+@@ -38,7 +38,7 @@
+ namespace physx
+ {
+ 
+-#if PX_LINUX
++#if PX_LINUX && !defined(__ANDROID__)
+ 
+ #include <sched.h>
+ 
+@@ -91,7 +91,7 @@ PxMutexImpl::PxMutexImpl()
+ 	pthread_mutexattr_t attr;
+ 	pthread_mutexattr_init(&attr);
+ 	pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+-#if PX_LINUX
++#if PX_LINUX && !defined(__ANDROID__)
+ 	pthread_mutexattr_setprotocol(&attr, gMutexProtocol);
+ 	pthread_mutexattr_setprioceiling(&attr, 0);
+ #endif
+diff --git a/physx/source/foundation/unix/FdUnixThread.cpp b/physx/source/foundation/unix/FdUnixThread.cpp
+index e540c3e..be10e75 100644
+--- a/physx/source/foundation/unix/FdUnixThread.cpp
++++ b/physx/source/foundation/unix/FdUnixThread.cpp
+@@ -32,7 +32,7 @@
+ #include "foundation/PxThread.h"
+ 
+ #include <math.h>
+-#if !PX_APPLE_FAMILY && !defined(__CYGWIN__) && !PX_EMSCRIPTEN
++#if !PX_APPLE_FAMILY && !defined(__CYGWIN__) && !PX_EMSCRIPTEN && !defined(__ANDROID__)
+ #include <bits/local_lim.h> // PTHREAD_STACK_MIN
+ #endif
+ #include <stdio.h>
+@@ -244,8 +244,12 @@ __attribute__((noreturn))
+ 
+ void PxThreadImpl::kill()
+ {
++	// Android's bionic has no pthread_cancel: the thread is left to finish on its own (the CPU dispatcher's workers
++	// are told to quit and joined before they are destroyed, so this only matters for a thread still running then).
++#if !defined(__ANDROID__)
+ 	if(getThread(this)->state == ePxThreadStarted)
+ 		pthread_cancel(getThread(this)->thread);
++#endif
+ 	getThread(this)->state = ePxThreadStopped;
+ }
+ 

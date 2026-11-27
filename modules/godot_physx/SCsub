@@ -50,6 +50,15 @@ elif env["platform"] == "linuxbsd":
     physx_lib = os.path.join(physx_sdk, "bin", "linux.x86_64", "release")
     # No GPU lib to link on Linux, PhysX loads it itself at runtime.
     physx_libs = list(physx_static_libs)
+elif env["platform"] == "android":
+    # CPU only, arm64: PhysX builds Android as its Linux target (misc/build_physx.py --platform android), so the
+    # libraries land in its linux.aarch64 folder.
+    if physx_gpu:
+        raise SystemExit("godot_physx: physx_gpu=yes is not supported on Android (no CUDA).")
+    if env["arch"] != "arm64":
+        raise SystemExit("godot_physx: Android builds are arm64 only (arch=arm64).")
+    physx_lib = os.path.join(physx_sdk, "bin", "linux.aarch64", "release")
+    physx_libs = list(physx_static_libs)
 else:
     physx_lib = ""
     physx_libs = []
@@ -81,7 +90,7 @@ else:
 env.Append(LIBPATH=[physx_lib])
 if env["platform"] == "windows":
     env.Append(LINKFLAGS=[x + ".lib" for x in physx_libs])
-elif env["platform"] == "linuxbsd":
+elif env["platform"] in ("linuxbsd", "android"):
     # SCons' own LIBS mechanism resolves libFoo.a and adds -lFoo, so no
     # per-platform name formatting is needed here the way MSVC's LINKFLAGS
     # above needs the literal ".lib" suffix.

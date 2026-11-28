@@ -81,6 +81,16 @@ private:
 	float vorticity = 0.6f;
 	float ignition_temperature = 0.05f;
 	bool combustion = true;
+	// What burning does (NvFlowAdvectionCombustionParams; these are the SDK's defaults). Burn per step = (temperature
+	// above ignition) x burn_per_temperature, limited by the fuel there; each unit of burn uses fuel_per_burn fuel and
+	// adds temperature_per_burn heat, smoke_per_burn smoke and divergence_per_burn expansion.
+	float combustion_burn_per_temperature = 4.0f;
+	float combustion_fuel_per_burn = 0.25f;
+	float combustion_temperature_per_burn = 5.0f;
+	float combustion_smoke_per_burn = 3.0f;
+	float combustion_divergence_per_burn = 0.0f;
+	// Lift per unit of smoke, like buoyancy per unit of temperature; negative: heavy smoke sinks.
+	float combustion_buoyancy_per_smoke = 0.0f;
 
 	// Collision: physics bodies within collision_range of this flow's
 	// emitters become solids for the gas.
@@ -107,6 +117,8 @@ private:
 	// Self-shadowing reach, in steps of 3/4 of a cell: 48 covers ~1.8 m at
 	// the default 5 cm cells -- fewer leaves wide gas lit almost evenly.
 	int shadow_steps = 48;
+	// The gas ray march's step, in cells (the SDK's 0.75): larger is coarser and cheaper (a big grid seen from afar).
+	float ray_march_step_scale = 0.75f;
 
 	// Optional copy of the gas on the CPU, for sample_smoke(),
 	// sample_temperature() and stats:
@@ -217,6 +229,18 @@ public:
 	float get_cooling_rate() const { return cooling_rate; }
 	void set_smoke_fade(float p_v) { smoke_fade = MAX(p_v, 0.0f); }
 	float get_smoke_fade() const { return smoke_fade; }
+	void set_combustion_burn_per_temperature(float p_v) { combustion_burn_per_temperature = MAX(p_v, 0.0f); }
+	float get_combustion_burn_per_temperature() const { return combustion_burn_per_temperature; }
+	void set_combustion_fuel_per_burn(float p_v) { combustion_fuel_per_burn = MAX(p_v, 0.0f); }
+	float get_combustion_fuel_per_burn() const { return combustion_fuel_per_burn; }
+	void set_combustion_temperature_per_burn(float p_v) { combustion_temperature_per_burn = MAX(p_v, 0.0f); }
+	float get_combustion_temperature_per_burn() const { return combustion_temperature_per_burn; }
+	void set_combustion_smoke_per_burn(float p_v) { combustion_smoke_per_burn = MAX(p_v, 0.0f); }
+	float get_combustion_smoke_per_burn() const { return combustion_smoke_per_burn; }
+	void set_combustion_divergence_per_burn(float p_v) { combustion_divergence_per_burn = p_v; }
+	float get_combustion_divergence_per_burn() const { return combustion_divergence_per_burn; }
+	void set_combustion_buoyancy_per_smoke(float p_v) { combustion_buoyancy_per_smoke = p_v; }
+	float get_combustion_buoyancy_per_smoke() const { return combustion_buoyancy_per_smoke; }
 	void set_vorticity(float p_v) { vorticity = MAX(p_v, 0.0f); }
 	float get_vorticity() const { return vorticity; }
 	void set_ignition_temperature(float p_v) { ignition_temperature = p_v; }
@@ -249,6 +273,8 @@ public:
 	float get_emission_strength() const { return emission_strength; }
 	void set_shadow_steps(int p_v) { shadow_steps = CLAMP(p_v, 0, 128); }
 	int get_shadow_steps() const { return shadow_steps; }
+	void set_ray_march_step_scale(float p_v) { ray_march_step_scale = CLAMP(p_v, 0.1f, 8.0f); }
+	float get_ray_march_step_scale() const { return ray_march_step_scale; }
 
 	void set_light_scattering(bool p_v) { light_scattering = p_v; }
 	bool is_light_scattering() const { return light_scattering; }

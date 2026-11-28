@@ -709,6 +709,7 @@ void PhysXFlow3D::_fill_render_settings(FlowBackend::Settings &r_settings) {
 	// Ambient as the floor of the self-shadowing, relative to the sun.
 	r_settings.shadow_min_intensity = CLAMP(ambient.get_luminance() / MAX(light.get_luminance(), 0.001f), 0.02f, 1.0f);
 	r_settings.shadow_steps = shadow_steps;
+	r_settings.ray_march_step_scale = ray_march_step_scale;
 }
 
 void PhysXFlow3D::_step(double p_delta) {
@@ -763,6 +764,12 @@ void PhysXFlow3D::_step(double p_delta) {
 	settings.vorticity = vorticity;
 	settings.ignition_temperature = ignition_temperature;
 	settings.combustion = combustion;
+	settings.burn_per_temperature = combustion_burn_per_temperature;
+	settings.fuel_per_burn = combustion_fuel_per_burn;
+	settings.temperature_per_burn = combustion_temperature_per_burn;
+	settings.smoke_per_burn = combustion_smoke_per_burn;
+	settings.divergence_per_burn = combustion_divergence_per_burn;
+	settings.buoyancy_per_smoke = combustion_buoyancy_per_smoke;
 	// A full field each time; often enough for queries, and it stalls
 	// RenderingDevice's staging memory when done every step on large gas.
 	settings.readback = cpu_readback && (step_count++ % READBACK_INTERVAL) == 0;
@@ -974,6 +981,18 @@ void PhysXFlow3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_ignition_temperature"), &PhysXFlow3D::get_ignition_temperature);
 	ClassDB::bind_method(D_METHOD("set_combustion", "enabled"), &PhysXFlow3D::set_combustion);
 	ClassDB::bind_method(D_METHOD("is_combustion"), &PhysXFlow3D::is_combustion);
+	ClassDB::bind_method(D_METHOD("set_combustion_burn_per_temperature", "value"), &PhysXFlow3D::set_combustion_burn_per_temperature);
+	ClassDB::bind_method(D_METHOD("get_combustion_burn_per_temperature"), &PhysXFlow3D::get_combustion_burn_per_temperature);
+	ClassDB::bind_method(D_METHOD("set_combustion_fuel_per_burn", "value"), &PhysXFlow3D::set_combustion_fuel_per_burn);
+	ClassDB::bind_method(D_METHOD("get_combustion_fuel_per_burn"), &PhysXFlow3D::get_combustion_fuel_per_burn);
+	ClassDB::bind_method(D_METHOD("set_combustion_temperature_per_burn", "value"), &PhysXFlow3D::set_combustion_temperature_per_burn);
+	ClassDB::bind_method(D_METHOD("get_combustion_temperature_per_burn"), &PhysXFlow3D::get_combustion_temperature_per_burn);
+	ClassDB::bind_method(D_METHOD("set_combustion_smoke_per_burn", "value"), &PhysXFlow3D::set_combustion_smoke_per_burn);
+	ClassDB::bind_method(D_METHOD("get_combustion_smoke_per_burn"), &PhysXFlow3D::get_combustion_smoke_per_burn);
+	ClassDB::bind_method(D_METHOD("set_combustion_divergence_per_burn", "value"), &PhysXFlow3D::set_combustion_divergence_per_burn);
+	ClassDB::bind_method(D_METHOD("get_combustion_divergence_per_burn"), &PhysXFlow3D::get_combustion_divergence_per_burn);
+	ClassDB::bind_method(D_METHOD("set_combustion_buoyancy_per_smoke", "value"), &PhysXFlow3D::set_combustion_buoyancy_per_smoke);
+	ClassDB::bind_method(D_METHOD("get_combustion_buoyancy_per_smoke"), &PhysXFlow3D::get_combustion_buoyancy_per_smoke);
 	ClassDB::bind_method(D_METHOD("set_collide_with_bodies", "enabled"), &PhysXFlow3D::set_collide_with_bodies);
 	ClassDB::bind_method(D_METHOD("is_collide_with_bodies"), &PhysXFlow3D::is_collide_with_bodies);
 	ClassDB::bind_method(D_METHOD("set_collision_mask", "mask"), &PhysXFlow3D::set_collision_mask);
@@ -998,6 +1017,8 @@ void PhysXFlow3D::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_emission_strength"), &PhysXFlow3D::get_emission_strength);
 	ClassDB::bind_method(D_METHOD("set_shadow_steps", "steps"), &PhysXFlow3D::set_shadow_steps);
 	ClassDB::bind_method(D_METHOD("get_shadow_steps"), &PhysXFlow3D::get_shadow_steps);
+	ClassDB::bind_method(D_METHOD("set_ray_march_step_scale", "scale"), &PhysXFlow3D::set_ray_march_step_scale);
+	ClassDB::bind_method(D_METHOD("get_ray_march_step_scale"), &PhysXFlow3D::get_ray_march_step_scale);
 	ClassDB::bind_method(D_METHOD("set_light_scattering", "enabled"), &PhysXFlow3D::set_light_scattering);
 	ClassDB::bind_method(D_METHOD("is_light_scattering"), &PhysXFlow3D::is_light_scattering);
 	ClassDB::bind_method(D_METHOD("set_scattering_max_lights", "count"), &PhysXFlow3D::set_scattering_max_lights);
@@ -1034,6 +1055,13 @@ void PhysXFlow3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "vorticity", PROPERTY_HINT_RANGE, "0,5,0.01"), "set_vorticity", "get_vorticity");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "combustion"), "set_combustion", "is_combustion");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ignition_temperature", PROPERTY_HINT_RANGE, "0,2,0.001"), "set_ignition_temperature", "get_ignition_temperature");
+	ADD_SUBGROUP("Combustion", "combustion_");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "combustion_burn_per_temperature", PROPERTY_HINT_RANGE, "0,20,0.01,or_greater"), "set_combustion_burn_per_temperature", "get_combustion_burn_per_temperature");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "combustion_fuel_per_burn", PROPERTY_HINT_RANGE, "0,4,0.01,or_greater"), "set_combustion_fuel_per_burn", "get_combustion_fuel_per_burn");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "combustion_temperature_per_burn", PROPERTY_HINT_RANGE, "0,20,0.01,or_greater"), "set_combustion_temperature_per_burn", "get_combustion_temperature_per_burn");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "combustion_smoke_per_burn", PROPERTY_HINT_RANGE, "0,20,0.01,or_greater"), "set_combustion_smoke_per_burn", "get_combustion_smoke_per_burn");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "combustion_divergence_per_burn", PROPERTY_HINT_RANGE, "-5,5,0.01,or_less,or_greater"), "set_combustion_divergence_per_burn", "get_combustion_divergence_per_burn");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "combustion_buoyancy_per_smoke", PROPERTY_HINT_RANGE, "-10,10,0.01,or_less,or_greater"), "set_combustion_buoyancy_per_smoke", "get_combustion_buoyancy_per_smoke");
 	ADD_GROUP("Collision", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "collide_with_bodies"), "set_collide_with_bodies", "is_collide_with_bodies");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "collision_mask", PROPERTY_HINT_LAYERS_3D_PHYSICS), "set_collision_mask", "get_collision_mask");
@@ -1048,6 +1076,7 @@ void PhysXFlow3D::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "temperature_range", PROPERTY_HINT_RANGE, "0.01,20,0.01,or_greater"), "set_temperature_range", "get_temperature_range");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "emission_strength", PROPERTY_HINT_RANGE, "0,50,0.01,or_greater"), "set_emission_strength", "get_emission_strength");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "shadow_steps", PROPERTY_HINT_RANGE, "0,128,1"), "set_shadow_steps", "get_shadow_steps");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "ray_march_step_scale", PROPERTY_HINT_RANGE, "0.1,8,0.01"), "set_ray_march_step_scale", "get_ray_march_step_scale");
 	ADD_GROUP("Light Scattering", "");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "light_scattering"), "set_light_scattering", "is_light_scattering");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "scattering_max_lights", PROPERTY_HINT_RANGE, vformat("1,%d,1", FlowScatterRD::MAX_LIGHTS)), "set_scattering_max_lights", "get_scattering_max_lights");

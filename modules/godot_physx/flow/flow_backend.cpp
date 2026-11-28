@@ -332,6 +332,13 @@ bool grid_step(Grid *p_grid, double p_time, float p_delta, const Settings &p_set
 	sim.advection.coolingRate = p_settings.cooling_rate;
 	sim.advection.smoke.fade = p_settings.smoke_fade;
 	sim.advection.ignitionTemp = p_settings.ignition_temperature;
+	// Like buoyancyPerTemp, these scale quantities, not lengths (buoyancy multiplies the already-scaled gravity).
+	sim.advection.burnPerTemp = p_settings.burn_per_temperature;
+	sim.advection.fuelPerBurn = p_settings.fuel_per_burn;
+	sim.advection.tempPerBurn = p_settings.temperature_per_burn;
+	sim.advection.smokePerBurn = p_settings.smoke_per_burn;
+	sim.advection.divergencePerBurn = p_settings.divergence_per_burn;
+	sim.advection.buoyancyPerSmoke = p_settings.buoyancy_per_smoke;
 	sim.vorticity.forceScale = p_settings.vorticity;
 	sim.nanoVdbExport.enabled = NV_FLOW_TRUE;
 	sim.nanoVdbExport.readbackEnabled = p_settings.readback ? NV_FLOW_TRUE : NV_FLOW_FALSE;
@@ -340,6 +347,7 @@ bool grid_step(Grid *p_grid, double p_time, float p_delta, const Settings &p_set
 
 	p_grid->render = NvFlowGridRenderLayerParams_default;
 	p_grid->render.rayMarch.attenuation = p_settings.attenuation / s;
+	p_grid->render.rayMarch.stepSizeScale = p_settings.ray_march_step_scale;
 	p_grid->render.rayMarch.colormapXMin = 0.0f;
 	p_grid->render.rayMarch.colormapXMax = p_settings.temperature_range;
 

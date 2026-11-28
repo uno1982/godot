@@ -88,6 +88,13 @@ struct Settings {
 	float vorticity = 0.6f;
 	float ignition_temperature = 0.05f;
 	bool combustion = true;
+	// NvFlowAdvectionCombustionParams' other terms (the SDK's defaults); see PhysXFlow3D.
+	float burn_per_temperature = 4.0f;
+	float fuel_per_burn = 0.25f;
+	float temperature_per_burn = 5.0f;
+	float smoke_per_burn = 3.0f;
+	float divergence_per_burn = 0.0f;
+	float buoyancy_per_smoke = 0.0f;
 	// Copy temperature and smoke back to the CPU this step.
 	bool readback = false;
 
@@ -101,6 +108,7 @@ struct Settings {
 	float light_direction[3] = { 0, 1, 0 };
 	float shadow_min_intensity = 0.125f;
 	int shadow_steps = 48;
+	float ray_march_step_scale = 0.75f; // the ray march's step, in cells
 };
 
 // Loads Flow's libraries on first use (shared by every grid); false, with

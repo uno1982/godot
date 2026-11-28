@@ -57,7 +57,25 @@
 			How far from this flow's emitters (in meters) bodies are looked for. With [member cpu_readback] on, the area the gas has spread to is searched as well.
 		</member>
 		<member name="combustion" type="bool" setter="set_combustion" getter="is_combustion" default="true">
-			Fuel burns when hotter than [member ignition_temperature], releasing heat and smoke.
+			Fuel burns when hotter than [member ignition_temperature], releasing heat and smoke. The [code]combustion_*[/code] properties set how much.
+		</member>
+		<member name="combustion_buoyancy_per_smoke" type="float" setter="set_combustion_buoyancy_per_smoke" getter="get_combustion_buoyancy_per_smoke" default="0.0">
+			Lift per unit of smoke, the way [member buoyancy] is lift per unit of temperature (up is against the project's gravity). Negative values make dense smoke sink: heavy black fuel smoke that settles instead of rising with the heat. Applies to all smoke, not only smoke from burning.
+		</member>
+		<member name="combustion_burn_per_temperature" type="float" setter="set_combustion_burn_per_temperature" getter="get_combustion_burn_per_temperature" default="4.0">
+			How fast fuel burns: burn per second per unit of temperature above [member ignition_temperature], limited by the fuel there. Higher burns the fuel closer to the emitter.
+		</member>
+		<member name="combustion_divergence_per_burn" type="float" setter="set_combustion_divergence_per_burn" getter="get_combustion_divergence_per_burn" default="0.0">
+			How much the gas expands where it burns, per unit of burn: positive values push the gas outward from the flame (a fireball that swells), [code]0[/code] burns without expanding.
+		</member>
+		<member name="combustion_fuel_per_burn" type="float" setter="set_combustion_fuel_per_burn" getter="get_combustion_fuel_per_burn" default="0.25">
+			Fuel used up per unit of burn. Lower values make the same fuel burn longer (and make more heat and smoke in total).
+		</member>
+		<member name="combustion_smoke_per_burn" type="float" setter="set_combustion_smoke_per_burn" getter="get_combustion_smoke_per_burn" default="3.0">
+			Smoke made per unit of burn. Lower it for a clean gas flame; raise it for sooty fuel. With the defaults, one unit of fuel makes about 12 units of smoke.
+		</member>
+		<member name="combustion_temperature_per_burn" type="float" setter="set_combustion_temperature_per_burn" getter="get_combustion_temperature_per_burn" default="5.0">
+			Heat released per unit of burn. With the defaults, one unit of fuel makes about 20 units of heat: lower it for a flame whose hot cap doesn't linger, without changing [member cooling_rate] for all of the gas. Flow caps the temperature of a cell at [code]1[/code], so raising it past the point where the flame saturates changes little.
 		</member>
 		<member name="cooling_rate" type="float" setter="set_cooling_rate" getter="get_cooling_rate" default="1.5">
 			How fast the gas cools (exponential, per second).
@@ -86,6 +104,9 @@
 		</member>
 		<member name="max_blocks" type="int" setter="set_max_blocks" getter="get_max_blocks" default="1024">
 			The most sparse blocks the gas may take up -- a GPU memory budget, since Flow reserves memory for all of them when the grid starts (about 0.45 MB a block: the default 1024 is roughly 0.5 GB). A small plume uses a few hundred; [method get_stats] reports [code]active_blocks[/code]. Gas that would need more is cut off, with a warning. Changing it restarts the simulation.
+		</member>
+		<member name="ray_march_step_scale" type="float" setter="set_ray_march_step_scale" getter="get_ray_march_step_scale" default="0.75">
+			The step of the ray march that draws the gas, in cells. Larger steps are coarser and cheaper: use them for a large grid or one seen from far away (an explosion in the distance), where fine detail doesn't show; up close, coarse steps show as grain (the march jitters each step). Smaller steps cost more and sample thin wisps more finely. The self-shadowing ([member shadow_steps]) keeps its own step.
 		</member>
 		<member name="scattering_anisotropy" type="float" setter="set_scattering_anisotropy" getter="get_scattering_anisotropy" default="0.4">
 			With [member light_scattering], how much the gas scatters light forward (toward a camera looking at the light) rather than evenly in every direction: [code]0[/code] glows the same from every side, higher values make a bright halo when looking toward a light, negative values light the gas most when the light is behind the camera.

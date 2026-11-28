@@ -807,6 +807,12 @@ the gas goes, with pressure projection, vorticity confinement and combustion
 Direct3D 12), not CUDA, so it works on any GPU the Forward+ or Mobile renderer
 does. Nothing goes through the CPU unless `cpu_readback` is on (for
 `sample_smoke()` and `sample_temperature()`, e.g. heat damage from a fire).
+What burning makes is per flow, in the Combustion subgroup: how fast fuel burns
+and how much of it each burn uses, and the heat, smoke and expansion each burn
+adds (`combustion_*`, the Flow SDK's defaults). A clean gas flame lowers
+`combustion_smoke_per_burn`, a flame whose hot cap shouldn't linger lowers
+`combustion_temperature_per_burn`, and a negative
+`combustion_buoyancy_per_smoke` makes heavy smoke sink.
 
 Gas comes from `PhysXFlowEmitter3D` nodes: a sphere or box with `velocity`,
 `temperature`, `fuel`, `burn`, `smoke`, `divergence` and `couple_rate`. An
@@ -826,7 +832,8 @@ installs the same way (the two never displace each other) and writes its
 surface into the depth before transparent geometry, so the gas is marched only
 up to a liquid surface in front of the scene. The look is per flow:
 `smoke_density`, `smoke_color` / `smoke_ramp`, `heat_ramp`,
-`temperature_range`, `emission_strength`, `shadow_steps`.
+`temperature_range`, `emission_strength`, `shadow_steps`, and
+`ray_march_step_scale` (coarser steps are cheaper, for big or distant gas).
 
 **Point and spot lights in the gas.** Flow's renderer only lights gas with the
 directional light. Turn on `light_scattering` and nearby `OmniLight3D` /

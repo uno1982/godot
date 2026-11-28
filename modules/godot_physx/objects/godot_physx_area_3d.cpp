@@ -458,19 +458,19 @@ void GodotPhysXArea3D::report_body_overlap(GodotPhysXBody3D *p_body, int p_body_
 	st.delta += p_entered ? 1 : -1;
 }
 
-void GodotPhysXArea3D::refresh_poll_bounds() {
+bool GodotPhysXArea3D::refresh_poll_bounds() {
 	// Unchanged while the actor stays where they were read and its shapes weren't edited (_build_actor and
 	// _edit_shape_in_place mark them dirty): re-reading every shape's world bounds of thousands of resting areas each
 	// step was most of the polling's cost.
 	if (px_actor && !poll_bounds_dirty && px_actor->getGlobalPose() == poll_pose) {
-		return;
+		return false;
 	}
 	poll_aabb_valid = false;
 	poll_shapes.clear();
 	poll_shape_aabbs.clear();
 	if (!px_actor) {
 		poll_bounds_dirty = true;
-		return;
+		return true;
 	}
 	poll_bounds_dirty = false;
 	poll_pose = px_actor->getGlobalPose();
@@ -478,7 +478,7 @@ void GodotPhysXArea3D::refresh_poll_bounds() {
 	poll_shapes.resize(nb);
 	poll_shape_aabbs.resize(nb);
 	if (nb == 0) {
-		return;
+		return true;
 	}
 	px_actor->getShapes(poll_shapes.ptr(), nb);
 	for (PxU32 i = 0; i < nb; i++) {
@@ -488,6 +488,7 @@ void GodotPhysXArea3D::refresh_poll_bounds() {
 		poll_aabb = poll_aabb_valid ? poll_aabb.merge(a) : a;
 		poll_aabb_valid = true;
 	}
+	return true;
 }
 
 void GodotPhysXArea3D::poll_area_overlap(GodotPhysXArea3D *p_other) {

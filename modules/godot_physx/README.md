@@ -1571,11 +1571,12 @@ For deterministic lockstep multiplayer, use the Jolt backend.
 - **Area-to-area detection** (`Area3D` monitoring another `Area3D`) works, but
   unlike every other collision pair in this module it costs real per-step
   work: PhysX never reports trigger-trigger pairs (only trigger-vs-rigid), so
-  it's polled every step. Each monitoring area is checked against every
-  monitorable area whose collision layer and mask can meet it, and only pairs
-  whose world bounds overlap get an exact shape test, but the pair loop itself
-  grows with monitoring × monitorable areas: 930 monitoring areas among 9,300
-  cost about 52 ms a step ([#38](https://github.com/uno1982/godot/issues/38)).
+  it's polled every step. A bounds tree of the monitorable areas finds the
+  ones each monitoring area's bounds meet, and only those get an exact shape
+  test, so the cost grows with the monitoring areas and what is near them, not
+  with every pair ([#38](https://github.com/uno1982/godot/issues/38)): 930
+  monitoring areas among 9,300 take about 0.7 ms a step, all 9,300 monitoring
+  about 6 ms (CPU, dev machine; it was 52 ms and over 500 ms).
   `monitoring` defaults to `true`, so turn it off on areas that don't need
   `area_entered` / `body_entered`: a passive area (monitoring off, no override)
   costs the step nothing (see [Area3D overrides](#area3d-overrides)).

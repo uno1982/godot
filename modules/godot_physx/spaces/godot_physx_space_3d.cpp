@@ -546,6 +546,9 @@ void GodotPhysXSpace3D::update_area_role(GodotPhysXArea3D *p_area) {
 
 void GodotPhysXSpace3D::register_area(GodotPhysXArea3D *p_area) {
 	areas.insert(p_area);
+	area_by_rid.insert(p_area->get_self(), p_area);
+	p_area->poll_tree_id = DynamicBVH::ID(); // (a leaf of another space's tree means nothing here)
+	p_area->poll_step = 0;
 	if (p_area->has_area_overlaps()) {
 		area_overlap_trackers.insert(p_area); // (records kept from before it left a space)
 	}
@@ -556,6 +559,11 @@ void GodotPhysXSpace3D::unregister_area(GodotPhysXArea3D *p_area) {
 	areas.erase(p_area);
 	monitoring_areas.erase(p_area);
 	override_areas.erase(p_area);
+	area_by_rid.erase(p_area->get_self());
+	if (p_area->poll_tree_id.is_valid()) {
+		area_poll_tree.remove(p_area->poll_tree_id);
+		p_area->poll_tree_id = DynamicBVH::ID();
+	}
 	area_overlap_trackers.erase(p_area);
 	if (area_overlap_trackers.is_empty()) {
 		return;
@@ -572,13 +580,28 @@ void GodotPhysXSpace3D::unregister_area(GodotPhysXArea3D *p_area) {
 	}
 }
 
+namespace {
+struct AreaPollCollector {
+	LocalVector<GodotPhysXArea3D *> *out = nullptr;
+	bool operator()(void *p_data) {
+		out->push_back(static_cast<GodotPhysXArea3D *>(p_data));
+		return false; // all of them
+	}
+};
+struct AreaPollOrder {
+	bool operator()(const GodotPhysXArea3D *p_a, const GodotPhysXArea3D *p_b) const { return p_a->poll_order < p_b->poll_order; }
+};
+} //namespace
+
 void GodotPhysXSpace3D::_detect_area_overlaps() {
-	// O(n^2) over every (monitoring, monitorable) pair per step, but only pairs whose world bounds meet get an exact
-	// shape test (it showed up on a profile: a playtest island with 28 monitoring rock-wake areas went from ~35 ms of
-	// polls a step to a fraction of a millisecond). A real broad-phase (a bounds tree) would be the next lever.
-	// Only the monitorable areas whose layer / mask can meet some monitoring area's are polled (poll_area_overlap
-	// rejects every other pair by the same layer test before it touches any state, so the events are the same), in
-	// the same order; and each one's world bounds are refreshed once per step (kept while it doesn't move).
+	// Each monitoring area is checked against the monitorable areas whose layer / mask can meet some monitoring
+	// area's ("polled"), but poll_area_overlap() only does anything for a pair whose world bounds meet or that was
+	// touching (to report the exit): every other pair returns untouched. So a bounds tree of the polled areas finds
+	// the pairs worth calling (#38: calling all 930 x 9,300 pairs was 52 ms a step, nearly all of them apart), plus
+	// each monitoring area's touching records; they are called in the order the full loop over `areas` called them,
+	// so the events and their order are the same. Bounds are refreshed once per step and kept, with the tree leaf,
+	// while an area doesn't move. (The exact shape tests only run where the shapes' bounds meet: a playtest island
+	// with 28 monitoring rock-wake areas of ~80 shapes each was ~35 ms of polls a step before that.)
 	LocalVector<GodotPhysXArea3D *> monitoring;
 	uint32_t monitoring_layers = 0;
 	uint32_t monitoring_masks = 0;
@@ -592,21 +615,50 @@ void GodotPhysXSpace3D::_detect_area_overlaps() {
 	if (monitoring.is_empty()) {
 		return;
 	}
-	LocalVector<GodotPhysXArea3D *> polled;
+	area_poll_step++;
+	uint32_t order = 0;
 	for (GodotPhysXArea3D *area : areas) {
 		const bool reachable = area->is_monitorable() && ((area->get_collision_layer() & monitoring_masks) || (area->get_collision_mask() & monitoring_layers));
-		if (reachable) {
-			polled.push_back(area);
-		}
+		bool moved = false;
 		if (reachable || area->wants_area_monitoring()) {
-			area->refresh_poll_bounds();
+			moved = area->refresh_poll_bounds();
+		}
+		if (reachable) {
+			area->poll_step = area_poll_step;
+			area->poll_order = order++;
+		}
+		if (reachable && area->has_poll_bounds()) {
+			if (!area->poll_tree_id.is_valid()) {
+				area->poll_tree_id = area_poll_tree.insert(area->get_poll_aabb(), area);
+			} else if (moved) {
+				area_poll_tree.update(area->poll_tree_id, area->get_poll_aabb());
+			}
+		} else if (area->poll_tree_id.is_valid()) {
+			area_poll_tree.remove(area->poll_tree_id);
+			area->poll_tree_id = DynamicBVH::ID();
 		}
 	}
+	LocalVector<GodotPhysXArea3D *> candidates;
+	AreaPollCollector collector;
+	collector.out = &candidates;
 	for (GodotPhysXArea3D *area : monitoring) {
-		for (GodotPhysXArea3D *other : polled) {
-			if (other != area) {
+		candidates.clear();
+		if (area->has_poll_bounds()) {
+			area_poll_tree.aabb_query(area->get_poll_aabb(), collector); // (inclusive: a superset of AABB::intersects)
+		}
+		area->for_each_touching_area([&](const RID &p_rid) {
+			GodotPhysXArea3D **other = area_by_rid.getptr(p_rid);
+			if (other && (*other)->poll_step == area_poll_step) {
+				candidates.push_back(*other);
+			}
+		});
+		candidates.sort_custom<AreaPollOrder>();
+		GodotPhysXArea3D *last = nullptr;
+		for (GodotPhysXArea3D *other : candidates) {
+			if (other != area && other != last) {
 				area->poll_area_overlap(other);
 			}
+			last = other;
 		}
 		if (area->has_area_overlaps()) {
 			area_overlap_trackers.insert(area);

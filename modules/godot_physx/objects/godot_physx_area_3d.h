@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "core/math/dynamic_bvh.h"
 #include "core/math/transform_3d.h"
 #include "core/object/object_id.h"
 #include "core/templates/hash_map.h"
@@ -57,13 +58,13 @@ class GodotPhysXBody3D;
 //
 // Area-area overlap (one Area3D detecting another) is NOT delivered by a PhysX
 // trigger event -- PhysX never reports trigger-trigger pairs at all, only
-// trigger-vs-rigid. Instead GodotPhysXSpace3D polls every (monitoring area,
-// monitorable area) pair once per step with a manual shape-vs-shape overlap
-// test and diffs the result against last step's state to find enter/exit
-// transitions (see GodotPhysXSpace3D::_detect_area_overlaps() and
-// poll_area_overlap() below). This is real per-pair work every step, unlike
-// the free trigger-vs-body path -- see README.md's Area3D section for the
-// cost tradeoff.
+// trigger-vs-rigid. Instead GodotPhysXSpace3D polls, once per step, each
+// monitoring area against the monitorable areas its bounds meet (a bounds tree)
+// or that it was touching, with a manual shape-vs-shape overlap test, and diffs
+// the result against last step's state to find enter/exit transitions (see
+// GodotPhysXSpace3D::_detect_area_overlaps() and poll_area_overlap() below).
+// This is real work every step, unlike the free trigger-vs-body path -- see
+// README.md's known limitations for the cost.
 class GodotPhysXArea3D {
 public:
 	// An area's actor is kinematic (a PxRigidDynamic), named with this pointer so the scene's active-actor pass can
@@ -269,15 +270,33 @@ public:
 	// One of `p_body`'s shapes left its actor (swapped / disabled in place): take that shape's overlaps back.
 	void body_shape_gone(GodotPhysXBody3D *p_body, int p_body_shape);
 
-	// Called once per physics step, once per (this, p_other) pair where this
-	// area wants_area_monitoring() and p_other->is_monitorable() -- see
+	// Called once per physics step for each (this, p_other) pair where this
+	// area wants_area_monitoring(), p_other->is_monitorable(), and their bounds
+	// meet or they were touching -- see
 	// GodotPhysXSpace3D::_detect_area_overlaps(). Runs a manual shape-vs-shape
 	// overlap test (PhysX has no trigger-trigger event to drive this from
 	// instead) and diffs against touching_areas to queue enter/exit events.
 	void poll_area_overlap(GodotPhysXArea3D *p_other);
-	void refresh_poll_bounds();
+	// Returns whether the bounds changed (they are kept while the area stays put).
+	bool refresh_poll_bounds();
 	bool has_poll_bounds() const { return poll_aabb_valid; }
 	const AABB &get_poll_aabb() const { return poll_aabb; }
+	// Calls p_func(RID) for each other area this one has a touching record with (once per area, in any order).
+	template <typename F>
+	void for_each_touching_area(F &&p_func) const {
+		RID last;
+		for (const AreaOverlapKey &key : touching_areas) {
+			if (key.other_area_rid != last) {
+				last = key.other_area_rid;
+				p_func(last);
+			}
+		}
+	}
+	// Kept by the space's area-overlap polling: this area's leaf in its bounds tree of polled areas (invalid while
+	// it isn't in it), and the step it was last polled in with its place in that step's poll order.
+	DynamicBVH::ID poll_tree_id;
+	uint64_t poll_step = 0;
+	uint32_t poll_order = 0;
 	// Called when another area leaves the space while still touching this one.
 	// Matches body_removed()'s precedent: drops the stale state without
 	// synthesizing an exit event for it.

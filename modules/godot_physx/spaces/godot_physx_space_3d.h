@@ -30,8 +30,10 @@
 
 #pragma once
 
+#include "core/math/dynamic_bvh.h"
 #include "core/math/math_funcs.h"
 #include "core/math/vector3.h"
+#include "core/templates/hash_map.h"
 #include "core/templates/hash_set.h"
 #include "core/templates/local_vector.h"
 #include "core/templates/rid.h"
@@ -86,6 +88,13 @@ class GodotPhysXSpace3D {
 	// telling every area made removing n areas O(n^2), 155 ms for 9,300). Kept by _detect_area_overlaps(), the only
 	// place records are added, and by unregister_area().
 	HashSet<GodotPhysXArea3D *> area_overlap_trackers;
+	// The area-area polling's broad phase (#38): a bounds tree of the areas a step polls (monitorable, layers that
+	// can meet a monitoring area's), so each monitoring area only visits the ones its bounds meet, not all of them.
+	// A leaf is moved only when its area's bounds change. area_by_rid finds the areas a monitoring area was touching
+	// (their exits).
+	DynamicBVH area_poll_tree;
+	HashMap<RID, GodotPhysXArea3D *> area_by_rid;
+	uint64_t area_poll_step = 0;
 	HashSet<GodotPhysXParticleFluid3D *> fluids;
 	HashSet<GodotPhysXCloth3D *> cloths;
 	HashSet<GodotPhysXSoftBody3D *> soft_bodies;
